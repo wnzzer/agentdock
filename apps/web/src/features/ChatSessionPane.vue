@@ -98,7 +98,9 @@ async function pickModel(id: string) {
   const session = props.session.id;
   actionBusy.value = true; error.value = '';
   try {
-    await request('/sessions/' + encodeURIComponent(session) + '/conversation/model', json('POST', { model: id, effort: selectedEffort.value || null }));
+    // Only send a depth when one was actually chosen; otherwise the client
+    // keeps whatever it is already using.
+    await request('/sessions/' + encodeURIComponent(session) + '/conversation/model', json('POST', selectedEffort.value ? { model: id, effort: selectedEffort.value } : { model: id }));
   } catch (cause) { if (props.session.id === session && mounted.value) error.value = errorMessage(cause); }
   finally { if (props.session.id === session) actionBusy.value = false; }
 }

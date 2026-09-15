@@ -486,10 +486,36 @@ async fn select_model(
         .filter(|r| r.running())
         .ok_or_else(|| ApiError::conflict("Start the session before choosing a model"))?;
     runtime
-        .send(json!({"type": "model", "model": model, "effort": input.effort}))
+        .send(model_command(&model, input.effort.as_deref()))
         .await?;
     Ok(accepted(None, false))
 }
+/// Absent means "leave the depth as it is". A `null` would reach the bridge as a
+/// present-but-unusable value and be rejected, so the field is omitted entirely.
+fn model_command(model: &str, effort: Option<&str>) -> Value {
+    let mut command = json!({"type": "model", "model": model});
+    if let Some(effort) = effort {
+        command["effort"] = Value::from(effort);
+    }
+    command
+}
+
+#[cfg(test)]
+mod model_command_tests {
+    use super::model_command;
+
+    #[test]
+    fn an_unset_thinking_depth_is_left_out_rather_than_sent_as_null() {
+        let command = model_command("opus", None);
+        assert_eq!(command["model"], "opus");
+        assert!(
+            command.get("effort").is_none(),
+            "a null effort is rejected by the bridge as a malformed level"
+        );
+        assert_eq!(model_command("opus", Some("high"))["effort"], "high");
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApprovalInput {
