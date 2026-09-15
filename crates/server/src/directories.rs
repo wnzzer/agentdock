@@ -70,6 +70,38 @@ pub fn roots() -> Result<Vec<PathBuf>, IoError> {
     canonical_roots(candidates)
 }
 
+/// Where a new workspace may be rooted.
+///
+/// Browsing roots bound the picker, but creating a workspace took any absolute
+/// directory, so the API was not bounded at all — a caller could root a
+/// workspace at `/` and then read and write through it. On a trusted single
+/// machine that is the same authority the caller already had; reachable over a
+/// network it is not, which is what this project is for.
+///
+/// Defaults to the browsing roots, so a host that never configures either keeps
+/// one boundary rather than two that can disagree.
+pub fn workspace_roots(browse: &[PathBuf]) -> Result<Vec<PathBuf>, IoError> {
+    match env::var_os("AGENTDOCK_WORKSPACE_ROOTS") {
+        Some(value) => {
+            let paths: Vec<_> = env::split_paths(&value).collect();
+            if paths.is_empty() || paths.iter().any(|path| path.as_os_str().is_empty()) {
+                return Err(IoError::new(
+                    400,
+                    "AGENTDOCK_WORKSPACE_ROOTS must contain at least one existing directory",
+                ));
+            }
+            canonical_roots(paths)
+        }
+        None => Ok(browse.to_vec()),
+    }
+}
+
+/// Whether an already-canonical directory lies inside one of the allowed roots.
+/// A root itself is allowed; a sibling whose name merely starts the same is not.
+pub fn within_roots(roots: &[PathBuf], candidate: &Path) -> bool {
+    roots.iter().any(|root| candidate.starts_with(root))
+}
+
 fn canonical_roots(candidates: Vec<PathBuf>) -> Result<Vec<PathBuf>, IoError> {
     let mut result = Vec::new();
     for path in candidates {
@@ -434,5 +466,37 @@ mod tests {
         assert_eq!(listing.entries.len(), MAX_DIRECTORIES);
         assert_eq!(listing.entries[0].name, "folder-0000");
         assert!(listing.truncated);
+    }
+
+    #[test]
+    fn workspace_roots_bound_a_candidate_to_a_root_or_below_it() {
+        let base = std::env::temp_dir().join(format!("agentdock-roots-{}", uuid::Uuid::new_v4()));
+        let allowed = base.join("allowed");
+        fs::create_dir_all(allowed.join("nested/deep")).unwrap();
+        fs::create_dir_all(base.join("allowed-sibling")).unwrap();
+        fs::create_dir_all(base.join("elsewhere")).unwrap();
+        let roots = vec![fs::canonicalize(&allowed).unwrap()];
+
+        assert!(within_roots(&roots, &fs::canonicalize(&allowed).unwrap()));
+        assert!(within_roots(
+            &roots,
+            &fs::canonicalize(allowed.join("nested/deep")).unwrap()
+        ));
+        // A sibling whose name merely starts the same is a different directory,
+        // which a plain string prefix would have accepted.
+        assert!(!within_roots(
+            &roots,
+            &fs::canonicalize(base.join("allowed-sibling")).unwrap()
+        ));
+        assert!(!within_roots(
+            &roots,
+            &fs::canonicalize(base.join("elsewhere")).unwrap()
+        ));
+        assert!(!within_roots(&roots, Path::new("/")));
+
+        // Without its own configuration the workspace boundary is the browsing
+        // one, so a host that sets neither still has a single boundary.
+        assert_eq!(workspace_roots(&roots).unwrap(), roots);
+        fs::remove_dir_all(&base).ok();
     }
 }

@@ -47,6 +47,7 @@ struct AppState {
     runtime: RuntimeManager,
     state_dir: PathBuf,
     browse_roots: Vec<PathBuf>,
+    workspace_roots: Vec<PathBuf>,
     native_sources: Vec<native_history::NativeSource>,
     native_bridge: PathBuf,
     chat_bridge: PathBuf,
@@ -229,6 +230,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // before any startup reconciliation can change existing session records.
     let security = security::Security::new(address)?;
     let browse_roots = directories::roots()?;
+    let workspace_roots = directories::workspace_roots(&browse_roots)?;
     let installation::PreparedServer {
         listener,
         database: locked_database,
@@ -255,6 +257,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         accounts: accounts::AccountManager::new(),
         state_dir,
         browse_roots,
+        workspace_roots,
         native_sources: native_history::sources(),
         security,
         claude_manual_mode,
@@ -605,6 +608,14 @@ async fn create_workspace(
         .map_err(|_| ApiError::bad("Host directory does not exist"))?;
     if !canonical.is_dir() {
         return Err(ApiError::bad("Root must be a directory"));
+    }
+    // Creating a workspace is what decides which part of the host this server
+    // can read and write, so it is bounded like browsing is. Workspaces that
+    // already exist are untouched: this is a rule about new ones.
+    if !directories::within_roots(&state.workspace_roots, &canonical) {
+        return Err(ApiError::bad(
+            "That directory is outside the roots this server may use. Set AGENTDOCK_WORKSPACE_ROOTS to allow it.",
+        ));
     }
     let path = canonical.to_string_lossy().into_owned();
     Ok((

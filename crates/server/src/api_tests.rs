@@ -41,6 +41,7 @@ impl Fixture {
             runtime: RuntimeManager::new(),
             state_dir: path.join("state"),
             browse_roots: vec![std::fs::canonicalize(path.join("repo")).unwrap()],
+            workspace_roots: vec![std::fs::canonicalize(&path).unwrap()],
             native_sources: Vec::new(),
             native_bridge: PathBuf::from("packages/native-bridge/history.mjs"),
             chat_bridge: PathBuf::from("packages/native-bridge/chat.mjs"),

@@ -128,6 +128,7 @@ AGENTDOCK_CLAUDE_BIN          # optional absolute path to claude
 AGENTDOCK_CODEX_BIN           # optional absolute path to codex
 AGENTDOCK_SHELL               # optional shell; defaults to SHELL or /bin/sh
 AGENTDOCK_BROWSE_ROOTS        # optional directory-picker roots, OS path-list (macOS/Linux colon-separated)
+AGENTDOCK_WORKSPACE_ROOTS     # optional roots a new workspace may sit under; defaults to the browsing roots
 AGENTDOCK_INSTANCE_LABEL      # optional UI label for isolated preview deployments
 ```
 
@@ -140,6 +141,16 @@ For a network bind, configure `AGENTDOCK_TOKEN` (24+ random characters), `AGENTD
 ## Boundaries
 
 This is a **single trusted user's host workspace**, not a multi-tenant sandbox. Native tool permissions remain native. A working-directory check or config directory is not an OS isolation boundary.
+
+### What this server can reach
+
+- **Network**: loopback only by default. A non-loopback bind refuses to start without `AGENTDOCK_TOKEN` (24+ characters), and Origin/Host must be allow-listed.
+- **Directory picker**: limited to `AGENTDOCK_BROWSE_ROOTS`, defaulting to the working directory and the server user's home.
+- **New workspaces**: limited to `AGENTDOCK_WORKSPACE_ROOTS`, defaulting to the browsing roots. Workspaces created before this rule keep working; it governs new ones.
+- **File read/write**: confined to a workspace root. Paths are canonicalised and anything resolving outside is refused, as are `.git`, `.agentdock` and client configuration files. Deleting never follows a symlink out of the tree.
+- **Agent processes are not confined by any of the above.** `claude` and `codex` run with your full user permissions. AgentDock sets their working directory and forwards their permission prompts; it never answers one for you, and it never reads their credentials. What an Agent can reach is decided by that client's own permission settings, not by this server.
+
+Anyone who can reach the API has the authority of the user running the server. Treat the token as that user's credentials.
 
 - Browser disconnection preserves processes; server shutdown stops managed processes. Restart marks old running records stopped. It does not revive a lost PTY.
 - State and database ownership locks prevent two new-version servers from managing the same sessions. Port binding and ownership checks happen before migration/reconciliation. `init` also respects these locks and never resets running-session status. Keep state on a local filesystem with working OS file locks; do not remove lock files while a process is alive.

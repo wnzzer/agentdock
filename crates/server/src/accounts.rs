@@ -1104,6 +1104,7 @@ mod tests {
                 runtime: RuntimeManager::new(),
                 state_dir: root.clone(),
                 browse_roots: vec![root.clone()],
+                workspace_roots: vec![root.clone()],
                 native_sources: vec![],
                 native_bridge: root.join("unused-history.mjs"),
                 chat_bridge: root.join("unused-chat.mjs"),
