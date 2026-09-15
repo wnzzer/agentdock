@@ -60,21 +60,33 @@ export function moveHighlight(index: number, count: number, delta: number): numb
 }
 
 /**
+ * Commands that name something this composer has of its own.
+ *
+ * Codex's app-server publishes no command list — its slash commands belong to
+ * its terminal UI, and most of them (`/vim`, `/theme`, `/archive`) describe that
+ * terminal rather than the session. Reproducing that list here would offer
+ * dozens of names with nothing behind them, so only the few whose subject is
+ * sitting in this composer are named, and they are pointed at it.
+ */
+const HANDLED_HERE = new Set(['model', 'effort', 'reasoning', 'approvals']);
+
+/**
  * Whether a message would be sent as a command the client cannot act on.
  *
- * Codex's app-server protocol has no slash-command concept at all, so `/model`
- * typed here would reach the model as literal prose and quietly do nothing the
- * user intended. Saying so is better than sending it; the native terminal view
- * still runs that client's own commands.
+ * A client that publishes a command list owns everything in it, and anything
+ * outside it is ordinary text that client may still want — `/undo` typed at a
+ * model is a sentence, not a syntax error. So interception is limited to the
+ * commands above, whose subject is a control a few pixels away; blocking any
+ * more than that left Codex sessions unable to send a message beginning with a
+ * slash at all.
  *
- * `announced` is what separates "this client has none" from "it has not told us
- * yet". A session that has never reached ready — a window created a moment ago —
- * has an empty list for the second reason, and refusing its `/model` there would
- * block a command the client does in fact run. Only a client that has announced
- * its list and left it empty is known to have none.
+ * `announced` separates "this client has no commands" from "it has not told us
+ * yet". A session that has never reached ready has an empty list for the second
+ * reason, and its `/model` must reach the client that does run it.
  */
 export function unsupportedCommand(text: string, commands: string[], announced = true): string | undefined {
   if (!announced || commands.length) return undefined;
   const match = /^\/([A-Za-z0-9][\w:-]{0,63})\s*$/.exec(text.trim());
-  return match?.[1];
+  if (!match || !HANDLED_HERE.has(match[1].toLowerCase())) return undefined;
+  return match[1];
 }

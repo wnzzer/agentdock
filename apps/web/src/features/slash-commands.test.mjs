@@ -60,9 +60,15 @@ test('a command a client cannot act on is identified rather than sent as prose',
   const { unsupportedCommand } = await import('./slash-commands.ts');
   // A client that advertises commands handles its own; nothing is intercepted.
   assert.equal(unsupportedCommand('/model', ['model', 'usage']), undefined);
-  // A client with no command support would receive this as literal text.
+  // A client with no command support would receive this as literal text, and
+  // what it names is a control in this composer.
   assert.equal(unsupportedCommand('/model', []), 'model');
-  assert.equal(unsupportedCommand('  /compact  ', []), 'compact');
+  assert.equal(unsupportedCommand('  /effort  ', []), 'effort');
+  // Everything else is the user's own text. Codex publishes no command list, so
+  // blocking every slash there made its sessions unable to send one at all.
+  for (const text of ['/compact', '/undo', '/vim', '/anything']) {
+    assert.equal(unsupportedCommand(text, []), undefined, text);
+  }
   // Ordinary prose, paths and commands with arguments are left alone: only a
   // bare command is unambiguous enough to intercept.
   for (const text of ['hello', 'see /etc/hosts', '/model sonnet', '/', '//x', '']) {
