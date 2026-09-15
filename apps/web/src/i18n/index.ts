@@ -108,7 +108,7 @@ export const zhCN: Readonly<Record<string, string>> = {
   "This file is larger than the 10 MiB attachment limit.": "该文件超过 10 MiB 附件上限。",
   "Native client commands": "原生客户端命令",
   "From this client · Enter or Tab to complete": "来自该客户端 · Enter 或 Tab 补全",
-  "{command} is not a command this client accepts. Run it in the native terminal view, or send a message instead.": "{command} 不是该客户端支持的命令。请在原生终端视图中执行，或改为发送一条消息。",
+  "{command} is not a command this client accepts. Model and thinking depth are the controls below; anything else belongs in the native terminal view.": "{command} 不是该客户端支持的命令。模型和思考深度请用下方的控件；其他操作请在原生终端视图中执行。",
   "Official accounts": "官方账号",
   "Official account": "官方账号",
   "Imported native config": "已引入原生配置",

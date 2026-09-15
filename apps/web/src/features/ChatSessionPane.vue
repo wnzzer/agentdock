@@ -265,7 +265,9 @@ async function send() {
   // This client exposes no commands, so a bare slash command would reach the
   // model as prose. Say so instead of sending something that cannot work.
   const unsupported = unsupportedCommand(draft.value.text, view.value.commands, view.value.commandsAnnounced);
-  if (unsupported) { draft.value.notice = undefined; error.value = t('{command} is not a command this client accepts. Run it in the native terminal view, or send a message instead.', { command: '/' + unsupported }); return; }
+  // Codex has no slash commands in its protocol at all; what its terminal
+  // offers as /model and /approvals are the controls beside this box here.
+  if (unsupported) { draft.value.notice = undefined; error.value = t('{command} is not a command this client accepts. Model and thinking depth are the controls below; anything else belongs in the native terminal view.', { command: '/' + unsupported }); return; }
   const id = props.session.id, target = draft.value, messageId = crypto.randomUUID();
   // Attachment paths travel with the text, so an accepted receipt covers both.
   const typed = target.text;
