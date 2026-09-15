@@ -64,11 +64,17 @@ test('the composer uses compact desktop controls and restores touch targets on m
 test('the working indicator actually animates rather than showing three still dots', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('./ChatSessionPane.vue', import.meta.url), 'utf8');
-  // "Agent is working" was a static row for long enough to look frozen.
-  assert.match(source, /\.chat-working>span\{[^}]*animation:chat-wave/);
-  assert.match(source, /@keyframes chat-wave\{/);
+  // "Agent is working" was a static row for long enough to look frozen. The
+  // turning mark is the client's own, so it also says which agent is thinking.
+  assert.match(source, /class="chat-working-mark" :provider="session\.provider"/);
+  assert.match(source, /\.chat-working-mark\{animation:chat-spin/);
+  // Eased, not a constant sweep: a linear spin reads as a loading GIF, so the
+  // mark surges and settles twice per turn instead.
+  const spin = /@keyframes chat-spin\{[^}]*(?:\}[^@}]*)*?\}\}/.exec(source)[0];
+  assert.ok(spin.split('transform:rotate').length - 1 >= 4, spin);
+  assert.doesNotMatch(source, /animation:chat-spin [^;]*linear/);
   assert.match(source, /\.chat-working-label\{animation:chat-breathe/);
   // Motion is opt-out, like every other animation in this pane.
   const reduced = /@media\(prefers-reduced-motion:reduce\)\{[^}]*\}[^@]*/.exec(source)[0];
-  assert.match(reduced, /\.chat-working>span,\.chat-working-label\{animation:none\}/);
+  assert.match(reduced, /\.chat-working-mark,\.chat-working-label\{animation:none\}/);
 });
