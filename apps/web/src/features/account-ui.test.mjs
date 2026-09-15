@@ -104,3 +104,19 @@ test('sign-in actions follow the official status, and an unchecked account keeps
   assert.deepEqual(accountSignInActions(fixture({ status: 'unknown', capabilities: { login: false, quota: false, reset_quota: false, refresh_token: false, logout: false } })),
     { signIn: false, refreshToken: false, signOut: false });
 });
+
+test('each confirmation is a sibling of the buttons that open it, not nested in a panel that may not render', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('./AccountsDialog.vue', import.meta.url), 'utf8');
+  // Remove-account had been nested inside the usage-limit meters, so it only
+  // appeared for accounts that publish limits — for every other account the
+  // button set the state and nothing rendered. Each confirmation is a section
+  // at the same level, and the meter keeps its own v-if/v-else pair.
+  for (const action of ['logout', 'reset', 'remove']) {
+    assert.match(source, new RegExp(`<section v-if="confirmAction==='${action}'" class="account-confirm">`), action);
+  }
+  assert.match(source, /<progress v-if="accountLimitPercent[^/]*\/><div v-else class="account-no-meter" \/>/);
+  // The confirmation is the only way to reach the request, so it has to be
+  // wired to it: setting the state alone is what made the button do nothing.
+  assert.match(source, /@click="removeAccount"/);
+});
