@@ -454,7 +454,8 @@ async fn interrupt(State(state): State<AppState>, Path(id): Path<SessionId>) -> 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ModelInput {
-    model: String,
+    #[serde(default)]
+    model: Option<String>,
     #[serde(default)]
     effort: Option<String>,
 }
@@ -471,8 +472,13 @@ async fn select_model(
 ) -> Result<CommandAck> {
     let _guard = state.operations.lock().await;
     session_record(&state, id).await?;
-    let model = input.model.trim().to_owned();
-    if model.is_empty() || model.len() > 128 || model.chars().any(char::is_control) {
+    let model = input
+        .model
+        .map(|m| m.trim().to_owned())
+        .filter(|m| !m.is_empty());
+    if let Some(model) = model.as_deref()
+        && (model.len() > 128 || model.chars().any(char::is_control))
+    {
         return Err(ApiError::bad("Choose a model the client offers."));
     }
     if let Some(effort) = input.effort.as_deref()
@@ -480,20 +486,26 @@ async fn select_model(
     {
         return Err(ApiError::bad("Unsupported reasoning effort."));
     }
+    if model.is_none() && input.effort.is_none() {
+        return Err(ApiError::bad("Choose a model or a thinking depth."));
+    }
     let runtime = state
         .chats
         .get(id)
         .filter(|r| r.running())
         .ok_or_else(|| ApiError::conflict("Start the session before choosing a model"))?;
     runtime
-        .send(model_command(&model, input.effort.as_deref()))
+        .send(model_command(model.as_deref(), input.effort.as_deref()))
         .await?;
     Ok(accepted(None, false))
 }
 /// Absent means "leave the depth as it is". A `null` would reach the bridge as a
 /// present-but-unusable value and be rejected, so the field is omitted entirely.
-fn model_command(model: &str, effort: Option<&str>) -> Value {
-    let mut command = json!({"type": "model", "model": model});
+fn model_command(model: Option<&str>, effort: Option<&str>) -> Value {
+    let mut command = json!({"type": "model"});
+    if let Some(model) = model {
+        command["model"] = Value::from(model);
+    }
     if let Some(effort) = effort {
         command["effort"] = Value::from(effort);
     }
@@ -505,14 +517,18 @@ mod model_command_tests {
     use super::model_command;
 
     #[test]
-    fn an_unset_thinking_depth_is_left_out_rather_than_sent_as_null() {
-        let command = model_command("opus", None);
+    fn an_unset_field_is_left_out_rather_than_sent_as_null() {
+        let command = model_command(Some("opus"), None);
         assert_eq!(command["model"], "opus");
         assert!(
             command.get("effort").is_none(),
             "a null effort is rejected by the bridge as a malformed level"
         );
-        assert_eq!(model_command("opus", Some("high"))["effort"], "high");
+        assert_eq!(model_command(Some("opus"), Some("high"))["effort"], "high");
+        // A depth-only change keeps whichever model the session already runs.
+        let depth_only = model_command(None, Some("high"));
+        assert!(depth_only.get("model").is_none());
+        assert_eq!(depth_only["effort"], "high");
     }
 }
 
@@ -827,7 +843,7 @@ fn normalize_event(mut value: Value) -> Option<Value> {
     let object = value.as_object_mut()?;
     let allowed: &[&str] = match object.get("type")?.as_str()? {
         "ready" => &["type", "native_session_id", "commands"],
-        "settings" => &["type", "model", "models"],
+        "settings" => &["type", "model", "effort", "models"],
         "message" => &["type", "id", "role", "text", "delta"],
         "tool" => &["type", "id", "name", "status", "text"],
         "approval" => &["type", "id", "title", "text", "choices", "questions"],
@@ -879,6 +895,10 @@ fn normalize_event(mut value: Value) -> Option<Value> {
                 value
                     .as_str()
                     .is_some_and(|v| !v.is_empty() && v.len() <= 128)
+            }) && object.get("effort").is_none_or(|value| {
+                value
+                    .as_str()
+                    .is_some_and(|v| providers::EFFORT_LEVELS.contains(&v))
             }) && object.get("models").is_none_or(|value| {
                 value.as_array().is_some_and(|rows| {
                     rows.len() <= 64

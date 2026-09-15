@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { ChatBase, NativeProcess, clip, nativeId, MAX_TEXT } from './chat-common.mjs';
 
 export function claudeLaunch(job) {
-  const args=[];let resume=job.resume_id,settingSources=false,sessionId;
+  const args=[];let resume=job.resume_id,settingSources=false,sessionId,model;
   const values=new Set(['--model','--permission-mode','--permission-prompts','--settings','--setting-sources','--append-system-prompt','--system-prompt','--agent','--agents','--effort','--max-budget-usd','--fallback-model','--allowedTools','--allowed-tools','--disallowedTools','--disallowed-tools','--tools','--add-dir','--plugin-dir','--mcp-config','--name','-n']);
   for(let i=0;i<job.args.length;i++) {
     const arg=job.args[i],equal=arg.indexOf('='),flag=equal>0?arg.slice(0,equal):arg;
@@ -14,6 +14,7 @@ export function claudeLaunch(job) {
     else if(['--print','-p','--verbose','--include-partial-messages','--replay-user-messages'].includes(flag))continue;
     else if(values.has(flag)) {
       const next=value();if(flag==='--permission-mode'&&next==='bypassPermissions')throw Error('Structured mode does not enable permission bypass.');
+      if(flag==='--model')model=next;
       if(flag==='--setting-sources')settingSources=true;args.push(flag,next);
     }else if(['--strict-mcp-config','--disable-slash-commands'].includes(flag))args.push(flag);
     else throw Error('Unsupported Claude Code launch option in structured mode.');
@@ -22,7 +23,7 @@ export function claudeLaunch(job) {
   if(resume)args.push('--resume',resume);
   if(!settingSources)args.push('--setting-sources','user,project,local');
   args.push('--print','--verbose','--input-format','stream-json','--output-format','stream-json','--include-partial-messages','--permission-prompt-tool','stdio');
-  return {args,resume,sessionId};
+  return {args,resume,sessionId,model};
 }
 
 // What currently occupies the context window. Claude Code documents this as the
@@ -64,6 +65,11 @@ export class ClaudeChat extends ChatBase {
     // composer can offer them on a brand new session.
     this.announce(this.launch.resume??this.launch.sessionId,commandNames(initialized?.commands));
     this.models=modelEntries(initialized?.models);
+    // Before the first turn the client does not say which model it is on. What
+    // it does say is that `default` means "whatever this configuration
+    // resolves to", so that is a truthful starting point — and only when the
+    // client itself listed it. A launch flag is more specific, so it wins.
+    this.model=this.launch.model??(this.models?.some(entry=>entry.id==='default')?'default':undefined);
     this.settings(this.models,this.model);
   }
   /**
@@ -73,10 +79,14 @@ export class ClaudeChat extends ChatBase {
    */
   async selectModel(message) {
     if(this.active)throw Error('Wait for the current turn to finish before changing the model.');
+    // A depth-only change keeps the current model; the client has no separate
+    // control for it, and guessing a model here would switch the user's silently.
+    const model=message.model??this.model;
+    if(!model)throw Error('Claude Code has not reported which model this session uses yet. Send a message first, then adjust the thinking depth.');
     const effort=message.effort;
-    await this.port.rpc('set_model',{model:message.model,...(effort?{effort}:{})},true);
-    this.model=message.model;
-    this.settings(this.models,this.model);
+    await this.port.rpc('set_model',{model,...(effort?{effort}:{})},true);
+    this.model=model;this.effort=effort??this.effort;
+    this.settings(this.models,this.model,this.effort);
   }
   message(message) {
     const active=this.begin(message);if(!active)return;
@@ -92,7 +102,15 @@ export class ClaudeChat extends ChatBase {
     if(!message||typeof message!=='object')return;
     if(message.type==='control_request'){this.request(message);return;}
     if(message.type==='control_cancel_request'){this.resolveNative(String(message.request_id));return;}
-    if(message.type==='system'&&message.subtype==='init'){this.announce(message.session_id,commandNames(message.slash_commands));return;}
+    if(message.type==='system'&&message.subtype==='init'){
+      this.announce(message.session_id,commandNames(message.slash_commands));
+      // The init message names the model actually in use. Knowing it is what
+      // lets a depth-only change be applied in place, since set_model needs a
+      // model and inventing one would silently switch the user off theirs.
+      if(typeof message.model==='string'&&message.model)this.model=message.model;
+      this.settings(this.models,this.model);
+      return;
+    }
     if(!this.active)return;
     if(message.parent_tool_use_id)return; // Subagent text must not overwrite the main assistant message.
     if(message.type==='stream_event'){

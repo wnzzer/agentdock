@@ -19,8 +19,11 @@ export function validateChatInput(message, first=false) {
   }else if(message.type==='model'){
     // The client validates the name itself and rejects one it cannot serve, so
     // this only bounds the shape: no list of model names is invented here.
-    if(typeof message.model!=='string'||!message.model.trim()||message.model.length>128||/[\u0000-\u001f]/.test(message.model))throw Error('Invalid model selection.');
+    // Either field alone is a valid request: a model change, a depth change, or
+    // both. Neither is not.
+    if(message.model!==undefined&&(typeof message.model!=='string'||!message.model.trim()||message.model.length>128||/[\u0000-\u001f]/.test(message.model)))throw Error('Invalid model selection.');
     if(message.effort!==undefined&&(typeof message.effort!=='string'||!/^[a-z]{1,16}$/.test(message.effort)))throw Error('Invalid reasoning effort.');
+    if(message.model===undefined&&message.effort===undefined)throw Error('Choose a model or a thinking depth.');
   }else if(!['interrupt','shutdown'].includes(message.type))throw Error('Unsupported chat control message.');
   return message;
 }

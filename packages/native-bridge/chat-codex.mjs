@@ -56,8 +56,9 @@ export class CodexChat extends ChatBase {
    */
   selectModel(message) {
     if(this.active)throw Error('Wait for the current turn to finish before changing the model.');
-    this.launch.thread.model=message.model;
-    this.settings(this.models,this.launch.thread.model);
+    if(message.model)this.launch.thread.model=message.model;
+    if(message.effort)this.effort=message.effort;
+    this.settings(this.models,this.launch.thread.model,this.effort);
   }
   async message(message) {
     const active=this.begin(message);if(!active)return;
@@ -69,7 +70,9 @@ export class CodexChat extends ChatBase {
       }
       if(this.active!==active)return;
       if(active.interrupted){this.finish('interrupted');return;}
-      const result=await this.port.rpc('turn/start',{threadId:this.nativeSessionId,input:[{type:'text',text:message.content}],...(this.launch.thread.model?{model:this.launch.thread.model}:{})});
+      // Codex takes both per turn, so a change applies to the next one without
+      // touching the thread or its context.
+      const result=await this.port.rpc('turn/start',{threadId:this.nativeSessionId,input:[{type:'text',text:message.content}],...(this.launch.thread.model?{model:this.launch.thread.model}:{}),...(this.effort?{effort:this.effort}:{})});
       if(this.active===active){active.nativeTurn=result?.turn?.id;if(active.interrupted)await this.sendInterrupt(active);}
     }catch(error){if(this.active===active){this.error(error.message);this.finish(active.interrupted?'interrupted':'failed');}}
   }

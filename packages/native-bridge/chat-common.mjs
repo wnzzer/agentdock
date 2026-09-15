@@ -140,7 +140,7 @@ export class ChatBase {
    * marks a context boundary, and selecting a model must not start a new one.
    * Entries are forwarded from the client's own list; nothing is added.
    */
-  settings(models, model) {
+  settings(models, model, effort) {
     const list=Array.isArray(models)
       ? models.flatMap(entry=>{
           if(!entry||typeof entry!=='object'||typeof entry.id!=='string'||!entry.id||entry.id.length>128)return [];
@@ -151,8 +151,9 @@ export class ChatBase {
         }).slice(0,64)
       : undefined;
     const selected=typeof model==='string'&&model&&model.length<=128?model:undefined;
-    if(!list?.length&&!selected)return;
-    this.emit({type:'settings',...(selected?{model:selected}:{}),...(list?.length?{models:list}:{})});
+    const depth=typeof effort==='string'&&/^[a-z]{1,16}$/.test(effort)?effort:undefined;
+    if(!list?.length&&!selected&&!depth)return;
+    this.emit({type:'settings',...(selected?{model:selected}:{}),...(depth?{effort:depth}:{}),...(list?.length?{models:list}:{})});
   }
   approval(key, description, answer) {
     if(this.approvals.has(key))return;
