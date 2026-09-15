@@ -922,10 +922,82 @@ pub async fn write_attachment(
     .map_err(|_| IoError::new(500, "attachment write failed"))?
 }
 
+/// Delete one file or directory inside a workspace.
+///
+/// `safe_path` already refuses anything that resolves outside the root or into
+/// a protected name. Two things it cannot decide for a delete are handled here:
+/// the root itself is never removable, and a symlink is unlinked rather than
+/// followed — otherwise deleting a link inside the workspace would delete
+/// whatever it points at.
+pub async fn delete_entry(root: &Path, relative: &str) -> Result<(), IoError> {
+    let canonical = safe_path(root, relative)?;
+    let canonical_root = fs::canonicalize(root).map_err(IoError::from)?;
+    if canonical == canonical_root {
+        return Err(IoError::new(400, "the workspace root cannot be deleted"));
+    }
+    if is_protected_path(&safe_relative(relative)?) {
+        return Err(IoError::new(403, "this path is protected"));
+    }
+    let candidate = canonical_root.join(safe_relative(relative)?);
+    let link = fs::symlink_metadata(&candidate)
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false);
+    let target = if link { candidate } else { canonical };
+    let metadata = fs::symlink_metadata(&target).map_err(IoError::from)?;
+    if metadata.file_type().is_dir() {
+        tokio::fs::remove_dir_all(&target)
+            .await
+            .map_err(IoError::from)
+    } else {
+        tokio::fs::remove_file(&target).await.map_err(IoError::from)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::process::Command as StdCommand;
+
+    #[tokio::test]
+    async fn delete_removes_workspace_entries_but_not_the_root_or_what_a_link_points_at() {
+        let repo = TempRepo::new();
+        let root = &repo.path;
+        fs::write(root.join("notes.txt"), "keep").unwrap();
+        fs::create_dir_all(root.join("build/inner")).unwrap();
+        fs::write(root.join("build/inner/out.bin"), "x").unwrap();
+
+        delete_entry(root, "notes.txt").await.unwrap();
+        assert!(!root.join("notes.txt").exists());
+        // A directory goes with everything under it.
+        delete_entry(root, "build").await.unwrap();
+        assert!(!root.join("build").exists());
+
+        // The root, protected names and anything outside stay untouchable.
+        assert!(delete_entry(root, ".").await.is_err());
+        assert!(delete_entry(root, ".git").await.is_err());
+        assert!(delete_entry(root, "../escape").await.is_err());
+        assert!(root.join(".git").exists());
+
+        // Deleting a link unlinks it; following it would destroy the target,
+        // which is the one thing a workspace delete must never do.
+        #[cfg(unix)]
+        {
+            let outside =
+                std::env::temp_dir().join(format!("agentdock-link-target-{}", Uuid::new_v4()));
+            fs::write(&outside, "precious").unwrap();
+            let inside = root.join("inside.txt");
+            fs::write(&inside, "also precious").unwrap();
+            std::os::unix::fs::symlink(&outside, root.join("outward")).unwrap();
+            std::os::unix::fs::symlink(&inside, root.join("inward")).unwrap();
+            // A link out of the workspace resolves outside it and is refused.
+            assert!(delete_entry(root, "outward").await.is_err());
+            assert!(outside.exists());
+            delete_entry(root, "inward").await.unwrap();
+            assert!(!root.join("inward").exists());
+            assert!(inside.exists(), "the link's target must survive");
+            fs::remove_file(&outside).ok();
+        }
+    }
 
     struct TempRepo {
         path: PathBuf,

@@ -19,6 +19,45 @@ const query = ref("");
 const selected = ref(props.selectedPath ?? "");
 const focusedPath = ref("");
 const revealFailure = ref("");
+const error = ref("");
+/**
+ * Row context menu.
+ *
+ * Copying a path is the thing people came to the tree for most often and had
+ * to do by hand; deleting was not possible here at all.
+ */
+const rowMenu = ref<{ entry: FileEntry; x: number; y: number } | null>(null);
+const copied = ref("");
+const deleting = ref(false);
+const confirmDelete = ref(false);
+function openRowMenu(event: MouseEvent, entry: FileEntry) {
+  event.preventDefault();
+  confirmDelete.value = false; copied.value = "";
+  rowMenu.value = { entry, x: event.clientX, y: event.clientY };
+}
+function closeRowMenu() { rowMenu.value = null; confirmDelete.value = false; }
+const rowMenuStyle = computed(() => rowMenu.value
+  ? { left: Math.min(rowMenu.value.x, window.innerWidth - 210) + "px", top: Math.min(rowMenu.value.y, window.innerHeight - 190) + "px" }
+  : {});
+/** Clipboard access can be refused (insecure origin, denied permission), so a
+ * failure says so rather than silently doing nothing. */
+async function copyText(value: string, label: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+    copied.value = label;
+    setTimeout(() => { if (copied.value === label) copied.value = ""; }, 1400);
+  } catch { error.value = t("Could not copy to the clipboard in this browser."); closeRowMenu(); }
+}
+async function deleteEntry() {
+  const entry = rowMenu.value?.entry; if (!entry) return;
+  deleting.value = true;
+  try {
+    await request(workspacePath(props.workspaceId) + "/file" + "?path=" + encodeURIComponent(entry.path), { method: "DELETE", headers: { "X-AgentDock-Client": "web" } });
+    closeRowMenu();
+    await loadDirectory(treeParent(entry.path) ?? "", true);
+  } catch (cause) { error.value = errorMessage(cause); }
+  finally { deleting.value = false; }
+}
 const refreshing = ref(false);
 const treeElement = ref<HTMLElement>();
 const rowElements = new Map<string, HTMLElement>();
@@ -222,10 +261,11 @@ defineExpose({ reveal });
     <div class="file-search"><Icon name="search" :size="14" /><input v-model="query" :aria-label="t('Filter loaded files')" :placeholder="t('Filter loaded files…')" /><button v-if="query" class="icon-button clear-filter" :aria-label="t('Clear file filter')" @click="query = ''"><Icon name="close" :size="12" /></button></div>
     <p v-if="query" class="tree-filter-note">{{ t('Only loaded folders are searched.') }}</p>
     <p v-if="revealFailure" class="inline-error" role="alert">{{ t('Could not locate {path} in the workspace.', { path: revealFailure }) }}</p>
+    <p v-if="error" class="inline-error" role="alert">{{ error }}<button class="text-button" @click="error = ''">{{ t('Dismiss') }}</button></p>
     <div v-if="root?.error" class="inline-error tree-error" role="alert"><span>{{ root.error }}</span><button class="text-button" @click="loadDirectory('', true)">{{ t('Retry') }}</button></div>
     <div ref="treeElement" class="file-list file-tree" role="tree" :aria-label="t('Workspace files')" :aria-busy="refreshing || root?.loading" :tabindex="rows.length ? -1 : 0">
       <template v-for="row in rows" :key="row.entry.path">
-        <button :ref="element => setRowRef(row.entry.path, element)" class="file-row tree-row" :class="{ 'is-selected': selected === row.entry.path, 'is-directory': row.entry.kind === 'directory' }" role="treeitem" :aria-level="row.depth + 1" :aria-posinset="row.position" :aria-setsize="row.siblings" :aria-expanded="row.entry.kind === 'directory' ? row.expanded : undefined" :aria-selected="selected === row.entry.path" :aria-label="row.entry.name" :aria-description="row.entry.path" :aria-busy="row.entry.kind === 'directory' ? directories.get(row.entry.path)?.loading : undefined" :tabindex="tabPath === row.entry.path ? 0 : -1" :style="{ '--tree-depth': row.depth }" :title="row.entry.path" :draggable="row.entry.kind === 'file'" @dragstart="drag($event, row.entry)" @click="open(row.entry)" @focus="focusedPath = row.entry.path" @keydown="navigate($event, row)">
+        <button :ref="element => setRowRef(row.entry.path, element)" class="file-row tree-row" :class="{ 'is-selected': selected === row.entry.path, 'is-directory': row.entry.kind === 'directory' }" role="treeitem" :aria-level="row.depth + 1" :aria-posinset="row.position" :aria-setsize="row.siblings" :aria-expanded="row.entry.kind === 'directory' ? row.expanded : undefined" :aria-selected="selected === row.entry.path" :aria-label="row.entry.name" :aria-description="row.entry.path" :aria-busy="row.entry.kind === 'directory' ? directories.get(row.entry.path)?.loading : undefined" :tabindex="tabPath === row.entry.path ? 0 : -1" :style="{ '--tree-depth': row.depth }" :title="row.entry.path" :draggable="row.entry.kind === 'file'" @contextmenu="openRowMenu($event, row.entry)" @dragstart="drag($event, row.entry)" @click="open(row.entry)" @focus="focusedPath = row.entry.path" @keydown="navigate($event, row)">
           <i class="tree-disclosure" :class="{ expanded: row.expanded }"><Icon v-if="row.entry.kind === 'directory'" name="chevron" :size="11" /></i><Icon :name="row.entry.kind === 'directory' ? 'folder' : 'file'" :size="15" /><span>{{ row.entry.name }}</span><small v-if="row.entry.kind === 'symlink'" :title="t('Symbolic link')">↗</small><small v-else-if="row.entry.kind !== 'directory'">{{ formatBytes(row.entry.size) }}</small>
         </button>
         <div v-if="row.expanded && !query.trim()" role="none" class="tree-folder-state" :style="{ '--tree-depth': row.depth + 1 }">
@@ -237,10 +277,22 @@ defineExpose({ reveal });
       <div v-if="root?.loading" class="small-empty" role="status">{{ t('Loading files…') }}</div>
       <div v-else-if="root?.loaded && !rows.length" class="small-empty">{{ t(query.trim() ? 'No matching loaded files.' : 'This directory is empty.') }}</div>
     </div>
+    <Teleport to="body"><div v-if="rowMenu" class="tree-menu-backdrop" @pointerdown="closeRowMenu" @contextmenu.prevent="closeRowMenu"><nav class="tree-menu" :style="rowMenuStyle" role="menu" :aria-label="t('File actions')" @pointerdown.stop @keydown.esc.stop.prevent="closeRowMenu"><button type="button" role="menuitem" @click="copyText(rowMenu.entry.path, 'path')">{{ t(copied === 'path' ? 'Copied' : 'Copy path') }}</button><button type="button" role="menuitem" @click="copyText(rowMenu.entry.name, 'name')">{{ t(copied === 'name' ? 'Copied' : 'Copy name') }}</button><button v-if="rowMenu.entry.kind === 'file'" type="button" role="menuitem" @click="closeRowMenu(); open(rowMenu!.entry)">{{ t('Open') }}</button><button type="button" role="menuitem" @click="closeRowMenu(); loadDirectory(rowMenu!.entry.kind === 'directory' ? rowMenu!.entry.path : treeParent(rowMenu!.entry.path) ?? '', true)">{{ t('Refresh files') }}</button><hr/><template v-if="confirmDelete"><p class="tree-menu-confirm">{{ t(rowMenu.entry.kind === 'directory' ? 'Delete {name} and everything inside it? This cannot be undone.' : 'Delete {name}? This cannot be undone.', { name: rowMenu.entry.name }) }}</p><button type="button" role="menuitem" class="tree-menu-danger" :disabled="deleting" :aria-busy="deleting" @click="deleteEntry">{{ t(deleting ? 'Deleting…' : 'Delete permanently') }}</button><button type="button" role="menuitem" @click="confirmDelete = false">{{ t('Cancel') }}</button></template><button v-else type="button" role="menuitem" class="tree-menu-danger" @click="confirmDelete = true">{{ t('Delete…') }}</button></nav></div></Teleport>
     <footer class="explorer-footer">{{ t('{count} loaded items · host filesystem', { count: loadedCount }) }}<span>{{ t('Click to open · drag into a pane') }}</span></footer>
   </section>
 </template>
 <style scoped>
+/* Teleported so the tree's own scrolling and clipping cannot cut it off. */
+.tree-menu-backdrop{position:fixed;inset:0;z-index:60}
+.tree-menu{position:fixed;min-width:198px;padding:5px;background:var(--surface);border:1px solid var(--border);border-radius:11px;box-shadow:0 14px 38px #243b4c2b}
+.tree-menu button{display:block;width:100%;min-height:32px;padding:7px 10px;border:0;border-radius:7px;background:none;text-align:left;font-size:12px;color:var(--ink-soft);white-space:nowrap;cursor:pointer}
+.tree-menu button:hover:not(:disabled){background:var(--teal-soft);color:var(--teal)}
+.tree-menu button:disabled{opacity:.5;cursor:not-allowed}
+.tree-menu hr{border:0;border-top:1px solid var(--border);margin:4px 6px}
+.tree-menu-danger{color:var(--danger-ink)}
+.tree-menu-danger:hover:not(:disabled){background:#fff3f5;color:var(--danger)}
+.tree-menu-confirm{padding:6px 10px;margin:0;font-size:11px;line-height:1.6;color:var(--ink-soft);white-space:normal;max-width:220px}
+@media(pointer:coarse){.tree-menu button{min-height:44px}}
 .file-breadcrumb { max-height: 66px; overflow: auto; }
 .file-breadcrumb button { max-width: 100%; }
 .file-search { gap: 5px; }

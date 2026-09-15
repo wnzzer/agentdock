@@ -48,6 +48,10 @@ test('the composer uses compact desktop controls and restores touch targets on m
   assert.match(source, /\.chat-composer \.chat-attach\{width:30px;height:30px;min-width:30px;min-height:0;border-radius:8px\}/);
   // Touch targets follow the pointing device, not the pane width: a narrow pane
   // on a desktop is still a mouse, and a phone needs 44px at any width.
+  // Touch sizing lives in one coarse-pointer block, so a second one would
+  // split the contract this asserts.
+  const blocks = [...source.matchAll(/@media\(pointer:coarse\)\{/g)];
+  assert.equal(blocks.length, 1, 'touch sizing stays in a single block');
   const coarse = /@media\(pointer:coarse\)\{[\s\S]*?\n\}/.exec(source)[0];
   for (const control of ['.chat-composer .chat-send', '.chat-composer .chat-attach']) {
     assert.ok(coarse.includes(`${control}{width:44px;height:44px;min-width:44px;min-height:44px`), control);

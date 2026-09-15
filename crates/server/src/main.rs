@@ -335,7 +335,10 @@ fn router(state: AppState) -> Router {
             get(get_layout).put(save_layout),
         )
         .route("/api/workspaces/{id}/files", get(list_files))
-        .route("/api/workspaces/{id}/file", get(read_file).put(write_file))
+        .route(
+            "/api/workspaces/{id}/file",
+            get(read_file).put(write_file).delete(delete_file),
+        )
         .route(
             "/api/workspaces/{id}/attachments",
             // Raw bytes, so a phone upload costs no base64 inflation. The limit
@@ -1240,6 +1243,23 @@ async fn write_file(
         )
         .await?,
     ))
+}
+/// Delete a file or directory a workspace owns. Destructive and not undoable,
+/// so the caller states the path explicitly and the UI confirms it first.
+async fn delete_file(
+    State(state): State<AppState>,
+    Path(id): Path<WorkspaceId>,
+    Query(q): Query<PathQuery>,
+) -> Result<StatusCode> {
+    let _guard = state.operations.lock().await;
+    workspace_io::delete_entry(
+        &root(&state, id).await?,
+        q.path
+            .as_deref()
+            .ok_or_else(|| ApiError::bad("Path required"))?,
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 async fn read_asset(
     State(state): State<AppState>,

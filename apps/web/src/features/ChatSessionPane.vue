@@ -114,6 +114,41 @@ async function pickModel(id: string) {
   } catch (cause) { if (props.session.id === session && mounted.value) error.value = errorMessage(cause); }
   finally { if (props.session.id === session) actionBusy.value = false; }
 }
+/**
+ * Timeline context menu.
+ *
+ * Clearing is the client's own /clear, so it only appears when this client
+ * advertised that command; AgentDock never invents one.
+ */
+const timelineMenu = ref<{ x: number; y: number; text: string } | null>(null);
+const canClearContext = computed(() => view.value.commands.includes('clear') && canSend.value !== false && !turnBusy.value && running.value && view.value.ready);
+function openTimelineMenu(event: MouseEvent) {
+  if (isPreview.value) return;
+  event.preventDefault();
+  timelineMenu.value = { x: event.clientX, y: event.clientY, text: String(window.getSelection() ?? '') };
+}
+function closeTimelineMenu() { timelineMenu.value = null; }
+const timelineMenuStyle = computed(() => timelineMenu.value
+  ? { left: Math.min(timelineMenu.value.x, window.innerWidth - 210) + 'px', top: Math.min(timelineMenu.value.y, window.innerHeight - 170) + 'px' }
+  : {});
+async function copyFromTimeline(value: string) {
+  closeTimelineMenu();
+  if (!value) return;
+  try { await navigator.clipboard.writeText(value); }
+  catch { error.value = t('Could not copy to the clipboard in this browser.'); }
+}
+/** Sends the client's own /clear rather than wiping the view locally: the
+ * transcript and the client's context have to go together, and only the client
+ * can drop its own. */
+async function clearContext() {
+  closeTimelineMenu();
+  if (!canClearContext.value) return;
+  const id = props.session.id, messageId = crypto.randomUUID();
+  actionBusy.value = true; error.value = '';
+  try { await request('/sessions/' + encodeURIComponent(id) + '/conversation/message', json('POST', { id: messageId, content: '/clear' })); }
+  catch (cause) { if (props.session.id === id && mounted.value) error.value = errorMessage(cause); }
+  finally { if (props.session.id === id) actionBusy.value = false; }
+}
 /** A model the live switch could not reach, offered as a launch choice. */
 const launchFallback = ref('');
 const launchFallbackName = computed(() => models.value.find(entry => entry.id === launchFallback.value)?.name ?? launchFallback.value);
@@ -435,6 +470,7 @@ function keydown(event: KeyboardEvent) {
 
 <template>
   <section :class="['chat-pane', { 'has-tab-menu': !!paneId }]" :aria-label="t('Conversation with {provider}', {provider:providerLabel(session.provider)})" @keydown="paneKeydown">
+    <Teleport to="body"><div v-if="timelineMenu" class="chat-timeline-backdrop" @pointerdown="closeTimelineMenu" @contextmenu.prevent="closeTimelineMenu"><nav class="chat-timeline-menu" :style="timelineMenuStyle" role="menu" :aria-label="t('Conversation actions')" @pointerdown.stop @keydown.esc.stop.prevent="closeTimelineMenu"><button v-if="timelineMenu.text" type="button" role="menuitem" @click="copyFromTimeline(timelineMenu!.text)">{{ t('Copy selection') }}</button><button type="button" role="menuitem" @click="closeTimelineMenu(); scrollToLatest(true)">{{ t('Latest message') }}</button><button type="button" role="menuitem" :disabled="loading" @click="closeTimelineMenu(); load()">{{ t('Refresh conversation') }}</button><template v-if="canClearContext"><hr/><button type="button" role="menuitem" :disabled="actionBusy" :title="t('Runs this client\'s own /clear: the transcript and its context are dropped together.')" @click="clearContext">{{ t('Clear context') }}</button></template></nav></div></Teleport>
     <Teleport v-if="!isPreview" to="body" :disabled="!paneId"><details ref="sessionMenu" :style="tabMenuStyle" :class="['chat-menu','chat-floating-menu', { 'chat-tab-menu': !!paneId }]" @toggle="positionMenu" @keydown.esc.stop.prevent="closeSessionMenu(true)"><summary :aria-label="t('Session actions')" :title="t('Session actions')"><Icon name="more" :size="17" /></summary><nav :style="tabMenuPanelStyle"><div class="chat-menu-status"><span class="chat-status-dot" :class="{working:turnBusy}" />{{ t(statusLabel) }}</div><button @click="closeSessionMenu(); load()"><Icon name="refresh" :size="14" />{{ t('Refresh conversation') }}</button><button @click="closeSessionMenu(); emit('environment',session.id)"><Icon name="settings" :size="14" />{{ t('Session environment') }}</button><button @click="closeSessionMenu(); emit('profiles')"><Icon name="account" :size="14" />{{ t('Manage endpoint profiles') }}</button><button v-if="legacyAvailable" @click="closeSessionMenu(); emit('legacy')"><Icon name="terminal" :size="14" />{{ t('Open native client view') }}</button><slot name="session-actions" :close-menu="closeSessionMenu" /><button v-if="running" class="chat-end-button" :disabled="actionBusy" @click="requestEnd"><Icon name="stop" :size="14" />{{ t('End session…') }}</button></nav></details></Teleport>
     <div v-if="!supported" class="chat-notice">{{ t('Structured conversation requires an updated backend. Your native session is unchanged.') }}<button v-if="legacyAvailable" class="chat-link" @click="emit('legacy')">{{ t('Open native client view') }}</button></div>
     <div v-if="error" class="chat-alert" role="alert">{{ error }}<button @click="load()">{{ t('Refresh conversation') }}</button></div>
@@ -442,7 +478,7 @@ function keydown(event: KeyboardEvent) {
     <div v-if="notice" class="chat-notice">{{ t(notice) }}</div>
     <div v-if="session.native_source_id" class="chat-notice">{{ t('Native history resumes in the client; earlier transcript is not yet displayed here.') }}</div>
     <div v-if="confirmEnd&&!isPreview" class="chat-end-confirm" role="alertdialog" :aria-label="t('End session')"><p>{{ t('End this session? Its background process will stop; history remains.') }}</p><div><button :disabled="actionBusy" @click="endSession">{{ t('End session') }}</button><button :disabled="actionBusy" @click="confirmEnd=false">{{ t('Keep connected') }}</button></div></div>
-    <div ref="viewport" class="chat-timeline" role="log" :aria-label="t('Conversation messages')" aria-live="polite" :aria-busy="view.turn==='running'" @scroll="atBottom">
+    <div ref="viewport" class="chat-timeline" role="log" :aria-label="t('Conversation messages')" aria-live="polite" :aria-busy="view.turn==='running'" @contextmenu="openTimelineMenu" @scroll="atBottom">
       <p v-if="truncated" class="chat-history-notice">{{ t('Earlier display history was trimmed. Native history remains managed by the official client.') }}</p>
       <div v-if="!view.items.length" class="chat-welcome"><span class="chat-welcome-mark"><ProviderIcon :provider="session.provider" :size="32" /></span><h3>{{ t('What shall we build?') }}</h3><p>{{ t('A real conversation with your native agent, with room for tools, changes and your next idea.') }}</p><span class="chat-context-chip">{{ endpointName }}</span><p v-if="session.provider==='claude_code'" class="chat-trust-note">{{ t('Claude headless mode skips the interactive workspace-trust prompt. Send messages only for directories you trust; supported tool approvals still come from the native client.') }}</p></div>
       <template v-for="(item,index) in view.items" :key="item.type+':'+index+':'+item.id">
@@ -490,6 +526,12 @@ function keydown(event: KeyboardEvent) {
 .chat-endpoint nav button:hover:not(:disabled),.chat-model nav button:hover:not(:disabled){background:var(--teal-soft)}
 .chat-endpoint nav button.selected,.chat-model nav button.selected{color:var(--teal);font-weight:600;background:var(--teal-soft)}
 .chat-effort{max-width:132px}
+.chat-timeline-backdrop{position:fixed;inset:0;z-index:60}
+.chat-timeline-menu{position:fixed;min-width:196px;padding:5px;background:var(--surface);border:1px solid var(--border);border-radius:11px;box-shadow:0 14px 38px #243b4c2b}
+.chat-timeline-menu button{display:block;width:100%;min-height:32px;padding:7px 10px;border:0;border-radius:7px;background:none;text-align:left;font-size:12px;color:var(--ink-soft);white-space:nowrap;cursor:pointer}
+.chat-timeline-menu button:hover:not(:disabled){background:var(--teal-soft);color:var(--teal)}
+.chat-timeline-menu button:disabled{opacity:.5;cursor:not-allowed}
+.chat-timeline-menu hr{border:0;border-top:1px solid var(--border);margin:4px 6px}
 .chat-effort :deep(.chip-menu-panel){padding:13px 14px 10px}
 .chat-effort-body{width:218px;max-width:74cqw}
 
@@ -592,6 +634,7 @@ function keydown(event: KeyboardEvent) {
    is here too: it stops iOS zooming the page on focus. */
 @media(pointer:coarse){
   .chat-composer>textarea{font-size:16px}
+  .chat-timeline-menu button{min-height:44px}
   /* A finger needs a taller pill to drag along. */
   .chat-effort-body{width:236px}
   .chat-effort-slider{height:34px}
