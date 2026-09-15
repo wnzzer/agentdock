@@ -80,7 +80,6 @@ function renameSession(id: string): void { emit("renameRequest", id); }
       >
         <template #session-actions="{ closeMenu }">
           <button type="button" class="session-shell-action" @click="closeMenu(); renameSession(session.id)"><Icon name="edit" :size="14" />{{ t('Rename session') }}</button>
-          <button type="button" class="session-shell-action" @click="closeMenu(); emit('reveal', session.id)"><Icon name="locate" :size="14" />{{ t('Locate in session list') }}</button>
           <button v-if="isEphemeral" type="button" class="session-shell-action session-keep-action" @click="closeMenu(); emit('keep', session.id)"><Icon name="check" :size="14" />{{ t('Keep this session') }}</button>
           <button type="button" class="session-shell-action" @click="showRunInfo(closeMenu)">{{ t('Run information') }}</button>
         </template>
@@ -103,7 +102,6 @@ function renameSession(id: string): void { emit("renameRequest", id); }
       >
         <template #session-actions="{ closeMenu }">
           <button type="button" class="session-shell-action" @click="closeMenu(); renameSession(session.id)"><Icon name="edit" :size="14" />{{ t('Rename session') }}</button>
-          <button type="button" class="session-shell-action" @click="closeMenu(); emit('reveal', session.id)"><Icon name="locate" :size="14" />{{ t('Locate in session list') }}</button>
           <button v-if="isEphemeral" type="button" class="session-shell-action session-keep-action" @click="closeMenu(); emit('keep', session.id)"><Icon name="check" :size="14" />{{ t('Keep this session') }}</button>
           <button v-if="canSwitch" type="button" class="session-shell-action" @click="closeMenu(); openChat()">{{ t('Chat') }}</button>
           <button type="button" class="session-shell-action" @click="showRunInfo(closeMenu)">{{ t('Run information') }}</button>

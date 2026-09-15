@@ -108,7 +108,8 @@ test('session environment and Escape stay accessible from the row menu without o
   const environment = [], opened = [];
   const { html, state } = await render(SessionRow, { session: current, archiveSupported: true, onEnvironment: id => environment.push(id), onOpen: value => opened.push(value) }, state => state.toggleMenu());
   assert.ok(html.includes('Session actions for Fixture current'));
-  assert.ok(html.includes('Locate Fixture current in canvas'));
+  // Locating in the canvas moved into this menu so it costs the row no width.
+  assert.ok(html.includes('Locate in canvas'));
   assert.ok(html.includes('Session environment'));
   state.environment();
   assert.deepEqual(environment, [current.id]);

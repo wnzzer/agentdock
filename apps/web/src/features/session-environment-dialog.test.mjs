@@ -90,5 +90,8 @@ test('sidebar keeps compact session actions separate from opening a stopped sess
   const {html}=await render(Sidebar,{workspaces:[workspace],sessions:[fixture],selectedWorkspaceId:workspace.id});
   assert.ok(html.includes('aria-label="Session actions for Fixture session"'));
   assert.match(html,/<button\b[^>]*session-more-button[^>]*aria-expanded="false"/);
-  assert.ok(html.includes('aria-label="Locate Fixture session in canvas"'));
+  // The row keeps only what it needs: locating in the canvas is a menu item
+  // now, so a long session title gets that width instead.
+  assert.equal(html.includes('session-locate-button'), false);
+  assert.equal(html.includes('Locate in canvas'), false, 'closed menus render no items');
 });

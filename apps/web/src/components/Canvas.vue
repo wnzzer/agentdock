@@ -36,7 +36,7 @@ const props = withDefaults(defineProps<{
    * itself; the owner decides whether a bound resource may be released first. */
   confirmClosePane?: (pane: PaneNode) => boolean | Promise<boolean>;
 }>(), { minWidth: 280, minHeight: 180 });
-const emit = defineEmits<{ "update:modelValue": [document: LayoutDocument]; "select-pane": [pane: PaneNode]; "open-pane": [pane: PaneNode]; "create-session": [targetId: string, provider: ProviderKind, ephemeral: boolean] }>();
+const emit = defineEmits<{ "update:modelValue": [document: LayoutDocument]; "select-pane": [pane: PaneNode]; "open-pane": [pane: PaneNode]; "create-session": [targetId: string, provider: ProviderKind, ephemeral: boolean]; "reveal-session": [sessionId: string] }>();
 defineSlots<{ pane(props: { pane: PaneNode }): unknown }>();
 const working = shallowRef<LayoutDocument>(restoreCollapsed(props.modelValue));
 const stage = ref<HTMLElement | null>(null);
@@ -230,7 +230,7 @@ onBeforeUnmount(() => {
   <div class="dock-canvas" :class="{ 'is-resizing': resizing }">
     <div v-if="notice" class="dock-canvas-notice" role="status">{{ t(notice) }}<button type="button" :aria-label="t('Dismiss layout notice')" @click="notice = ''">×</button></div>
     <div ref="stage" class="dock-canvas-stage">
-      <LayoutNode :node="visible" :selected="selected" :maximized="maximized" :located-pane-id="locatedPaneId" :workspace-labels="workspaceLabels" :session-providers="sessionProviders" :ephemeral-session-ids="ephemeralSessionIds" :ephemeral-supported="ephemeralSupported" @select="selectPane" @split="split" @resize="resize" @resizing="resizing = $event" @close="close" @maximize="maximize" @drop-pane="dropFromPointer" @add-pane="add" @create-session="(id,provider,ephemeral)=>emit('create-session',id,provider,ephemeral)">
+      <LayoutNode :node="visible" :selected="selected" :maximized="maximized" :located-pane-id="locatedPaneId" :workspace-labels="workspaceLabels" :session-providers="sessionProviders" :ephemeral-session-ids="ephemeralSessionIds" :ephemeral-supported="ephemeralSupported" @select="selectPane" @split="split" @resize="resize" @resizing="resizing = $event" @close="close" @maximize="maximize" @drop-pane="dropFromPointer" @add-pane="add" @create-session="(id,provider,ephemeral)=>emit('create-session',id,provider,ephemeral)" @reveal-session="emit('reveal-session', $event)">
         <template #pane="scope"><slot name="pane" :pane="scope.pane" /></template>
       </LayoutNode>
     </div>

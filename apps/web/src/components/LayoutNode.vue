@@ -20,6 +20,7 @@ const emit = defineEmits<{
   "drop-pane": [targetId: string, pane: PaneNode, position: DockPosition];
   "add-pane": [targetId: string, kind: LeafPaneKind];
   "create-session": [targetId: string, provider: ProviderKind, ephemeral: boolean];
+  "reveal-session": [sessionId: string];
 }>();
 
 const splitElement = ref<HTMLElement | null>(null);
@@ -213,13 +214,13 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
 <template>
   <div v-if="node.type === 'split'" ref="splitElement" class="dock-split" :class="'is-' + node.direction" :style="splitStyle" :data-split-id="node.id">
     <div class="dock-child">
-      <LayoutNode :node="node.first" :selected="selected" :maximized="maximized" :located-pane-id="locatedPaneId" :workspace-labels="workspaceLabels" :session-providers="sessionProviders" :ephemeral-session-ids="ephemeralSessionIds" :ephemeral-supported="ephemeralSupported" @select="forwardSelect" @split="forwardSplit" @resize="forwardResize" @resizing="emit('resizing', $event)" @close="emit('close', $event)" @maximize="emit('maximize', $event)" @drop-pane="forwardDrop" @add-pane="forwardAdd" @create-session="forwardCreate">
+      <LayoutNode :node="node.first" :selected="selected" :maximized="maximized" :located-pane-id="locatedPaneId" :workspace-labels="workspaceLabels" :session-providers="sessionProviders" :ephemeral-session-ids="ephemeralSessionIds" :ephemeral-supported="ephemeralSupported" @select="forwardSelect" @split="forwardSplit" @resize="forwardResize" @resizing="emit('resizing', $event)" @close="emit('close', $event)" @maximize="emit('maximize', $event)" @drop-pane="forwardDrop" @add-pane="forwardAdd" @create-session="forwardCreate" @reveal-session="emit('reveal-session', $event)">
         <template #pane="scope"><slot name="pane" :pane="scope.pane" /></template>
       </LayoutNode>
     </div>
     <div class="dock-separator" role="separator" tabindex="0" :aria-label="t(node.direction === 'horizontal' ? 'Resize columns' : 'Resize rows')" :aria-orientation="node.direction === 'horizontal' ? 'vertical' : 'horizontal'" :aria-valuenow="Math.round(node.ratio * 100)" :aria-valuemin="5" :aria-valuemax="95" :title="t('Drag to resize · double-click for 1:1 · arrow keys for precision')" @pointerdown="beginResize" @keydown="keyboardResize" @dblclick="emit('resize', node.id, 0.5, true)" />
     <div class="dock-child">
-      <LayoutNode :node="node.second" :selected="selected" :maximized="maximized" :located-pane-id="locatedPaneId" :workspace-labels="workspaceLabels" :session-providers="sessionProviders" :ephemeral-session-ids="ephemeralSessionIds" :ephemeral-supported="ephemeralSupported" @select="forwardSelect" @split="forwardSplit" @resize="forwardResize" @resizing="emit('resizing', $event)" @close="emit('close', $event)" @maximize="emit('maximize', $event)" @drop-pane="forwardDrop" @add-pane="forwardAdd" @create-session="forwardCreate">
+      <LayoutNode :node="node.second" :selected="selected" :maximized="maximized" :located-pane-id="locatedPaneId" :workspace-labels="workspaceLabels" :session-providers="sessionProviders" :ephemeral-session-ids="ephemeralSessionIds" :ephemeral-supported="ephemeralSupported" @select="forwardSelect" @split="forwardSplit" @resize="forwardResize" @resizing="emit('resizing', $event)" @close="emit('close', $event)" @maximize="emit('maximize', $event)" @drop-pane="forwardDrop" @add-pane="forwardAdd" @create-session="forwardCreate" @reveal-session="emit('reveal-session', $event)">
         <template #pane="scope"><slot name="pane" :pane="scope.pane" /></template>
       </LayoutNode>
     </div>
@@ -237,6 +238,10 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
           <!-- Keep every session target mounted. A Teleport menu can outlive a
                tab activation during layout updates; removing its target in
                that frame causes Vue to patch a null vnode. -->
+          <!-- Finding a session in the list is a navigation action, not a rare
+               one, so it sits on the tab rather than behind the ··· menu. Only
+               the active tab shows it, like the menu beside it. -->
+          <button v-if="pane.metadata?.session_id && pane.id === activePane?.id" class="dock-tab-locate" type="button" :aria-label="t('Locate {title} in session list', { title: titleFor(pane) })" :title="t('Locate in session list')" @pointerdown.stop @click.stop="emit('reveal-session', String(pane.metadata.session_id))"><Icon name="locate" :size="12" /></button>
           <span v-if="pane.metadata?.session_id" class="dock-tab-session-actions" :id="`session-actions-${pane.id}`" />
           <button class="dock-tab-close" type="button" :aria-label="t('Close {title} pane', { title: tabLabel(pane) })" :title="t(isEphemeral(pane) ? 'Close and discard this temporary session' : 'Close pane (session keeps running)')" @pointerdown.stop @click.stop="emit('close', pane.id)"><Icon name="close" :size="12" /></button>
         </div>
@@ -272,6 +277,8 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
 <style scoped>
 /* The menu is teleported to the body so a tab strip with overflow clipping
    cannot cut it off, and the backdrop makes any click elsewhere dismiss it. */
+.dock-tab-locate{flex:none;display:grid;place-items:center;width:18px;height:18px;padding:0;border:0;border-radius:5px;background:none;color:#7f93a1;cursor:pointer}
+.dock-tab-locate:hover,.dock-tab-locate:focus-visible{color:var(--teal);background:var(--teal-soft)}
 .dock-tab-menu-backdrop{position:fixed;inset:0;z-index:60}
 .dock-tab-menu{position:fixed;min-width:180px;padding:5px;background:var(--surface);border:1px solid var(--border);border-radius:11px;box-shadow:0 14px 38px #243b4c2b}
 .dock-tab-menu button{display:block;width:100%;min-height:32px;padding:7px 10px;border:0;border-radius:7px;background:none;text-align:left;font-size:12px;color:var(--ink-soft);white-space:nowrap;cursor:pointer}
