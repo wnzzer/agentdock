@@ -145,6 +145,15 @@ for(const provider of ['codex','claude_code']){
   }));
 }
 
+test('a refused model change reports the client\'s own reason, not a generic failure',async()=>fixture('claude_code',async({send,wait})=>{
+  await wait(event=>event.type==='settings'&&event.models?.length);
+  send({type:'model',model:'refused-model'});
+  // "Check client settings and version" left the user with nothing to act on
+  // when the refusal actually came from the upstream endpoint.
+  const error=await wait(event=>event.type==='error');
+  assert.match(error.message,/availability probe refused/);
+}));
+
 test('input validation rejects malformed controls and oversized prompts without reflecting their content',()=>{
   assert.throws(()=>validateChatInput({type:'message',id:'one',content:'x'.repeat(256*1024+1)}));
   assert.throws(()=>validateChatInput({type:'approval',request_id:'one',decision:'acceptForSession'}));

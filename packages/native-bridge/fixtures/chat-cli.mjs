@@ -68,6 +68,11 @@ for await(const line of createInterface({input:process.stdin})) {
     const response=message.request.subtype==='initialize'
       ? {models:[{value:'opus',displayName:'Opus',description:'Fixture opus',supportsEffort:true,supportedEffortLevels:['low','high']},{value:'haiku',displayName:'Haiku'}]}
       : {};
+    // A client refusal states its own reason; the bridge must carry it through.
+    if(message.request.subtype==='set_model'&&message.request.model==='refused-model'){
+      send({type:'control_response',response:{subtype:'error',request_id:message.request_id,error:'API error: 400 availability probe refused'}});
+      continue;
+    }
     send({type:'control_response',response:{subtype:'success',request_id:message.request_id,response}});
     if(message.request.subtype==='interrupt')completed('interrupted');
     else assert.ok(['initialize','set_model'].includes(message.request.subtype));

@@ -56,7 +56,16 @@ export class NativeProcess {
       const pending = this.pending.get(responseId);
       if (pending) {
         this.pending.delete(responseId); clearTimeout(pending.timer);
-        if (message.error || message.response?.subtype === 'error') pending.reject(new Error('Native client rejected a control request. Check client settings and version.'));
+        if (message.error || message.response?.subtype === 'error') {
+          // The client says exactly why it refused. Dropping that left the user
+          // with a generic message and nothing to act on, so its own wording is
+          // carried through — clipped, and already redacted on the way out.
+          const stated = message.response?.error ?? message.error?.message ?? message.error;
+          const detail = typeof stated === 'string' && stated.trim() ? clip(stated.trim(), 400) : undefined;
+          pending.reject(new Error(detail
+            ? `Claude Code refused: ${detail}`
+            : 'Native client rejected a control request. Check client settings and version.'));
+        }
         else pending.resolve(message.type === 'control_response' ? message.response.response ?? {} : message.result);
       } else onMessage(message);
     }, this.failure);
