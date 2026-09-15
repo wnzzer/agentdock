@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { accountLimitPercent, accountLoginUrl, accountResetDate, accountStatusLabel, accountResetCreditState, canResetAccountQuota, createQuotaResetStore, quotaResetOutcomeNotice, QUOTA_RESET_STORAGE_KEY, QUOTA_RESET_STORAGE_WARNING } from './account-ui.ts';
+import { accountLimitPercent, accountLoginUrl, accountResetDate, accountSignInActions, accountStatusLabel, accountResetCreditState, canResetAccountQuota, createQuotaResetStore, quotaResetOutcomeNotice, QUOTA_RESET_STORAGE_KEY, QUOTA_RESET_STORAGE_WARNING } from './account-ui.ts';
 
 const fixture = (changes = {}) => ({ id: 'account-one', name: 'Fixture account', provider: 'codex', profile_id: 'profile-one', storage_path: '/fixture/account', status: 'signed_in', limits: { reset_credits: 2 }, capabilities: { login: true, quota: true, reset_quota: true, refresh_token: true, logout: true }, ...changes });
 
@@ -86,4 +86,21 @@ test('a failed cleanup keeps the previous request key instead of allowing anothe
   store.begin(fixture(), true); denyWrites = true;
   assert.equal(store.complete('account-one'), false); assert.equal(store.get('account-one').idempotency_key, 'id-1');
   assert.equal(store.begin(fixture(), true).idempotency_key, 'id-1'); assert.equal(generated, 1);
+});
+
+test('sign-in actions follow the official status, and an unchecked account keeps every one of them', () => {
+  // Signed in: offering sign-in again would do nothing, but the actions that
+  // undo it must stay, or the account could never be signed out.
+  assert.deepEqual(accountSignInActions(fixture()), { signIn: false, refreshToken: true, signOut: true });
+  // Signed out: nothing to refresh and no session to end.
+  assert.deepEqual(accountSignInActions(fixture({ status: 'signed_out' })), { signIn: true, refreshToken: false, signOut: false });
+  assert.deepEqual(accountSignInActions(fixture({ status: 'error' })), { signIn: true, refreshToken: false, signOut: false });
+  // Never checked is not the same as signed out: hiding sign-in here would
+  // strand an account nobody has read the status of yet.
+  assert.deepEqual(accountSignInActions(fixture({ status: 'unknown' })), { signIn: true, refreshToken: true, signOut: true });
+  // A sign-in already in flight is not restarted from these buttons.
+  assert.equal(accountSignInActions(fixture({ status: 'login_pending' })).signIn, false);
+  // A client that cannot do one of these never offers it, whatever the status.
+  assert.deepEqual(accountSignInActions(fixture({ status: 'unknown', capabilities: { login: false, quota: false, reset_quota: false, refresh_token: false, logout: false } })),
+    { signIn: false, refreshToken: false, signOut: false });
 });

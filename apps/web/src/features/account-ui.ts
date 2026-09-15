@@ -86,6 +86,32 @@ export function accountLoginUrl(account: Pick<AccountView, 'provider' | 'login'>
     return url.protocol === 'https:' && !url.username && !url.password && domains.some(domain => url.hostname === domain || url.hostname.endsWith('.' + domain)) ? url.href : undefined;
   } catch { return undefined; }
 }
+/**
+ * Which sign-in actions an account's state makes sense to offer.
+ *
+ * `unknown` means the official status has never been read — not that the
+ * account is signed out — so everything stays on offer there: hiding sign-in
+ * from an account nobody has checked yet would strand it. Once a status is
+ * known the half that cannot apply goes away, because signing in again while
+ * signed in does nothing, and there is no token to refresh or session to end
+ * while signed out.
+ *
+ * Every account operation re-reads the official status afterwards, so a sign-in
+ * or sign-out flips these in the same round trip rather than leaving the button
+ * that undoes it hidden.
+ */
+export function accountSignInActions(account: Pick<AccountView, 'status' | 'capabilities'>): {
+  signIn: boolean;
+  refreshToken: boolean;
+  signOut: boolean;
+} {
+  const out = account.status === 'signed_out' || account.status === 'error';
+  return {
+    signIn: account.capabilities.login && account.status !== 'login_pending' && account.status !== 'signed_in',
+    refreshToken: account.capabilities.refresh_token && !out,
+    signOut: account.capabilities.logout && !out,
+  };
+}
 export function canResetAccountQuota(account: AccountView): boolean {
   return account.status === 'signed_in' && account.capabilities.reset_quota && account.capabilities.quota && Number.isFinite(account.limits?.reset_credits) && Number(account.limits?.reset_credits) > 0;
 }
