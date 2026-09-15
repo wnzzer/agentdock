@@ -16,6 +16,11 @@ export function validateChatInput(message, first=false) {
   }else if(message.type==='approval'){
     if(typeof message.request_id!=='string'||message.request_id.length>256||!['accept','decline','cancel'].includes(message.decision))throw Error('Invalid approval response.');
     if(message.answers!==undefined&&(!message.answers||typeof message.answers!=='object'||Array.isArray(message.answers)||Object.entries(message.answers).length>16||Object.entries(message.answers).some(([key,values])=>key.length>256||!Array.isArray(values)||values.length>32||values.some(value=>typeof value!=='string'||Buffer.byteLength(value)>8192))))throw Error('Invalid native question answers.');
+  }else if(message.type==='model'){
+    // The client validates the name itself and rejects one it cannot serve, so
+    // this only bounds the shape: no list of model names is invented here.
+    if(typeof message.model!=='string'||!message.model.trim()||message.model.length>128||/[\u0000-\u001f]/.test(message.model))throw Error('Invalid model selection.');
+    if(message.effort!==undefined&&(typeof message.effort!=='string'||!/^[a-z]{1,16}$/.test(message.effort)))throw Error('Invalid reasoning effort.');
   }else if(!['interrupt','shutdown'].includes(message.type))throw Error('Unsupported chat control message.');
   return message;
 }
@@ -53,6 +58,7 @@ export function runChatBridge(input=process.stdin,output=process.stdout,options=
           if(message.type==='message')await runtime.message(message);
           else if(message.type==='approval')runtime.answer(message);
           else if(message.type==='interrupt')await runtime.interrupt();
+          else if(message.type==='model')await runtime.selectModel(message);
           else await shutdown();
         }
       }catch(error){emit({type:'error',message:error instanceof Error?error.message:'Native chat operation failed.'});if(!initialized){void shutdown();}}

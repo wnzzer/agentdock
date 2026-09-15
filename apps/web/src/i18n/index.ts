@@ -220,6 +220,8 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Local snapshot written by the official client for its own status line.": "官方客户端写给自己状态栏的本地快照。",
   "This may consume a real account resource; there is no local quota bypass.": "可能消耗真实账号资源；不提供本地额度绕过。",
   "Endpoint default": "端点默认",
+  "Model": "模型",
+  "Client default": "客户端默认",
   "Faster": "更快",
   "Smarter": "更聪明",
   "Apply this configuration change?": "应用这项配置更改？",

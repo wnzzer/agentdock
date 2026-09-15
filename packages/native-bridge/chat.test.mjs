@@ -110,9 +110,46 @@ test('Codex file-change and MCP tool items have complete lifecycle events',async
   assert.ok(events.some(event=>event.type==='tool'&&event.id==='mcp-1'&&event.name==='fixture / read'&&event.status==='completed'));
 }));
 
+for(const provider of ['codex','claude_code']){
+  test(`${provider}: the client publishes its own models, and choosing one keeps the native context`,async()=>fixture(provider,async({send,wait,events,log})=>{
+    const announced=await wait(event=>event.type==='settings'&&event.models?.length);
+    // Every entry comes from the client. A model that states no effort levels is
+    // offered without any, rather than with a ladder invented here.
+    assert.ok(announced.models.every(entry=>typeof entry.id==='string'&&typeof entry.name==='string'));
+    assert.ok(announced.models.some(entry=>entry.efforts?.length));
+    assert.ok(announced.models.some(entry=>entry.efforts===undefined));
+
+    send({type:'message',id:'before',content:'simple'});await wait(event=>event.type==='turn'&&event.id==='before'&&event.status==='completed');
+    const startsBefore=(await log()).filter(item=>provider==='codex'?item.method==='thread/start':item.type==='control_request'&&item.request?.subtype==='initialize').length;
+
+    const chosen=announced.models[0].id;
+    send({type:'model',model:chosen});
+    await wait(event=>event.type==='settings'&&event.model===chosen);
+
+    // The guarantee: no context boundary, no restart, no lost session.
+    assert.equal(events.some(event=>event.type==='configuration'),false);
+    assert.equal(events.some(event=>event.type==='exit'),false);
+    const startsAfter=(await log()).filter(item=>provider==='codex'?item.method==='thread/start':item.type==='control_request'&&item.request?.subtype==='initialize').length;
+    assert.equal(startsAfter,startsBefore,'the native session was restarted');
+
+    send({type:'message',id:'after',content:'simple'});await wait(event=>event.type==='turn'&&event.id==='after'&&event.status==='completed');
+    const records=await log();
+    if(provider==='codex')assert.equal(records.filter(item=>item.method==='turn/start').at(-1).params.model,chosen);
+    else assert.ok(records.some(item=>item.type==='control_request'&&item.request?.subtype==='set_model'&&item.request.model===chosen));
+  }));
+  test(`${provider}: a model change is refused while a turn is running rather than applied mid-answer`,async()=>fixture(provider,async({send,wait})=>{
+    send({type:'message',id:'hold',content:'hold'});await wait(event=>event.type==='tool'&&event.id==='hold-1');
+    send({type:'model',model:'some-model'});
+    await wait(event=>event.type==='error'&&/current turn/.test(event.message));
+    send({type:'interrupt'});await wait(event=>event.type==='turn'&&event.id==='hold'&&event.status==='interrupted');
+  }));
+}
+
 test('input validation rejects malformed controls and oversized prompts without reflecting their content',()=>{
   assert.throws(()=>validateChatInput({type:'message',id:'one',content:'x'.repeat(256*1024+1)}));
   assert.throws(()=>validateChatInput({type:'approval',request_id:'one',decision:'acceptForSession'}));
+  assert.throws(()=>validateChatInput({type:'model',model:''}));
+  assert.throws(()=>validateChatInput({type:'model',model:'ok','effort':'VERY-HIGH'}));
   assert.throws(()=>validateChatInput({type:'init',provider:'codex',program:'codex',cwd:'relative',args:[]},true));
 });
 test('native lines are UTF-8 safe, bounded, and reject incomplete streams',async()=>{

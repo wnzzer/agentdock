@@ -18,6 +18,22 @@ export function codexLaunch(job) {
   }
   return {args,thread,resume};
 }
+// Codex states the effort levels each model supports; a model that lists none
+// is offered without a depth control rather than with an invented ladder.
+function codexModels(result) {
+  const rows=Array.isArray(result?.models)?result.models:Array.isArray(result)?result:undefined;
+  if(!rows)return undefined;
+  return rows.flatMap(row=>{
+    const id=row&&typeof row==='object'?row.id??row.model??row.name:undefined;
+    if(typeof id!=='string'||!id)return [];
+    const efforts=Array.isArray(row.supportedReasoningEfforts)
+      ? row.supportedReasoningEfforts.map(level=>typeof level==='string'?level:level?.reasoningEffort).filter(level=>typeof level==='string')
+      : undefined;
+    return [{id,name:typeof row.displayName==='string'?row.displayName:id,
+      ...(typeof row.description==='string'?{description:row.description}:{}),
+      ...(efforts?.length?{efforts}:{})}];
+  });
+}
 const requestKey=id=>typeof id+':'+String(id);
 const itemStatus=item=>['failed','declined','cancelled'].includes(item.status)||item.success===false?'failed':item.status==='inProgress'?'running':'completed';
 
@@ -27,6 +43,21 @@ export class CodexChat extends ChatBase {
     this.port=new NativeProcess(this.job.program,this.launch.args,this.job.cwd,message=>this.notification(message),message=>this.fatal(message),()=>this.fatal('Codex app-server exited.'),this.options);
     await this.port.rpc('initialize',{clientInfo:{name:'agentdock',title:'AgentDock',version:'0.1.0'}});
     this.port.send({method:'initialized',params:{}});this.announce();
+    this.settings(undefined,this.launch.thread.model);
+    // Asking for models must not hold up the session. A Codex build without
+    // model/list simply offers no picker rather than a list AgentDock guessed.
+    void this.port.rpc('model/list',{limit:100,includeHidden:false},false,true)
+      .then(result=>{if(this.closed)return;this.models=codexModels(result);this.settings(this.models,this.launch.thread.model);})
+      .catch(()=>{});
+  }
+  /**
+   * Codex takes the model per turn, so the next `turn/start` carries the new
+   * one and the thread — with all of its context — stays exactly as it is.
+   */
+  selectModel(message) {
+    if(this.active)throw Error('Wait for the current turn to finish before changing the model.');
+    this.launch.thread.model=message.model;
+    this.settings(this.models,this.launch.thread.model);
   }
   async message(message) {
     const active=this.begin(message);if(!active)return;

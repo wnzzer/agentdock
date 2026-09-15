@@ -95,6 +95,41 @@ test('the command list is only claimed to be known once a client has announced o
   assert.deepEqual(exited.commands, ['model']); assert.equal(exited.commandsAnnounced, true);
 });
 
+test('a model announcement never disturbs the conversation, and a new endpoint clears it', () => {
+  const history = [
+    { type: 'ready', commands: ['model'] },
+    { type: 'settings', models: [{ id: 'opus', name: 'Opus', efforts: ['low', 'high'] }, { id: 'haiku', name: 'Haiku' }] },
+    { type: 'message', id: 'u1', role: 'user', text: 'keep me' },
+    { type: 'settings', model: 'haiku' },
+  ];
+  const view = conversationView(history);
+  // Switching model is not a context boundary: the transcript is untouched and
+  // the client is still ready, unlike an endpoint change.
+  assert.equal(view.items.length, 1);
+  assert.equal(view.items[0].text, 'keep me');
+  assert.equal(view.ready, true);
+  assert.equal(view.model, 'haiku');
+  assert.deepEqual(view.models.map(entry => entry.id), ['opus', 'haiku']);
+  // A model that advertises no levels genuinely has none.
+  assert.equal(view.models[1].efforts, undefined);
+
+  // A new endpoint is a different client, so its models are unknown again.
+  const switched = conversationView([...history, { type: 'configuration', id: 'c', profile_name: 'Other', text: 'New context' }]);
+  assert.deepEqual(switched.models, []);
+  assert.equal(switched.model, undefined);
+});
+
+test('pruning keeps the model list even when a later settings event only names a selection', () => {
+  const pruned = pruneChatEvents([
+    { seq: 1, type: 'settings', models: [{ id: 'opus', name: 'Opus' }] },
+    ...Array.from({ length: 30 }, (_, index) => ({ seq: index + 2, type: 'message', id: 'm' + index, role: 'user', text: 'x' })),
+    { seq: 40, type: 'settings', model: 'opus' },
+  ], 5);
+  const view = conversationView(pruned.events);
+  assert.deepEqual(view.models.map(entry => entry.id), ['opus'], 'the list must survive a selection-only update');
+  assert.equal(view.model, 'opus');
+});
+
 test('fresh native contexts may reuse message and tool IDs without replacing earlier display history', () => {
   const view = conversationView([{ type: 'message', id: '1', role: 'assistant', text: 'Old provider text' }, { type: 'tool', id: '1', name: 'old_tool', status: 'completed' }, { type: 'configuration', id: 'boundary', profile_name: 'New endpoint', text: 'New native context' }, { type: 'message', id: '1', role: 'assistant', text: 'New provider text' }, { type: 'tool', id: '1', name: 'new_tool', status: 'running' }]);
   assert.equal(view.items.length, 5); assert.equal(view.items[0].text, 'Old provider text'); assert.equal(view.items[1].name, 'old_tool'); assert.equal(view.items[3].text, 'New provider text'); assert.equal(view.items[4].name, 'new_tool');

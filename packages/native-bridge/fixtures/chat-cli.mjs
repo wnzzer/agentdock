@@ -32,6 +32,8 @@ for await(const line of createInterface({input:process.stdin})) {
   if(codex){
     if(message.method==='initialize'){send({id:message.id,result:{}});continue;}
     if(message.method==='initialized')continue;
+    // A real app-server publishes its models and the levels each one supports.
+    if(message.method==='model/list'){send({id:message.id,result:{models:[{id:'gpt-fixture',displayName:'Fixture',supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}]},{id:'gpt-plain'}]}});continue;}
     if(message.method==='thread/start'||message.method==='thread/resume'){thread=message.params.threadId??thread;send({id:message.id,result:{thread:{id:thread}}});continue;}
     if(message.method==='turn/interrupt'){send({id:message.id,result:{}});native('turn/completed',{threadId:thread,turn:{id:activeTurn,status:'interrupted'}});continue;}
     if(message.method==='turn/start'){
@@ -61,9 +63,14 @@ for await(const line of createInterface({input:process.stdin})) {
     throw Error('Unexpected Codex fixture input');
   }
   if(message.type==='control_request'){
-    send({type:'control_response',response:{subtype:'success',request_id:message.request_id,response:{}}});
+    // Claude publishes its models in the initialize response and switches them
+    // in place with set_model; neither starts a new native context.
+    const response=message.request.subtype==='initialize'
+      ? {models:[{value:'opus',displayName:'Opus',description:'Fixture opus',supportsEffort:true,supportedEffortLevels:['low','high']},{value:'haiku',displayName:'Haiku'}]}
+      : {};
+    send({type:'control_response',response:{subtype:'success',request_id:message.request_id,response}});
     if(message.request.subtype==='interrupt')completed('interrupted');
-    else assert.equal(message.request.subtype,'initialize');
+    else assert.ok(['initialize','set_model'].includes(message.request.subtype));
     continue;
   }
   if(message.type==='user'){

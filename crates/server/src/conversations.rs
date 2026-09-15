@@ -1,6 +1,6 @@
 //! Structured native-client transport. The CLI owns the Agent loop and tool
 //! execution; this module only supervises JSONL, persistence and UI decisions.
-use crate::{ApiError, AppState, Result, db, root, session_record};
+use crate::{ApiError, AppState, Result, db, providers, root, session_record};
 use agentdock_domain::{InteractionMode, ProviderKind, Session, SessionId, SessionStatus};
 use agentdock_persistence::MessageSubmission;
 use axum::{
@@ -150,6 +150,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/sessions/{id}/conversation/message", post(message))
         .route("/api/sessions/{id}/conversation/interrupt", post(interrupt))
         .route("/api/sessions/{id}/conversation/approval", post(approval))
+        .route("/api/sessions/{id}/conversation/model", post(select_model))
         .route("/api/sessions/{id}/configuration", patch(configuration))
         .route("/api/sessions/{id}/chat/ws", get(socket))
 }
@@ -448,6 +449,45 @@ async fn interrupt(State(state): State<AppState>, Path(id): Path<SessionId>) -> 
     if let Some(runtime) = state.chats.get(id).filter(|r| r.running()) {
         runtime.send(json!({"type":"interrupt"})).await?;
     }
+    Ok(accepted(None, false))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelInput {
+    model: String,
+    #[serde(default)]
+    effort: Option<String>,
+}
+/// Choose the model for a running session.
+///
+/// This is deliberately not an endpoint change: it neither bumps the
+/// configuration revision nor restarts the bridge, because both native clients
+/// switch models in place and the conversation's context must survive it. The
+/// client validates the name and refuses one it cannot serve.
+async fn select_model(
+    State(state): State<AppState>,
+    Path(id): Path<SessionId>,
+    Json(input): Json<ModelInput>,
+) -> Result<CommandAck> {
+    let _guard = state.operations.lock().await;
+    session_record(&state, id).await?;
+    let model = input.model.trim().to_owned();
+    if model.is_empty() || model.len() > 128 || model.chars().any(char::is_control) {
+        return Err(ApiError::bad("Choose a model the client offers."));
+    }
+    if let Some(effort) = input.effort.as_deref()
+        && !providers::EFFORT_LEVELS.contains(&effort)
+    {
+        return Err(ApiError::bad("Unsupported reasoning effort."));
+    }
+    let runtime = state
+        .chats
+        .get(id)
+        .filter(|r| r.running())
+        .ok_or_else(|| ApiError::conflict("Start the session before choosing a model"))?;
+    runtime
+        .send(json!({"type": "model", "model": model, "effort": input.effort}))
+        .await?;
     Ok(accepted(None, false))
 }
 #[derive(Deserialize)]
@@ -761,6 +801,7 @@ fn normalize_event(mut value: Value) -> Option<Value> {
     let object = value.as_object_mut()?;
     let allowed: &[&str] = match object.get("type")?.as_str()? {
         "ready" => &["type", "native_session_id", "commands"],
+        "settings" => &["type", "model", "models"],
         "message" => &["type", "id", "role", "text", "delta"],
         "tool" => &["type", "id", "name", "status", "text"],
         "approval" => &["type", "id", "title", "text", "choices", "questions"],
@@ -804,6 +845,37 @@ fn normalize_event(mut value: Value) -> Option<Value> {
                             })
                     })
                 })
+        }
+        // A model list is the client's own; a malformed entry drops the list
+        // rather than reaching the picker as something half-known.
+        "settings" => {
+            object.get("model").is_none_or(|value| {
+                value
+                    .as_str()
+                    .is_some_and(|v| !v.is_empty() && v.len() <= 128)
+            }) && object.get("models").is_none_or(|value| {
+                value.as_array().is_some_and(|rows| {
+                    rows.len() <= 64
+                        && rows.iter().all(|row| {
+                            let field = |key: &str| row.get(key).and_then(Value::as_str);
+                            field("id").is_some_and(|v| !v.is_empty() && v.len() <= 128)
+                                && field("name").is_some_and(|v| v.len() <= 128)
+                                && row
+                                    .get("description")
+                                    .is_none_or(|v| v.as_str().is_some_and(|v| v.len() <= 256))
+                                && row.get("efforts").is_none_or(|v| {
+                                    v.as_array().is_some_and(|levels| {
+                                        levels.len() <= 16
+                                            && levels.iter().all(|level| {
+                                                level.as_str().is_some_and(|level| {
+                                                    providers::EFFORT_LEVELS.contains(&level)
+                                                })
+                                            })
+                                    })
+                                })
+                        })
+                })
+            })
         }
         "message" => {
             id() && text("text")

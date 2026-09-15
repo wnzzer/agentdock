@@ -1,8 +1,13 @@
 import type { EndpointProfile, Session } from '@agentdock/protocol';
 
+/** A model exactly as the native client described it. `efforts` lists the
+ * thinking depths that model supports; a model that states none supports none,
+ * and no default ladder is substituted. */
+export interface NativeModel { id: string; name: string; description?: string; efforts?: string[] }
 export interface ApprovalQuestion { id: string; header?: string; question: string; options: Array<{ label: string; description?: string }>; isSecret?: boolean; isOther?: boolean; multiSelect?: boolean }
 export type ChatEvent = ({ seq?: number } & (
   | { type: 'ready'; native_session_id?: string; commands?: string[] }
+  | { type: 'settings'; model?: string; models?: NativeModel[] }
   | { type: 'message'; id: string; role: 'user' | 'assistant'; text: string; delta?: boolean }
   | { type: 'tool'; id: string; name: string; status: 'running' | 'completed' | 'failed'; text?: string }
   | { type: 'approval'; id: string; title: string; text: string; choices: string[]; questions?: ApprovalQuestion[] }
@@ -24,7 +29,7 @@ export type ChatItem =
 export function conversationView(events: readonly ChatEvent[], running?: boolean) {
   const items: ChatItem[] = [], indexes = new Map<string, number>(), seen = new Set<number>();
   let turn: 'idle' | 'running' | 'completed' | 'failed' | 'interrupted' = 'idle';
-  let ready = false, exited = false, commands: string[] = [], announced = false, usage: { input_tokens?: number; output_tokens?: number; context_tokens?: number; context_window?: number } = {};
+  let ready = false, exited = false, commands: string[] = [], announced = false, models: NativeModel[] = [], model: string | undefined, usage: { input_tokens?: number; output_tokens?: number; context_tokens?: number; context_window?: number } = {};
   for (const event of events) {
     if (event.seq !== undefined) { if (seen.has(event.seq)) continue; seen.add(event.seq); }
     if (event.type === 'message') {
@@ -44,17 +49,18 @@ export function conversationView(events: readonly ChatEvent[], running?: boolean
       if (previous?.type === 'approval') previous.resolved = true;
     } else if (event.type === 'turn') turn = event.status;
     else if (event.type === 'ready') { ready = true; exited = false; commands = event.commands ?? []; announced = true; }
+    else if (event.type === 'settings') { if (event.models?.length) models = event.models; if (event.model) model = event.model; }
     else if (event.type === 'usage') { const { seq: _seq, type: _type, ...values } = event; usage = { ...usage, ...values }; }
     // A new endpoint means a new native client: its command list is whatever it
     // announces next, never the previous client's.
-    else if (event.type === 'configuration') { for (const item of items) if (item.type === 'approval') item.resolved = true; indexes.clear(); items.push(event); ready = false; turn = 'idle'; commands = []; announced = false; }
+    else if (event.type === 'configuration') { for (const item of items) if (item.type === 'approval') item.resolved = true; indexes.clear(); items.push(event); ready = false; turn = 'idle'; commands = []; announced = false; models = []; model = undefined; }
     else if (event.type === 'error') items.push({ type: 'error', id: 'error:' + (event.seq ?? items.length), text: event.message });
     else if (event.type === 'exit') { exited = true; ready = false; if (turn === 'running') turn = 'interrupted'; for (const item of items) if (item.type === 'approval') item.resolved = true; }
   }
   // Runtime state outranks stale display history after server restart. Old
   // approvals refer to lost native RPCs and cannot be answered as live ones.
   if (running === false) { ready = false; if (turn === 'running') turn = 'interrupted'; for (const item of items) if (item.type === 'approval') item.resolved = true; }
-  return { items, turn, ready, exited, usage, commands, commandsAnnounced: announced, awaitingApproval: items.some(item => item.type === 'approval' && !item.resolved) };
+  return { items, turn, ready, exited, usage, commands, commandsAnnounced: announced, models, model, awaitingApproval: items.some(item => item.type === 'approval' && !item.resolved) };
 }
 
 /** WS events are already ordered. A replayed sequence must not append deltas twice. */
@@ -66,7 +72,11 @@ export function pruneChatEvents(events: readonly ChatEvent[], maxHistoryEvents =
   const controls = new Map<string, ChatEvent>(), approvals = new Map<string, ChatEvent>();
   const size = (event: ChatEvent) => new TextEncoder().encode(JSON.stringify(event)).byteLength;
   for (const event of events) {
-    if (['ready', 'turn', 'exit', 'configuration', 'usage'].includes(event.type)) controls.set(event.type, event);
+    // The model list and the current selection can arrive in separate settings
+    // events, so the last of each is kept rather than only the last overall.
+    if (['ready', 'turn', 'exit', 'configuration', 'usage', 'settings'].includes(event.type)) {
+      controls.set(event.type === 'settings' && event.models?.length ? 'settings:models' : event.type, event);
+    }
     if (event.type === 'approval') approvals.set(event.id, event);
     if (event.type === 'approval_resolved') approvals.delete(event.id);
     if (event.type === 'configuration' || event.type === 'exit') approvals.clear();
@@ -93,6 +103,14 @@ export function isChatEvent(value: unknown): value is ChatEvent {
   switch (v.type) {
     case 'ready': return (v.native_session_id === undefined || text('native_session_id'))
       && (v.commands === undefined || Array.isArray(v.commands) && v.commands.length <= 400 && v.commands.every(name => typeof name === 'string' && /^[A-Za-z0-9][\w:-]{0,63}$/.test(name)));
+    case 'settings': return (v.model === undefined || text('model'))
+      && (v.models === undefined || Array.isArray(v.models) && v.models.length <= 64 && v.models.every(entry => {
+        if (!entry || typeof entry !== 'object') return false;
+        const m = entry as Record<string, unknown>;
+        return typeof m.id === 'string' && !!m.id && typeof m.name === 'string'
+          && (m.description === undefined || typeof m.description === 'string')
+          && (m.efforts === undefined || Array.isArray(m.efforts) && m.efforts.every(level => typeof level === 'string'));
+      }));
     case 'exit': return true;
     case 'message': return text('id') && text('text') && ['user', 'assistant'].includes(String(v.role)) && (v.delta === undefined || typeof v.delta === 'boolean');
     case 'tool': return text('id') && text('name') && ['running', 'completed', 'failed'].includes(String(v.status)) && (v.text === undefined || text('text'));

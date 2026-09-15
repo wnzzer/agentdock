@@ -2066,7 +2066,8 @@ async fn shared_canvas_uses_existing_authentication_and_health_capabilities() {
             "session_archive",
             "account_import_native",
             "agent_clients",
-            "ephemeral_sessions"
+            "ephemeral_sessions",
+            "session_model"
         ])
     );
     let allowed = Request::builder()

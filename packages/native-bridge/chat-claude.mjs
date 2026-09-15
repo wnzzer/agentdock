@@ -34,6 +34,19 @@ function contextTokens(usage) {
   return parts.reduce((total,value)=>total+(Number.isSafeInteger(value)&&value>=0?value:0),0);
 }
 
+// The client publishes its models at initialize time, each with the effort
+// levels that model actually supports. A model that states none genuinely has
+// none, so no default ladder is substituted for it.
+function modelEntries(value) {
+  if(!Array.isArray(value))return undefined;
+  return value.flatMap(entry=>{
+    if(!entry||typeof entry!=='object'||typeof entry.value!=='string'||!entry.value)return [];
+    return [{id:entry.value,name:typeof entry.displayName==='string'?entry.displayName:entry.value,
+      ...(typeof entry.description==='string'?{description:entry.description}:{}),
+      ...(entry.supportsEffort===true&&Array.isArray(entry.supportedEffortLevels)?{efforts:entry.supportedEffortLevels}:{})}];
+  });
+}
+
 // The client reports commands as objects at initialize time and as plain names
 // in its later init message. Both are reduced to names; nothing is added.
 function commandNames(value) {
@@ -50,6 +63,20 @@ export class ClaudeChat extends ChatBase {
     // The client lists its own commands here, before any turn has run, so the
     // composer can offer them on a brand new session.
     this.announce(this.launch.resume??this.launch.sessionId,commandNames(initialized?.commands));
+    this.models=modelEntries(initialized?.models);
+    this.settings(this.models,this.model);
+  }
+  /**
+   * Switch model in place. `set_model` is the client's own live control, so the
+   * native context is kept: this is not an endpoint change and must never be
+   * turned into one. An unknown name is refused by the client, not by us.
+   */
+  async selectModel(message) {
+    if(this.active)throw Error('Wait for the current turn to finish before changing the model.');
+    const effort=message.effort;
+    await this.port.rpc('set_model',{model:message.model,...(effort?{effort}:{})},true);
+    this.model=message.model;
+    this.settings(this.models,this.model);
   }
   message(message) {
     const active=this.begin(message);if(!active)return;

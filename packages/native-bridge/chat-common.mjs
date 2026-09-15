@@ -75,14 +75,19 @@ export class NativeProcess {
     if (Buffer.byteLength(line) > MAX_NATIVE_LINE || this.child.stdin.writableLength > MAX_NATIVE_LINE) throw new Error('Native input exceeded its buffer limit.');
     this.child.stdin.write(line);
   }
-  rpc(method, params, claude = false) {
+  /**
+   * `optional` is for a capability probe: a client that does not implement the
+   * method may simply never answer, and that must not look like a broken
+   * connection. Such a call fails quietly and changes nothing.
+   */
+  rpc(method, params, claude = false, optional = false) {
     const id = `agentdock-${++this.sequence}`;
     return new Promise((resolve,reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);reject(new Error('Native control request timed out.'));
         // A timed-out start may have executed. Do not reopen the send gate and guess/replay it.
-        if(method!=='interrupt'&&method!=='turn/interrupt')this.failure('Native control request timed out; the structured connection was stopped.');
-      },this.rpcTimeout);
+        if(!optional&&method!=='interrupt'&&method!=='turn/interrupt')this.failure('Native control request timed out; the structured connection was stopped.');
+      },optional?Math.min(this.rpcTimeout,4000):this.rpcTimeout);
       this.pending.set(id,{resolve,reject,timer});
       try { this.send(claude ? {type:'control_request',request_id:id,request:{subtype:method,...params}} : {id,method,params}); }
       catch(error) { clearTimeout(timer);this.pending.delete(id);reject(error); }
@@ -128,6 +133,26 @@ export class ChatBase {
       ? [...new Set(commands.filter(name=>typeof name==='string'&&/^[A-Za-z0-9][\w:-]{0,63}$/.test(name)))].slice(0,400)
       : undefined;
     this.emit({type:'ready',...(this.nativeSessionId?{native_session_id:this.nativeSessionId}:{}),...(names?.length?{commands:names}:{})});
+  }
+  /**
+   * What the client says it can run right now: the models it offers and which
+   * one is selected. This is deliberately not a `configuration` event — that one
+   * marks a context boundary, and selecting a model must not start a new one.
+   * Entries are forwarded from the client's own list; nothing is added.
+   */
+  settings(models, model) {
+    const list=Array.isArray(models)
+      ? models.flatMap(entry=>{
+          if(!entry||typeof entry!=='object'||typeof entry.id!=='string'||!entry.id||entry.id.length>128)return [];
+          const efforts=Array.isArray(entry.efforts)?entry.efforts.filter(value=>typeof value==='string'&&/^[a-z]{1,16}$/.test(value)).slice(0,16):undefined;
+          return [{id:entry.id,name:clip(typeof entry.name==='string'&&entry.name?entry.name:entry.id,128),
+            ...(typeof entry.description==='string'&&entry.description?{description:clip(entry.description,256)}:{}),
+            ...(efforts?.length?{efforts}:{})}];
+        }).slice(0,64)
+      : undefined;
+    const selected=typeof model==='string'&&model&&model.length<=128?model:undefined;
+    if(!list?.length&&!selected)return;
+    this.emit({type:'settings',...(selected?{model:selected}:{}),...(list?.length?{models:list}:{})});
   }
   approval(key, description, answer) {
     if(this.approvals.has(key))return;
