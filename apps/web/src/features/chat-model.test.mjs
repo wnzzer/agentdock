@@ -7,7 +7,7 @@ const session = { id: 'session', provider: 'codex', status: 'stopped' };
 const profiles = [{ id: 'codex-work', provider: 'codex' }, { id: 'claude-work', provider: 'claude_code' }];
 
 test('a durable message receipt acknowledges a trimmed event without replay or losing a newer draft',()=>{
-  const draft={text:'newer edit',pending:{id:'request',content:'old message',state:'unknown'}};
+  const draft={text:'newer edit',pending:{id:'request',content:'old message',text:'old message',state:'unknown'}};
   assert.equal(acknowledgeReceipt(draft,{accepted:true,id:'other'}),false);
   assert.equal(acknowledgeReceipt(draft,{accepted:true,id:'request',duplicate:true}),true);
   assert.equal(draft.text,'newer edit');assert.equal(draft.pending,undefined);
@@ -198,7 +198,7 @@ test('native question IDs are safe data properties and unsupported multiSelect r
 
 test('drafts are isolated in memory by session and unknown delivery never clears itself', () => {
   const store = createChatDraftStore(), one = store.get('one'), two = store.get('two');
-  one.text = 'private draft'; one.pending = { id: 'request-one', content: one.text, state: 'unknown' };
+  one.text = 'private draft'; one.pending = { id: 'request-one', content: one.text, text: one.text, state: 'unknown' };
   assert.equal(two.text, ''); assert.equal(two.pending, undefined); assert.equal(store.get('one'), one);
   assert.equal(acknowledgeDraft(one, []), false); assert.equal(one.pending.state, 'unknown');
   assert.equal(acknowledgeDraft(one, [{ type: 'message', id: 'other', role: 'user', text: one.text }]), false);
@@ -209,7 +209,7 @@ test('drafts are isolated in memory by session and unknown delivery never clears
 });
 
 test('delivery acknowledgement does not discard a subsequently edited draft', () => {
-  const draft = { text: 'new text', pending: { id: 'old', content: 'old text', state: 'unknown' } };
+  const draft = { text: 'new text', pending: { id: 'old', content: 'old text', text: 'old text', state: 'unknown' } };
   acknowledgeDraft(draft, [{ type: 'message', id: 'old', role: 'user', text: 'old text' }]);
   assert.equal(draft.text, 'new text'); assert.equal(draft.pending, undefined);
 });
@@ -277,4 +277,24 @@ test('model and thinking depth are session-only overrides, and never fight a sha
   assert.throws(() => sessionConfigurationPayload(session, profiles, 'codex-work', false, undefined, { effort: 'high' }), /Confirm/);
   assert.throws(() => sessionConfigurationPayload({ ...session, status: 'running' }, profiles, 'codex-work', true, undefined, { effort: 'high' }), /Wait for/);
   assert.throws(() => sessionConfigurationPayload(session, profiles, 'claude-work', true, undefined, { effort: 'high' }), /same client/);
+});
+
+test('a sent message leaves the composer, even when the wire content was reshaped', () => {
+  // Completing a command from the menu leaves a trailing space, and composing
+  // trims it. Comparing the composer against the wire content therefore never
+  // matched, so the composer kept holding a command it had already sent.
+  const command = { text: '/model ', pending: { id: 'm1', content: '/model', text: '/model ', state: 'sending' } };
+  assert.equal(acknowledgeDraft(command, [{ type: 'message', id: 'm1', role: 'user', text: '/model' }]), true);
+  assert.equal(command.text, '');
+
+  // An attachment header is added to the wire content and was never in the
+  // composer at all.
+  const attached = { text: 'look at this', pending: { id: 'm2', content: 'Attached file in this workspace:\n- a.png\n\nlook at this', text: 'look at this', state: 'sending' } };
+  assert.equal(acknowledgeReceipt(attached, { accepted: true, id: 'm2' }), true);
+  assert.equal(attached.text, '');
+
+  // Still only the sent message is cleared.
+  const edited = { text: 'a newer thought', pending: { id: 'm3', content: '/model', text: '/model ', state: 'sending' } };
+  acknowledgeReceipt(edited, { accepted: true, id: 'm3' });
+  assert.equal(edited.text, 'a newer thought');
 });

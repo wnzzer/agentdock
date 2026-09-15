@@ -151,7 +151,22 @@ export function approvalPayloadAnswers(questions: readonly ApprovalQuestion[], s
   }));
 }
 
-export interface ChatDraft { text: string; pending?: { id: string; content: string; state: 'sending' | 'unknown'; profileId?: string | null; configurationRevision?: number }; notice?: string }
+export interface ChatDraft {
+  text: string;
+  pending?: {
+    id: string;
+    /** What went on the wire: trimmed, and with any attachment header. */
+    content: string;
+    /** What the composer held when it was sent. The wire content is not the
+     * same string — it is trimmed and may carry an attachment header — so
+     * comparing against it left the composer holding a message already sent. */
+    text: string;
+    state: 'sending' | 'unknown';
+    profileId?: string | null;
+    configurationRevision?: number;
+  };
+  notice?: string;
+}
 export function createChatDraftStore() {
   const drafts = new Map<string, ChatDraft>();
   return { get(id: string): ChatDraft { let draft = drafts.get(id); if (!draft) { draft = { text: '' }; drafts.set(id, draft); } return draft; } };
@@ -160,13 +175,14 @@ export const chatDrafts = createChatDraftStore();
 export function acknowledgeDraft(draft: ChatDraft, events: readonly ChatEvent[]): boolean {
   const pending = draft.pending;
   if (!pending || !events.some(event => event.type === 'message' && event.role === 'user' && event.id === pending.id)) return false;
-  if (draft.text === pending.content) draft.text = '';
+  // Only the message that was sent is cleared; anything typed since stays.
+  if (draft.text === pending.text) draft.text = '';
   draft.pending = undefined; draft.notice = undefined; return true;
 }
 export function acknowledgeReceipt(draft: ChatDraft, receipt: unknown): boolean {
   const pending=draft.pending;
   if(!pending || !receipt || typeof receipt!=='object' || (receipt as {accepted?:unknown}).accepted!==true || (receipt as {id?:unknown}).id!==pending.id)return false;
-  if(draft.text===pending.content)draft.text='';
+  if(draft.text===pending.text)draft.text='';
   draft.pending=undefined;draft.notice=undefined;return true;
 }
 export function pendingMessageRetry(draft: ChatDraft, session: Pick<Session, 'endpoint_profile_id' | 'configuration_revision'>) {

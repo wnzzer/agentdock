@@ -212,9 +212,10 @@ async function send() {
   if (unsupported) { draft.value.notice = undefined; error.value = t('{command} is not a command this client accepts. Run it in the native terminal view, or send a message instead.', { command: '/' + unsupported }); return; }
   const id = props.session.id, target = draft.value, messageId = crypto.randomUUID();
   // Attachment paths travel with the text, so an accepted receipt covers both.
-  const content = composeMessage(target.text, attachments.value);
+  const typed = target.text;
+  const content = composeMessage(typed, attachments.value);
   attachments.value = [];
-  target.pending = { id: messageId, content, state: 'sending', profileId: props.session.endpoint_profile_id, configurationRevision: props.session.configuration_revision??0 }; target.notice = undefined; error.value = '';
+  target.pending = { id: messageId, content, text: typed, state: 'sending', profileId: props.session.endpoint_profile_id, configurationRevision: props.session.configuration_revision??0 }; target.notice = undefined; error.value = '';
   await deliver(id, target);
 }
 async function pickAttachments(event: Event) {
