@@ -226,7 +226,24 @@ fn build_base(state: &AppState, session: &Session, cwd: PathBuf) -> Result<Spawn
         if profile.provider != session.provider {
             return Err(ApiError::bad("Profile and session providers must match"));
         }
-        return crate::native_config::build(state, &session.provider, reference, cwd);
+        let mut spec = crate::native_config::build(state, &session.provider, reference, cwd)?;
+        // An official account may still choose a model and a depth. The client
+        // resolves both against its own account; this only states the choice at
+        // launch, which is also the one path that works for a model whose live
+        // switch the upstream refuses.
+        if let Some(model) = resolve_model(profile) {
+            spec.args.extend(["--model".into(), model]);
+        }
+        if let Some(effort) = profile.effort.as_deref() {
+            match session.provider {
+                ProviderKind::Codex => spec.args.extend([
+                    "-c".into(),
+                    format!("model_reasoning_effort={}", encode(effort)),
+                ]),
+                _ => spec.args.extend(["--effort".into(), effort.to_owned()]),
+            }
+        }
+        return Ok(spec);
     }
     let mut environment = BTreeMap::new();
     let mut args = Vec::new();

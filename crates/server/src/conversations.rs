@@ -628,11 +628,10 @@ async fn configuration(
         }
         crate::providers::validate_profile(&profile)?;
         if let Some(reference) = &profile.native_config {
-            if model.is_some() || effort.is_some() {
-                return Err(ApiError::bad(
-                    "This account keeps its native model and reasoning configuration",
-                ));
-            }
+            // A model and a depth are launch choices the client still resolves
+            // against its own account, so an official account accepts them —
+            // and for a model whose live switch the upstream refuses, choosing
+            // it at launch is the only way through.
             crate::native_config::validate_reference(&state, &session.provider, reference)?;
         }
     }
@@ -844,6 +843,7 @@ fn normalize_event(mut value: Value) -> Option<Value> {
     let allowed: &[&str] = match object.get("type")?.as_str()? {
         "ready" => &["type", "native_session_id", "commands"],
         "settings" => &["type", "model", "effort", "models"],
+        "cleared" => &["type"],
         "message" => &["type", "id", "role", "text", "delta"],
         "tool" => &["type", "id", "name", "status", "text"],
         "approval" => &["type", "id", "title", "text", "choices", "questions"],
@@ -989,7 +989,7 @@ fn normalize_event(mut value: Value) -> Option<Value> {
                     .is_none_or(|v| v.as_u64().is_some_and(|n| n > 0))
         }
         "error" => text("message"),
-        "exit" => true,
+        "exit" | "cleared" => true,
         _ => false,
     };
     if !valid {

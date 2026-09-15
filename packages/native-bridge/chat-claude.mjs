@@ -147,7 +147,8 @@ export class ClaudeChat extends ChatBase {
       // assistant message describes the live context, so that value is kept and
       // just the window is taken from here.
       this.usage(message.usage,undefined,windows.size===1?[...windows][0]:undefined);
-      if(!this.finalAssistant&&typeof message.result==='string')this.emit({type:'message',id:this.assistantId??`assistant-${this.active.id}`,role:'assistant',text:clip(message.result),delta:false});
+      // An empty result is not an answer; a blank bubble only looks like a bug.
+      if(!this.finalAssistant&&typeof message.result==='string'&&message.result.trim())this.emit({type:'message',id:this.assistantId??`assistant-${this.active.id}`,role:'assistant',text:clip(message.result),delta:false});
       const failed=message.is_error||message.subtype!=='success';
       if(failed&&!this.active.interrupted){
         const diagnostic=JSON.stringify(message.errors??[]);

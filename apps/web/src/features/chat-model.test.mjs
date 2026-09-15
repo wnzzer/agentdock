@@ -130,6 +130,31 @@ test('pruning keeps the model list even when a later settings event only names a
   assert.equal(view.model, 'opus');
 });
 
+test('a client that clears its own context clears the transcript with it', () => {
+  const view = conversationView([
+    { seq: 1, type: 'ready', native_session_id: 'first' },
+    { seq: 2, type: 'message', id: 'u1', role: 'user', text: 'earlier work' },
+    { seq: 3, type: 'usage', context_tokens: 148581, context_window: 1000000 },
+    { seq: 4, type: 'cleared' },
+    { seq: 5, type: 'ready', native_session_id: 'second' },
+    { seq: 6, type: 'message', id: 'u2', role: 'user', text: 'after clearing' },
+  ]);
+  // Keeping the old transcript showed a conversation the client can no longer
+  // refer to, which is what made /clear look like it had done nothing.
+  assert.deepEqual(view.items.map(item => item.text), ['after clearing']);
+  assert.equal(view.usage.context_tokens, undefined);
+  assert.equal(view.ready, true);
+
+  // The boundary has to survive trimming, or the cleared messages come back.
+  const pruned = pruneChatEvents([
+    { seq: 1, type: 'message', id: 'old', role: 'user', text: 'earlier work' },
+    { seq: 2, type: 'cleared' },
+    ...Array.from({ length: 30 }, (_, index) => ({ seq: index + 3, type: 'message', id: 'm' + index, role: 'user', text: 'x' })),
+  ], 5);
+  assert.ok(pruned.events.some(event => event.type === 'cleared'), 'the clear boundary is an anchor');
+  assert.equal(conversationView(pruned.events).items.some(item => item.text === 'earlier work'), false);
+});
+
 test('fresh native contexts may reuse message and tool IDs without replacing earlier display history', () => {
   const view = conversationView([{ type: 'message', id: '1', role: 'assistant', text: 'Old provider text' }, { type: 'tool', id: '1', name: 'old_tool', status: 'completed' }, { type: 'configuration', id: 'boundary', profile_name: 'New endpoint', text: 'New native context' }, { type: 'message', id: '1', role: 'assistant', text: 'New provider text' }, { type: 'tool', id: '1', name: 'new_tool', status: 'running' }]);
   assert.equal(view.items.length, 5); assert.equal(view.items[0].text, 'Old provider text'); assert.equal(view.items[1].name, 'old_tool'); assert.equal(view.items[3].text, 'New provider text'); assert.equal(view.items[4].name, 'new_tool');

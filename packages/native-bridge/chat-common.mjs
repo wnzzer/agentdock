@@ -136,6 +136,10 @@ export class ChatBase {
   // startup. They are forwarded verbatim so the composer can offer exactly what
   // that client accepts, never a list AgentDock invented.
   announce(id,commands) {
+    // A client that hands back a different session has started a fresh context
+    // of its own — /clear does exactly this. The transcript above it describes
+    // a context the client no longer has, so it is not kept as if it did.
+    if(nativeId(id)&&this.nativeSessionId&&id!==this.nativeSessionId)this.emit({type:'cleared'});
     if(nativeId(id))this.nativeSessionId=id;
     this.ready=true;
     const names=Array.isArray(commands)

@@ -17,6 +17,7 @@ export type ChatEvent = ({ seq?: number } & (
   | { type: 'configuration'; id: string; profile_name: string; text: string }
   | { type: 'error'; message: string }
   | { type: 'exit' }
+  | { type: 'cleared' }
 ));
 export interface ConversationSnapshot { mode?: 'structured' | 'pty'; running: boolean; events: ChatEvent[]; truncated?: boolean }
 export type ChatItem =
@@ -54,6 +55,10 @@ export function conversationView(events: readonly ChatEvent[], running?: boolean
     // A new endpoint means a new native client: its command list is whatever it
     // announces next, never the previous client's.
     else if (event.type === 'configuration') { for (const item of items) if (item.type === 'approval') item.resolved = true; indexes.clear(); items.push(event); ready = false; turn = 'idle'; commands = []; announced = false; models = []; model = undefined; effort = undefined; }
+    // The client cleared its own context. Keeping the transcript would show a
+    // conversation the client can no longer refer to, which is what made
+    // /clear look like it had done nothing.
+    else if (event.type === 'cleared') { items.length = 0; indexes.clear(); usage = {}; }
     else if (event.type === 'error') items.push({ type: 'error', id: 'error:' + (event.seq ?? items.length), text: event.message });
     else if (event.type === 'exit') { exited = true; ready = false; if (turn === 'running') turn = 'interrupted'; for (const item of items) if (item.type === 'approval') item.resolved = true; }
   }
@@ -74,12 +79,12 @@ export function pruneChatEvents(events: readonly ChatEvent[], maxHistoryEvents =
   for (const event of events) {
     // The model list and the current selection can arrive in separate settings
     // events, so the last of each is kept rather than only the last overall.
-    if (['ready', 'turn', 'exit', 'configuration', 'usage', 'settings'].includes(event.type)) {
+    if (['ready', 'turn', 'exit', 'configuration', 'usage', 'settings', 'cleared'].includes(event.type)) {
       controls.set(event.type === 'settings' && event.models?.length ? 'settings:models' : event.type, event);
     }
     if (event.type === 'approval') approvals.set(event.id, event);
     if (event.type === 'approval_resolved') approvals.delete(event.id);
-    if (event.type === 'configuration' || event.type === 'exit') approvals.clear();
+    if (event.type === 'configuration' || event.type === 'exit' || event.type === 'cleared') approvals.clear();
   }
   if (approvals.size > 32) throw Error('Too many unresolved native approvals. Reconnect the view before continuing.');
   const anchors = new Set([...controls.values(), ...approvals.values()]);
@@ -111,7 +116,7 @@ export function isChatEvent(value: unknown): value is ChatEvent {
           && (m.description === undefined || typeof m.description === 'string')
           && (m.efforts === undefined || Array.isArray(m.efforts) && m.efforts.every(level => typeof level === 'string'));
       }));
-    case 'exit': return true;
+    case 'exit': case 'cleared': return true;
     case 'message': return text('id') && text('text') && ['user', 'assistant'].includes(String(v.role)) && (v.delta === undefined || typeof v.delta === 'boolean');
     case 'tool': return text('id') && text('name') && ['running', 'completed', 'failed'].includes(String(v.status)) && (v.text === undefined || text('text'));
     case 'approval': return text('id') && text('title') && text('text') && Array.isArray(v.choices) && v.choices.every(choice => typeof choice === 'string') && (v.questions === undefined || Array.isArray(v.questions) && v.questions.every(question => {
