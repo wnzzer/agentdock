@@ -721,8 +721,11 @@ fn initial_view(state: &AppState, record: &AccountRecord) -> Result<AccountView>
             .and_then(|reference| reference.config_env.as_deref())
             .map(|value| format!(" CLAUDE_CONFIG_DIR='{}'", value.replace('\'', "'\\''")))
             .unwrap_or_default();
+        // The command is the part a user has to act on; everything else this
+        // used to say about token handling belongs in the README, not in a
+        // panel read every time an account is opened.
         Some(format!(
-            "Use the official Claude CLI directly: env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN{} claude auth login. AgentDock can query the official OAuth usage endpoint only after you click Check usage; it uses the native credential store in memory and never returns the token to the browser. Token refresh and quota reset remain managed by the official client/provider.",
+            "env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN{} claude auth login",
             config_prefix
         ))
     };
