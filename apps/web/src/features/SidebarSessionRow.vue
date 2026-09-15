@@ -49,6 +49,17 @@ function dragSession(event: DragEvent) {
   if (event.dataTransfer) event.dataTransfer.effectAllowed = "copyMove";
 }
 function toggleMenu() { menuOpen.value = !menuOpen.value; }
+/** Right-clicking a row opens the same menu its ··· button does, so the two
+ * cannot drift into offering different actions. */
+async function openMenuFromPointer(event: MouseEvent) {
+  if (renaming.value) return;
+  event.preventDefault();
+  menuOpen.value = true;
+  // A right-click does not move focus, and this menu is dismissed by focus
+  // leaving it. Focusing the button it belongs to restores that.
+  await nextTick();
+  menuButton.value?.focus();
+}
 async function closeMenu(restoreFocus = false) {
   menuOpen.value = false;
   if (restoreFocus) { await nextTick(); menuButton.value?.focus(); }
@@ -87,7 +98,7 @@ function submitRename() {
 </script>
 
 <template>
-  <li class="sidebar-session-row" :class="{ selected, archived: isSessionArchived(session) }" :data-sidebar-session-id="session.id" @keydown="escapeMenu" @focusout="leaveMenu">
+  <li class="sidebar-session-row" :class="{ selected, archived: isSessionArchived(session) }" :data-sidebar-session-id="session.id" @contextmenu="openMenuFromPointer" @keydown="escapeMenu" @focusout="leaveMenu">
     <div class="sidebar-session-main">
       <button class="workspace-session" :class="{ active: selected }" :aria-current="selected ? 'true' : undefined" :title="`${session.title}\n${workspaceName ? `${workspaceName} · ` : ''}${providerLabel(session.provider)} · ${t(session.status)}`" draggable="true" @dragstart="dragSession" @click="emit('open', session)">
         <span :class="['workspace-session-provider', session.provider]"><ProviderIcon :provider="session.provider" :size="14" /></span>

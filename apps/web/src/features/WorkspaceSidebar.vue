@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { ComponentPublicInstance } from "vue";
 import type { ProviderKind, Session, Workspace } from "@agentdock/protocol";
 import { providerLabel } from "./api";
@@ -105,6 +105,18 @@ const quickProvider = computed(() => lastQuickProvider());
 const quickLabel = computed(() => quickProvider.value === "terminal" ? t("Terminal") : providerLabel(quickProvider.value));
 function history(id: string) { if (props.historySupported) { openMenuId.value = undefined; emit("loadHistory", id); } }
 function escapeMenu(event: KeyboardEvent) { if (event.key === "Escape" && openMenuId.value) { event.preventDefault(); event.stopPropagation(); void closeMenu(true); } }
+/** A right-click opens this menu without moving focus, so focus alone cannot
+ * dismiss it; a pointer landing anywhere outside does. */
+function closeMenuOutside(event: PointerEvent) {
+  const id = openMenuId.value; if (!id) return;
+  const target = event.target as Node | null;
+  if (!target) return;
+  const panel = document.getElementById(`workspace-menu-${id}`);
+  if (panel?.contains(target) || menuButtons.get(id)?.contains(target)) return;
+  openMenuId.value = undefined;
+}
+onMounted(() => document.addEventListener("pointerdown", closeMenuOutside));
+onBeforeUnmount(() => document.removeEventListener("pointerdown", closeMenuOutside));
 function navigateWorkspace(event: KeyboardEvent, group: WorkspaceGroup) {
   if (event.altKey || event.ctrlKey || event.metaKey) return;
   if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); event.stopPropagation(); setExpanded(group.workspace.id, event.key === "ArrowRight"); }
@@ -170,7 +182,7 @@ defineExpose({ revealSession });
     <div v-if="workspaces.length" class="workspace-group-search"><Icon name="search" :size="13" /><input v-model="query" :aria-label="t('Search workspaces and sessions')" :placeholder="t('Find a workspace or session…')" /><button v-if="query" class="icon-button" :aria-label="t('Clear navigation search')" @click="query = ''"><Icon name="close" :size="12" /></button></div>
     <nav class="workspace-groups" :aria-label="t('Workspaces and sessions')">
       <section v-for="group in groups" :key="group.workspace.id" class="workspace-group" :class="{ selected: selectedWorkspaceId === group.workspace.id }" :aria-label="group.workspace.name">
-        <div class="workspace-group-header">
+        <div class="workspace-group-header" @contextmenu.prevent="openMenuId = group.workspace.id">
           <button class="icon-button workspace-disclosure" :class="{ expanded: group.expanded }" :aria-expanded="group.expanded" :aria-label="t(group.expanded ? 'Collapse {workspace} sessions' : 'Expand {workspace} sessions', { workspace: group.workspace.name })" :aria-controls="`workspace-sessions-${group.workspace.id}`" @click="setExpanded(group.workspace.id, !group.expanded)"><Icon name="chevron" :size="11" /></button>
           <button class="workspace-group-name" :title="group.workspace.root_path" :aria-expanded="group.expanded" :aria-controls="`workspace-sessions-${group.workspace.id}`" @click="selectWorkspace(group)" @keydown="navigateWorkspace($event, group)"><strong>{{ group.workspace.name }}</strong><svg v-if="group.pinned" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" :aria-label="t('Pinned workspace')"><path d="m16 3 5 5-4 1-4 5v4l-3-3-6 6 6-6-3-3h4l5-5z" /></svg></button>
           <span v-if="group.activeCount" class="workspace-active-count" :title="t('{count} active sessions', { count: group.activeCount })" :aria-label="t('{count} active sessions', { count: group.activeCount })"><i class="state-dot running" />{{ group.activeCount }}</span>
