@@ -103,6 +103,36 @@ test('Codex resume happens on the first explicit message and permission grants r
   const records=await log();assert.equal(records.find(item=>item.method==='thread/resume').params.threadId,'saved-thread');
   assert.deepEqual(records.find(item=>item.id==='approval-1'&&!item.method).result,{permissions:{},scope:'turn'});
 },['resume','saved-thread']));
+// Codex announces no commands of its own, but the work behind its TUI's slash
+// commands is reachable over the protocol. The composer offers only what the
+// bridge can actually carry out, so the list and the translation are tested
+// together: an offered command that does nothing is the failure to catch.
+test('Codex offers the slash commands it can honour and translates each to its own method',async()=>fixture('codex',async({send,wait,events,log})=>{
+  assert.deepEqual((await wait(event=>event.type==='ready')).commands,['review','diff']);
+  send({type:'message',id:'review-tree',content:'/review'});
+  await wait(event=>event.type==='turn'&&event.id==='review-tree'&&event.status==='completed');
+  assert.deepEqual((await log()).find(item=>item.method==='review/start').params.target,{type:'uncommittedChanges'});
+
+  send({type:'message',id:'review-branch',content:'/review base release/1.0'});
+  await wait(event=>event.type==='turn'&&event.id==='review-branch'&&event.status==='completed');
+  send({type:'message',id:'review-free',content:'/review check the error paths'});
+  await wait(event=>event.type==='turn'&&event.id==='review-free'&&event.status==='completed');
+  const targets=(await log()).filter(item=>item.method==='review/start').map(item=>item.params.target);
+  assert.deepEqual(targets.slice(1),[{type:'baseBranch',branch:'release/1.0'},{type:'custom',instructions:'check the error paths'}]);
+
+  // `/diff` never becomes a turn of the model's, so it has to end the one it
+  // was given itself — a missed `finish` here would wedge the whole session.
+  send({type:'message',id:'diff',content:'/diff'});
+  await wait(event=>event.type==='turn'&&event.id==='diff'&&event.status==='completed');
+  const shown=events.find(event=>event.type==='tool'&&event.id==='diff:diff');
+  assert.match(shown.name,/^Diff to remote \(0123456\)$/);assert.equal(shown.text,'+fixture diff');
+  assert.equal((await log()).filter(item=>item.method==='turn/start').length,0);
+
+  // An unlisted command is the model's input, not the bridge's business.
+  send({type:'message',id:'plain',content:'/unknown thing'});
+  await wait(event=>event.type==='turn'&&event.id==='plain'&&event.status==='completed');
+  assert.equal((await log()).find(item=>item.method==='turn/start').params.input[0].text,'/unknown thing');
+}));
 test('Codex file-change and MCP tool items have complete lifecycle events',async()=>fixture('codex',async({send,wait,events})=>{
   send({type:'message',id:'tools',content:'tools'});await wait(event=>event.type==='turn'&&event.status==='completed');
   assert.deepEqual(events.filter(event=>event.type==='tool'&&event.id==='file-1').map(event=>event.status),['running','completed']);

@@ -40,6 +40,26 @@ function codexModels(result) {
       ...(efforts?.length?{efforts}:{})}];
   });
 }
+// Codex app-server announces no command list — unlike Claude Code, its slash
+// commands live in its TUI, not in the protocol. But the work behind them is
+// exposed as ordinary methods, so these are offered here and translated below.
+// Only commands verified against a running app-server belong in this list: an
+// entry the composer offers and the bridge cannot honour is worse than none.
+const CODEX_COMMANDS=['review','diff'];
+/**
+ * `/review` with no argument reviews the working tree, which is what the Codex
+ * TUI does. The other three targets are spelled the way its protocol spells
+ * them; anything else is passed on as free-form review instructions rather than
+ * rejected, because that is a target the protocol has too.
+ */
+function reviewTarget(argument) {
+  const text=argument.trim();
+  if(!text)return {type:'uncommittedChanges'};
+  const [word,...rest]=text.split(/\s+/),value=rest.join(' ');
+  if((word==='base'||word==='branch')&&value)return {type:'baseBranch',branch:value};
+  if(word==='commit'&&value)return {type:'commit',sha:value,title:`commit ${value}`};
+  return {type:'custom',instructions:text};
+}
 const requestKey=id=>typeof id+':'+String(id);
 const itemStatus=item=>['failed','declined','cancelled'].includes(item.status)||item.success===false?'failed':item.status==='inProgress'?'running':'completed';
 
@@ -48,7 +68,7 @@ export class CodexChat extends ChatBase {
     this.launch=codexLaunch(this.job);this.tools=new Map();
     this.port=new NativeProcess(this.job.program,this.launch.args,this.job.cwd,message=>this.notification(message),message=>this.fatal(message),()=>this.fatal('Codex app-server exited.'),this.options);
     await this.port.rpc('initialize',{clientInfo:{name:'agentdock',title:'AgentDock',version:'0.1.0'}});
-    this.port.send({method:'initialized',params:{}});this.announce();
+    this.port.send({method:'initialized',params:{}});this.announce(undefined,CODEX_COMMANDS);
     this.settings(undefined,this.launch.thread.model);
     // Asking for models must not hold up the session. A Codex build without
     // model/list simply offers no picker rather than a list AgentDock guessed.
@@ -75,19 +95,35 @@ export class CodexChat extends ChatBase {
   }
   async message(message) {
     const active=this.begin(message);if(!active)return;
+    const command=/^\/([a-z]+)(?:\s+([\s\S]*))?$/.exec(message.content.trim());
+    const name=command&&CODEX_COMMANDS.includes(command[1])?command[1]:undefined;
     try {
       if(!this.nativeSessionId){
         const result=await this.port.rpc(this.launch.resume?'thread/resume':'thread/start',{...this.launch.thread,...(this.launch.resume?{threadId:this.launch.resume}:{})});
         if(!nativeId(result?.thread?.id))throw Error('Codex did not return a usable native thread ID.');
-        this.announce(result.thread.id);
+        this.announce(result.thread.id,CODEX_COMMANDS);
       }
       if(this.active!==active)return;
       if(active.interrupted){this.finish('interrupted');return;}
+      // `/diff` answers on the spot instead of starting a turn, so it reports
+      // its own result and ends the turn it was given here.
+      if(name==='diff'){await this.diff(active,message.id);return;}
       // Codex takes both per turn, so a change applies to the next one without
       // touching the thread or its context.
-      const result=await this.port.rpc('turn/start',{threadId:this.nativeSessionId,input:[{type:'text',text:message.content}],...(this.launch.thread.model?{model:this.launch.thread.model}:{}),...(this.effort?{effort:this.effort}:{})});
+      const result=name==='review'
+        ? await this.port.rpc('review/start',{threadId:this.nativeSessionId,target:reviewTarget(command[2]??'')})
+        : await this.port.rpc('turn/start',{threadId:this.nativeSessionId,input:[{type:'text',text:message.content}],...(this.launch.thread.model?{model:this.launch.thread.model}:{}),...(this.effort?{effort:this.effort}:{})});
       if(this.active===active){active.nativeTurn=result?.turn?.id;if(active.interrupted)await this.sendInterrupt(active);}
     }catch(error){if(this.active===active){this.error(error.message);this.finish(active.interrupted?'interrupted':'failed');}}
+  }
+  /** The working tree against the remote, as Codex itself computes it. */
+  async diff(active,id) {
+    const result=await this.port.rpc('gitDiffToRemote',{cwd:this.job.cwd});
+    if(this.active!==active)return;
+    const sha=typeof result?.sha==='string'?result.sha:undefined;
+    const diff=typeof result?.diff==='string'&&result.diff?result.diff:'No changes against the remote.';
+    this.emit({type:'tool',id:`diff:${id}`,name:sha?`Diff to remote (${sha.slice(0,7)})`:'Diff to remote',status:'completed',text:clip(diff)});
+    this.finish('completed');
   }
   async sendInterrupt(active) {
     if(!active.nativeTurn||active.interruptSent)return;

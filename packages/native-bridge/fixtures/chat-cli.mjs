@@ -37,6 +37,16 @@ for await(const line of createInterface({input:process.stdin})) {
     if(message.method==='model/list'){send({id:message.id,result:{data:[{id:'gpt-fixture',displayName:'Fixture',isDefault:true,supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}]},{id:'gpt-plain'},{id:'gpt-hidden',hidden:true}],nextCursor:null}});continue;}
     if(message.method==='thread/start'||message.method==='thread/resume'){thread=message.params.threadId??thread;send({id:message.id,result:{thread:{id:thread}}});continue;}
     if(message.method==='turn/interrupt'){send({id:message.id,result:{}});native('turn/completed',{threadId:thread,turn:{id:activeTurn,status:'interrupted'}});continue;}
+    // The work behind the Codex TUI's slash commands: `review/start` opens an
+    // ordinary turn, `gitDiffToRemote` answers on the spot.
+    if(message.method==='gitDiffToRemote'){send({id:message.id,result:{sha:'0123456789abcdef',diff:'+fixture diff'}});continue;}
+    if(message.method==='review/start'){
+      if(!message.params?.target?.type){send({id:message.id,error:{code:-32600,message:'Invalid request: missing field `target`'}});continue;}
+      turn++;activeTurn='turn-'+turn;send({id:message.id,result:{turn:{id:activeTurn,status:'inProgress'}}});
+      native('turn/started',{threadId:thread,turn:{id:activeTurn}});
+      native('item/completed',{threadId:thread,turnId:activeTurn,item:{id:'review-'+turn,type:'agentMessage',text:JSON.stringify(message.params.target)}});
+      native('turn/completed',{threadId:thread,turn:{id:activeTurn,status:'completed'}});continue;
+    }
     if(message.method==='turn/start'){
       turn++;activeTurn='turn-'+turn;mode=message.params.input[0].text;send({id:message.id,result:{turn:{id:activeTurn,status:'inProgress'}}});native('turn/started',{threadId:thread,turn:{id:activeTurn}});
       if(mode==='hold'){native('item/started',{threadId:thread,turnId:activeTurn,item:{id:'hold-'+turn,type:'commandExecution',command:'fixture wait',status:'inProgress'}});continue;}

@@ -58,10 +58,13 @@ test('a narrowed list restarts its highlight instead of pointing at a removed ro
 
 test('a command a client cannot act on is identified rather than sent as prose', async () => {
   const { unsupportedCommand } = await import('./slash-commands.ts');
-  // A client that advertises commands handles its own; nothing is intercepted.
+  // A command the client announced is its own to run; nothing is intercepted.
   assert.equal(unsupportedCommand('/model', ['model', 'usage']), undefined);
-  // A client with no command support would receive this as literal text.
+  // One it did not announce would arrive as literal text. Codex announces a
+  // couple of real commands and no /model, so a short list still intercepts.
   assert.equal(unsupportedCommand('/model', []), 'model');
+  assert.equal(unsupportedCommand('/model', ['review', 'diff']), 'model');
+  assert.equal(unsupportedCommand('/review', ['review', 'diff']), undefined);
   assert.equal(unsupportedCommand('  /compact  ', []), 'compact');
   // Ordinary prose, paths and commands with arguments are left alone: only a
   // bare command is unambiguous enough to intercept.
