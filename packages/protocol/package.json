@@ -1,0 +1,7 @@
+{
+  "name": "@agentdock/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts", "./layout": "./src/layout.ts" }
+}

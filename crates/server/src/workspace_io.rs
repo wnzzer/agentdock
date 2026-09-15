@@ -1,0 +1,1043 @@
+//! Safe workspace file and Git operations.
+//!
+//! The module deliberately has no HTTP/router dependencies.  Callers provide a
+//! workspace root and receive serialisable domain values or an [`IoError`]
+//! carrying a useful HTTP status code.
+
+use std::{
+    fs, io,
+    path::{Component, Path, PathBuf},
+    time::Duration,
+};
+
+use serde::Serialize;
+use tokio::{io::AsyncReadExt, process::Command, time::timeout};
+use uuid::Uuid;
+
+const MAX_TEXT_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_GIT_OUTPUT: usize = 8 * 1024 * 1024;
+const GIT_TIMEOUT: Duration = Duration::from_secs(30);
+const COMMIT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Structured error returned by workspace operations.
+#[derive(Debug, Clone, Serialize)]
+pub struct IoError {
+    pub status: u16,
+    pub message: String,
+}
+
+impl IoError {
+    pub fn new(status: u16, message: impl Into<String>) -> Self {
+        Self {
+            status,
+            message: message.into(),
+        }
+    }
+
+    fn io(error: io::Error) -> Self {
+        let status = match error.kind() {
+            io::ErrorKind::NotFound => 404,
+            io::ErrorKind::PermissionDenied => 403,
+            io::ErrorKind::AlreadyExists => 409,
+            _ => 500,
+        };
+        Self::new(status, error.to_string())
+    }
+}
+
+impl std::fmt::Display for IoError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for IoError {}
+
+impl From<io::Error> for IoError {
+    fn from(value: io::Error) -> Self {
+        Self::io(value)
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FileEntry {
+    pub name: String,
+    pub path: String,
+    pub kind: String,
+    pub size: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TextFile {
+    pub path: String,
+    pub content: String,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GitFile {
+    pub index: String,
+    pub worktree: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GitStatus {
+    pub branch: Option<String>,
+    pub files: Vec<GitFile>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ahead: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub behind: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GitDiff {
+    pub diff: String,
+    pub path: Option<String>,
+    pub staged: bool,
+    pub binary: bool,
+    pub truncated: bool,
+}
+
+/// Resolve a relative workspace path while preventing traversal and symlink
+/// escapes. Existing paths are canonicalised; for a new path the canonical
+/// parent is checked and the original (non-existent) path is returned.
+pub fn safe_path(root: &Path, relative: &str) -> Result<PathBuf, IoError> {
+    let canonical_root = fs::canonicalize(root).map_err(IoError::from)?;
+    if !canonical_root.is_dir() {
+        return Err(IoError::new(400, "workspace root is not a directory"));
+    }
+    let rel = safe_relative(relative)?;
+    let candidate = canonical_root.join(&rel);
+    match fs::symlink_metadata(&candidate) {
+        Ok(_) => {
+            let canonical = fs::canonicalize(&candidate).map_err(IoError::from)?;
+            if !canonical.starts_with(&canonical_root) {
+                return Err(IoError::new(403, "path escapes workspace root"));
+            }
+            Ok(canonical)
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            // For a new file (or a new nested directory), walk up to the
+            // nearest existing ancestor and canonicalise that component. This
+            // still catches a symlinked ancestor while allowing callers to
+            // create `src/new/file.txt` in one operation.
+            let mut parent = candidate
+                .parent()
+                .ok_or_else(|| IoError::new(400, "invalid path"))?;
+            while !parent.exists() {
+                parent = parent
+                    .parent()
+                    .ok_or_else(|| IoError::new(400, "invalid path"))?;
+            }
+            let canonical_parent = fs::canonicalize(parent).map_err(IoError::from)?;
+            if !canonical_parent.starts_with(&canonical_root)
+                || is_protected_path(
+                    canonical_parent
+                        .strip_prefix(&canonical_root)
+                        .unwrap_or(&canonical_parent),
+                )
+            {
+                return Err(IoError::new(403, "path escapes workspace root"));
+            }
+            Ok(candidate)
+        }
+        Err(error) => Err(IoError::from(error)),
+    }
+}
+
+fn safe_relative(relative: &str) -> Result<PathBuf, IoError> {
+    if relative.as_bytes().contains(&0) {
+        return Err(IoError::new(400, "path contains NUL"));
+    }
+    let path = Path::new(relative);
+    if path.is_absolute() {
+        return Err(IoError::new(400, "absolute paths are not allowed"));
+    }
+    let mut result = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(part) => result.push(part),
+            Component::ParentDir => return Err(IoError::new(400, "path traversal is not allowed")),
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(IoError::new(400, "absolute paths are not allowed"));
+            }
+        }
+    }
+    Ok(result)
+}
+
+fn relative_string(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn is_protected_path(relative: &Path) -> bool {
+    // AgentDock must never mutate repository metadata, credentials, or
+    // provider configuration.  These names are intentionally conservative.
+    const PROTECTED: &[&str] = &[
+        ".git",
+        ".agentdock",
+        ".claude.json",
+        ".ssh",
+        ".aws",
+        ".azure",
+        ".config",
+        ".claude",
+        ".codex",
+        "credentials",
+        "credential",
+        "secrets",
+    ];
+    relative.components().any(|component| {
+        let Component::Normal(part) = component else {
+            return false;
+        };
+        let value = part.to_string_lossy();
+        PROTECTED.iter().any(|name| value == *name)
+    })
+}
+
+fn has_symlink_component(root: &Path, relative: &Path) -> Result<bool, IoError> {
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        let Component::Normal(part) = component else {
+            continue;
+        };
+        current.push(part);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => return Ok(true),
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => break,
+            Err(error) => return Err(IoError::from(error)),
+        }
+    }
+    Ok(false)
+}
+
+fn hash_version(bytes: &[u8]) -> String {
+    // Stable, dependency-free content hash. Prefix permits a future migration
+    // to SHA-256 without invalidating the optimistic-concurrency contract.
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("v1:{hash:016x}")
+}
+
+pub async fn list_files(root: &Path, relative: &str) -> Result<Vec<FileEntry>, IoError> {
+    let root = root.to_path_buf();
+    let relative = relative.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let canonical_root = fs::canonicalize(&root).map_err(IoError::from)?;
+        let directory = safe_path(&canonical_root, &relative)?;
+        let metadata = fs::metadata(&directory).map_err(IoError::from)?;
+        if !metadata.is_dir() {
+            return Err(IoError::new(400, "path is not a directory"));
+        }
+        let mut entries = Vec::new();
+        if is_protected_path(
+            directory
+                .strip_prefix(&canonical_root)
+                .unwrap_or(&directory),
+        ) {
+            return Err(IoError::new(403, "protected directory"));
+        }
+        for (index, item) in fs::read_dir(&directory).map_err(IoError::from)?.enumerate() {
+            if index >= 10000 {
+                return Err(IoError::new(413, "Directory exceeds 10,000 entries"));
+            }
+
+            let item = item.map_err(IoError::from)?;
+            let path = item.path();
+            let lexical_metadata = match fs::symlink_metadata(&path) {
+                Ok(meta) => meta,
+                Err(_) => continue,
+            };
+            let Ok(safe) = safe_path(&canonical_root, &relative_string(&canonical_root, &path))
+            else {
+                continue; // Hide symlinks that leave the workspace.
+            };
+            let is_symlink = lexical_metadata.file_type().is_symlink();
+            let metadata = match fs::metadata(&safe) {
+                Ok(meta) => meta,
+                Err(_) => continue,
+            };
+            // Preserve the user's lexical symlink path in listings while still
+            // validating its target via `safe_path` above.
+            let rel = relative_string(&canonical_root, &path);
+            if is_protected_path(Path::new(&rel))
+                || is_protected_path(safe.strip_prefix(&canonical_root).unwrap_or(&safe))
+            {
+                continue;
+            }
+            entries.push(FileEntry {
+                name: item.file_name().to_string_lossy().into_owned(),
+                path: rel,
+                kind: if is_symlink {
+                    "symlink"
+                } else if metadata.is_dir() {
+                    "directory"
+                } else if metadata.is_file() {
+                    "file"
+                } else {
+                    "other"
+                }
+                .into(),
+                size: metadata.len(),
+            });
+        }
+        entries.sort_by(|a, b| {
+            (a.kind != "directory")
+                .cmp(&(b.kind != "directory"))
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
+        Ok(entries)
+    })
+    .await
+    .map_err(|error| IoError::new(500, format!("file listing task failed: {error}")))?
+}
+
+pub async fn read_file(root: &Path, path: &str) -> Result<TextFile, IoError> {
+    let root = root.to_path_buf();
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let canonical_root = fs::canonicalize(&root).map_err(IoError::from)?;
+        let rel = safe_relative(&path)?;
+        let target = asset_path(&canonical_root, &path)?;
+        if is_protected_path(&rel) {
+            return Err(IoError::new(403, "protected path"));
+        }
+        let metadata = fs::metadata(&target).map_err(IoError::from)?;
+        if !metadata.is_file() {
+            return Err(IoError::new(400, "path is not a file"));
+        }
+        if metadata.len() > MAX_TEXT_BYTES {
+            return Err(IoError::new(413, "text file exceeds 2 MiB limit"));
+        }
+        let bytes = fs::read(&target).map_err(IoError::from)?;
+        if bytes.len() as u64 > MAX_TEXT_BYTES {
+            return Err(IoError::new(413, "text file exceeds 2 MiB limit"));
+        }
+        let content = String::from_utf8(bytes.clone())
+            .map_err(|_| IoError::new(415, "file is not valid UTF-8"))?;
+        Ok(TextFile {
+            path: rel.to_string_lossy().replace('\\', "/"),
+            content,
+            version: hash_version(&bytes),
+        })
+    })
+    .await
+    .map_err(|error| IoError::new(500, format!("file read task failed: {error}")))?
+}
+
+pub async fn write_file(
+    root: &Path,
+    path: &str,
+    content: &str,
+    expected_version: Option<&str>,
+) -> Result<TextFile, IoError> {
+    if content.len() as u64 > MAX_TEXT_BYTES {
+        return Err(IoError::new(413, "text file exceeds 2 MiB limit"));
+    }
+    let root = root.to_path_buf();
+    let path = path.to_owned();
+    let content = content.to_owned();
+    let expected_version = expected_version.map(str::to_owned);
+    tokio::task::spawn_blocking(move || {
+        let canonical_root = fs::canonicalize(&root).map_err(IoError::from)?;
+        let rel = safe_relative(&path)?;
+        if rel.as_os_str().is_empty() {
+            return Err(IoError::new(400, "file path is required"));
+        }
+        if is_protected_path(&rel) {
+            return Err(IoError::new(403, "protected path cannot be written"));
+        }
+        if has_symlink_component(&canonical_root, &rel)? {
+            return Err(IoError::new(403, "symlink writes are not allowed"));
+        }
+        // Inspect the lexical target before canonicalisation so a symlink to a
+        // location inside the workspace cannot be silently overwritten.
+        let lexical_target = canonical_root.join(&rel);
+        if let Ok(meta) = fs::symlink_metadata(&lexical_target)
+            && meta.file_type().is_symlink()
+        {
+            return Err(IoError::new(403, "symlink writes are not allowed"));
+        }
+        let target = safe_path(&canonical_root, &path)?;
+        if let Ok(meta) = fs::symlink_metadata(&target) {
+            if meta.file_type().is_symlink() {
+                return Err(IoError::new(403, "symlink writes are not allowed"));
+            }
+            if !meta.is_file() {
+                return Err(IoError::new(400, "path is not a regular file"));
+            }
+            if meta.len() > MAX_TEXT_BYTES {
+                return Err(IoError::new(413, "Text exceeds 2 MiB limit"));
+            }
+            if expected_version.is_none() {
+                return Err(IoError::new(
+                    409,
+                    "Read the current version before overwriting an existing file",
+                ));
+            }
+            let existing = fs::read(&target).map_err(IoError::from)?;
+            let actual = hash_version(&existing);
+            if let Some(expected) = expected_version.as_deref()
+                && expected != actual
+            {
+                return Err(IoError::new(409, "file changed since it was read"));
+            }
+        } else if expected_version.is_some() {
+            return Err(IoError::new(409, "file no longer exists"));
+        }
+        let parent = target
+            .parent()
+            .ok_or_else(|| IoError::new(400, "invalid file path"))?;
+        fs::create_dir_all(parent).map_err(IoError::from)?;
+        let temp = parent.join(format!(".agentdock-{}.tmp", Uuid::new_v4()));
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        let mut file = options.open(&temp).map_err(IoError::from)?;
+        use io::Write;
+        if let Err(error) = file
+            .write_all(content.as_bytes())
+            .and_then(|_| file.sync_all())
+        {
+            let _ = fs::remove_file(&temp);
+            return Err(IoError::from(error));
+        }
+        if let Ok(meta) = fs::metadata(&target) {
+            let _ = fs::set_permissions(&temp, meta.permissions());
+        }
+        if let Err(error) = fs::rename(&temp, &target) {
+            let _ = fs::remove_file(&temp);
+            return Err(IoError::from(error));
+        }
+        let bytes = content.into_bytes();
+        Ok(TextFile {
+            path: rel.to_string_lossy().replace('\\', "/"),
+            content: String::from_utf8(bytes.clone()).expect("input is UTF-8"),
+            version: hash_version(&bytes),
+        })
+    })
+    .await
+    .map_err(|error| IoError::new(500, format!("file write task failed: {error}")))?
+}
+
+fn git_command(root: &Path, args: &[String]) -> Command {
+    let mut command = Command::new("git");
+    for (key, _) in std::env::vars().filter(|(k, _)| k.starts_with("GIT_")) {
+        command.env_remove(key);
+    }
+    command
+        .args([
+            "--literal-pathspecs",
+            "-c",
+            "color.ui=false",
+            "-c",
+            "core.fsmonitor=false",
+        ])
+        .args(args)
+        .current_dir(root)
+        .kill_on_drop(true)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_PAGER", "cat")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    command
+}
+async fn run_git(
+    root: &Path,
+    args: Vec<String>,
+    duration: Duration,
+) -> Result<(Vec<u8>, Vec<u8>, bool), IoError> {
+    let mut child = git_command(root, &args).spawn()?;
+    let out = child
+        .stdout
+        .take()
+        .ok_or_else(|| IoError::new(500, "missing Git stdout"))?;
+    let err = child
+        .stderr
+        .take()
+        .ok_or_else(|| IoError::new(500, "missing Git stderr"))?;
+    async fn read_capped(stream: impl tokio::io::AsyncRead + Unpin) -> Result<Vec<u8>, IoError> {
+        let mut data = Vec::new();
+        stream
+            .take((MAX_GIT_OUTPUT + 1) as u64)
+            .read_to_end(&mut data)
+            .await?;
+        if data.len() > MAX_GIT_OUTPUT {
+            return Err(IoError::new(413, "Git output exceeds 8 MiB limit"));
+        }
+        Ok(data)
+    }
+    let result = timeout(duration, async {
+        let (stdout, stderr) = tokio::try_join!(read_capped(out), read_capped(err))?;
+        let status = child.wait().await?;
+        Ok::<_, IoError>((stdout, stderr, status.success()))
+    })
+    .await;
+    match result {
+        Ok(Ok(output)) => Ok(output),
+        Ok(Err(error)) => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            Err(error)
+        }
+        Err(_) => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            Err(IoError::new(504, "Git command timed out"))
+        }
+    }
+}
+
+pub async fn git_status(root: &Path) -> Result<GitStatus, IoError> {
+    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    let (stdout, stderr, success) = run_git(
+        root.as_path(),
+        vec![
+            "status".into(),
+            "--porcelain=v1".into(),
+            "-z".into(),
+            "--branch".into(),
+            "--untracked-files=all".into(),
+        ],
+        GIT_TIMEOUT,
+    )
+    .await?;
+    if !success {
+        return Err(IoError::new(400, git_error(&stderr)));
+    }
+    Ok(parse_git_status(&stdout))
+}
+
+fn parse_git_status(bytes: &[u8]) -> GitStatus {
+    let mut branch = None;
+    let mut ahead = None;
+    let mut behind = None;
+    let mut files = Vec::new();
+    let mut tokens = bytes.split(|b| *b == 0).peekable();
+    while let Some(token) = tokens.next() {
+        if token.is_empty() {
+            continue;
+        }
+        if token.starts_with(b"## ") {
+            let value = String::from_utf8_lossy(&token[3..]).to_string();
+            let (name, tracking) = value
+                .split_once("...")
+                .map_or((value.as_str(), ""), |(n, t)| (n, t));
+            branch = Some(
+                if let Some(branch_name) = value.strip_prefix("No commits yet on ") {
+                    branch_name.to_owned()
+                } else {
+                    name.split(' ').next().unwrap_or(name).to_string()
+                },
+            );
+            if let Some(start) = tracking.find("[ahead ")
+                && let Some(n) = tracking[start + 7..]
+                    .split([',', ']'])
+                    .next()
+                    .and_then(|n| n.parse().ok())
+            {
+                ahead = Some(n);
+            }
+            if let Some(start) = tracking.find("behind ")
+                && let Some(n) = tracking[start + 7..]
+                    .split([',', ']'])
+                    .next()
+                    .and_then(|n| n.parse().ok())
+            {
+                behind = Some(n);
+            }
+            continue;
+        }
+        if token.len() < 3 {
+            continue;
+        }
+        let index = String::from_utf8_lossy(&token[0..1]).to_string();
+        let worktree = String::from_utf8_lossy(&token[1..2]).to_string();
+        let path = String::from_utf8_lossy(&token[3..]).to_string();
+        let original_path = if index == "R" || index == "C" || worktree == "R" || worktree == "C" {
+            tokens
+                .next()
+                .map(|raw| String::from_utf8_lossy(raw).to_string())
+        } else {
+            None
+        };
+        files.push(GitFile {
+            index,
+            worktree,
+            path,
+            original_path,
+        });
+    }
+    GitStatus {
+        branch,
+        files,
+        ahead,
+        behind,
+    }
+}
+
+fn git_error(stderr: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stderr).trim().to_string();
+    if text.is_empty() {
+        "git command failed".into()
+    } else {
+        text
+    }
+}
+
+pub async fn git_diff(root: &Path, path: Option<&str>, staged: bool) -> Result<GitDiff, IoError> {
+    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    let safe = if let Some(path) = path {
+        let rel = safe_relative(path)?;
+        if is_protected_path(&rel) {
+            return Err(IoError::new(403, "protected path"));
+        }
+        let _ = safe_path(&root, path)?;
+        Some(path.to_owned())
+    } else {
+        None
+    };
+    let mut args = vec!["diff".to_string()];
+    if staged {
+        args.push("--cached".into());
+    }
+    args.extend([
+        "--no-ext-diff".into(),
+        "--no-textconv".into(),
+        "--no-color".into(),
+        "--binary".into(),
+    ]);
+    if let Some(ref path) = safe {
+        args.extend(["--".into(), path.clone()]);
+    }
+    let (stdout, stderr, success) = run_git(&root, args, GIT_TIMEOUT).await?;
+    if !success {
+        return Err(IoError::new(400, git_error(&stderr)));
+    }
+    let mut diff = String::from_utf8_lossy(&stdout).to_string();
+    // Ask Git for individual paths: obey ignore rules, never walk symlinked folders.
+    if !staged {
+        let (raw, stderr, ok) = run_git(
+            &root,
+            vec![
+                "ls-files".into(),
+                "--others".into(),
+                "--exclude-standard".into(),
+                "-z".into(),
+            ],
+            GIT_TIMEOUT,
+        )
+        .await?;
+        if !ok {
+            return Err(IoError::new(400, git_error(&stderr)));
+        }
+        let candidates: Vec<_> = raw.split(|b| *b == 0).filter(|s| !s.is_empty()).collect();
+        if candidates.len() > 500 {
+            return Err(IoError::new(
+                413,
+                "Select a file to review this large untracked set",
+            ));
+        }
+        for raw in candidates {
+            let untracked = String::from_utf8_lossy(raw).into_owned();
+            if safe.as_ref().is_some_and(|p| p != &untracked) {
+                continue;
+            }
+            if is_protected_path(Path::new(&untracked)) {
+                continue;
+            }
+            let target = match asset_path(&root, &untracked) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if !target.is_file() {
+                continue;
+            }
+            let (out, _, _) = run_git(
+                &root,
+                vec![
+                    "diff".into(),
+                    "--no-index".into(),
+                    "--no-ext-diff".into(),
+                    "--no-textconv".into(),
+                    "--no-color".into(),
+                    "--".into(),
+                    "/dev/null".into(),
+                    untracked,
+                ],
+                GIT_TIMEOUT,
+            )
+            .await?;
+            if diff.len() + out.len() > MAX_GIT_OUTPUT {
+                return Err(IoError::new(413, "Diff exceeds limit; select one file"));
+            }
+            diff.push_str(&String::from_utf8_lossy(&out));
+        }
+    }
+
+    let binary = diff.contains("Binary files") || diff.contains("GIT binary patch");
+    Ok(GitDiff {
+        diff,
+        path: safe,
+        staged,
+        binary,
+        truncated: false,
+    })
+}
+
+/// Shared guard for media and text reads. Both lexical and resolved paths matter.
+pub fn asset_path(root: &Path, relative: &str) -> Result<PathBuf, IoError> {
+    let canonical = fs::canonicalize(root)?;
+    let rel = safe_relative(relative)?;
+    if is_protected_path(&rel) {
+        return Err(IoError::new(403, "protected path"));
+    }
+    let target = safe_path(&canonical, relative)?;
+    if is_protected_path(
+        target
+            .strip_prefix(&canonical)
+            .map_err(|_| IoError::new(403, "path escapes workspace"))?,
+    ) {
+        return Err(IoError::new(403, "protected path"));
+    }
+    if !target.is_file() {
+        return Err(IoError::new(404, "file not found"));
+    }
+    Ok(target)
+}
+
+pub async fn git_stage(root: &Path, paths: &[String]) -> Result<(), IoError> {
+    git_index_op(root, "add", paths).await
+}
+
+pub async fn git_unstage(root: &Path, paths: &[String]) -> Result<(), IoError> {
+    git_index_op(root, "reset", paths).await
+}
+
+async fn git_index_op(root: &Path, operation: &str, paths: &[String]) -> Result<(), IoError> {
+    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let mut args = if operation == "reset"
+        && !run_git(
+            &root,
+            vec!["rev-parse".into(), "--verify".into(), "HEAD".into()],
+            GIT_TIMEOUT,
+        )
+        .await?
+        .2
+    {
+        vec![
+            "rm".into(),
+            "--cached".into(),
+            "--ignore-unmatch".into(),
+            "--".into(),
+        ]
+    } else {
+        vec![operation.to_owned(), "--".into()]
+    };
+    if paths.len() > 1000 {
+        return Err(IoError::new(413, "Too many paths"));
+    }
+    for path in paths {
+        if path.is_empty() || path == "." {
+            return Err(IoError::new(400, "Explicit file paths required"));
+        }
+        let rel = safe_relative(path)?;
+        if is_protected_path(&rel) {
+            return Err(IoError::new(403, "protected path"));
+        }
+        let _ = safe_path(&root, path)?;
+        args.push(path.clone());
+    }
+    let (_stdout, stderr, success) = run_git(&root, args, GIT_TIMEOUT).await?;
+    if success {
+        Ok(())
+    } else {
+        Err(IoError::new(400, git_error(&stderr)))
+    }
+}
+
+pub async fn git_commit(root: &Path, message: &str) -> Result<String, IoError> {
+    if message.trim().is_empty() {
+        return Err(IoError::new(400, "commit message is required"));
+    }
+    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    let args = vec!["commit".into(), "-m".into(), message.to_owned()];
+    let (_stdout, stderr, success) = run_git(&root, args, COMMIT_TIMEOUT).await?;
+    if !success {
+        return Err(IoError::new(400, git_error(&stderr)));
+    }
+    let (stdout, stderr, success) =
+        run_git(&root, vec!["rev-parse".into(), "HEAD".into()], GIT_TIMEOUT).await?;
+    if !success {
+        return Err(IoError::new(400, git_error(&stderr)));
+    }
+    Ok(String::from_utf8_lossy(&stdout).trim().to_owned())
+}
+
+/// Directory attachments land in, relative to the workspace root. Deliberately
+/// not `.agentdock`: that name is reserved for AgentDock's own server state, and
+/// a workspace may be the AgentDock checkout itself.
+pub const ATTACHMENT_DIR: &str = ".agentdock-files";
+pub const MAX_ATTACHMENT_BYTES: u64 = 10 * 1024 * 1024;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Attachment {
+    /// Workspace-relative path, which is what a session is given.
+    pub path: String,
+    pub name: String,
+    pub bytes: u64,
+}
+
+/// Reduce a client-supplied filename to a single safe path component.
+///
+/// Only the base name is kept, so a path from a phone's file picker cannot
+/// steer the write. The original stem and extension are preserved where they
+/// are usable, because the agent reading this file benefits from a recognisable
+/// name and a correct extension.
+fn attachment_name(raw: &str) -> (String, String, String) {
+    let base = raw.rsplit(['/', '\\']).next().unwrap_or("");
+    let cleaned: String = base
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '/' | '\\' | ':' | '\0') {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let cleaned = cleaned.trim().trim_matches('.').trim().to_owned();
+    let (stem, extension) = match cleaned.rsplit_once('.') {
+        Some((stem, extension))
+            if !stem.is_empty()
+                && (1..=16).contains(&extension.len())
+                && extension.chars().all(|c| c.is_ascii_alphanumeric()) =>
+        {
+            (
+                stem.to_owned(),
+                format!(".{}", extension.to_ascii_lowercase()),
+            )
+        }
+        _ => (cleaned.clone(), String::new()),
+    };
+    let stem: String = stem.chars().take(80).collect();
+    let stem = stem.trim().to_owned();
+    let display = if stem.is_empty() {
+        format!("attachment{extension}")
+    } else {
+        format!("{stem}{extension}")
+    };
+    // The stored path is handed to an agent as text, so whitespace collapses to
+    // hyphens; a path it has to quote correctly is a path it can get wrong. The
+    // display name keeps the user's original spelling.
+    let mut slug = String::new();
+    let mut pending_separator = false;
+    for character in stem.chars() {
+        if character.is_whitespace() || character == '-' {
+            pending_separator = !slug.is_empty();
+        } else {
+            if pending_separator {
+                slug.push('-');
+                pending_separator = false;
+            }
+            slug.push(character);
+        }
+    }
+    (display, extension, slug)
+}
+
+/// Store an uploaded attachment inside the workspace and return its relative
+/// path. Nothing is overwritten: each upload gets its own unique file name, so
+/// two photos with the same camera name both survive.
+pub async fn write_attachment(
+    root: &Path,
+    name: &str,
+    bytes: &[u8],
+) -> Result<Attachment, IoError> {
+    if bytes.is_empty() {
+        return Err(IoError::new(400, "attachment is empty"));
+    }
+    if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
+        return Err(IoError::new(413, "attachment exceeds 10 MiB limit"));
+    }
+    let (display, extension, stem) = attachment_name(name);
+    let unique = Uuid::new_v4().simple().to_string();
+    let relative = format!(
+        "{ATTACHMENT_DIR}/{}/{}-{}{extension}",
+        chrono::Utc::now().format("%Y-%m-%d"),
+        if stem.is_empty() { "attachment" } else { &stem },
+        &unique[..8]
+    );
+    let root = root.to_path_buf();
+    let payload = bytes.to_vec();
+    let size = payload.len() as u64;
+    tokio::task::spawn_blocking(move || {
+        let canonical_root = fs::canonicalize(&root).map_err(IoError::from)?;
+        let rel = safe_relative(&relative)?;
+        if is_protected_path(&rel) {
+            return Err(IoError::new(403, "protected path cannot be written"));
+        }
+        if has_symlink_component(&canonical_root, &rel)? {
+            return Err(IoError::new(403, "symlink writes are not allowed"));
+        }
+        let target = safe_path(&canonical_root, &relative)?;
+        if fs::symlink_metadata(&target).is_ok() {
+            return Err(IoError::new(409, "attachment already exists"));
+        }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(IoError::from)?;
+        }
+        // A self-contained ignore, so uploads do not turn into pending Git
+        // changes in the user's repository. It only covers this directory and
+        // never edits a .gitignore the user owns.
+        let ignore = canonical_root.join(ATTACHMENT_DIR).join(".gitignore");
+        if fs::symlink_metadata(&ignore).is_err() {
+            let _ = fs::write(&ignore, "*\n");
+        }
+        fs::write(&target, &payload).map_err(IoError::from)?;
+        Ok(Attachment {
+            path: relative_string(&canonical_root, &target),
+            name: display,
+            bytes: size,
+        })
+    })
+    .await
+    .map_err(|_| IoError::new(500, "attachment write failed"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command as StdCommand;
+
+    struct TempRepo {
+        path: PathBuf,
+    }
+    impl TempRepo {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("agentdock-test-{}", Uuid::new_v4()));
+            fs::create_dir_all(&path).unwrap();
+            for args in [
+                vec!["init"],
+                vec!["config", "user.email", "agentdock@example.com"],
+                vec!["config", "user.name", "AgentDock"],
+            ] {
+                let mut cmd = StdCommand::new("git");
+                cmd.args(args).current_dir(&path);
+                assert!(cmd.output().unwrap().status.success());
+            }
+            Self { path }
+        }
+        fn git(&self, args: &[&str]) {
+            assert!(
+                StdCommand::new("git")
+                    .args(args)
+                    .current_dir(&self.path)
+                    .output()
+                    .unwrap()
+                    .status
+                    .success()
+            );
+        }
+    }
+    impl Drop for TempRepo {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[tokio::test]
+    async fn file_roundtrip_and_conflict() {
+        let repo = TempRepo::new();
+        let file = write_file(&repo.path, "src/a.txt", "hello", None)
+            .await
+            .unwrap();
+        assert_eq!(
+            read_file(&repo.path, "src/a.txt").await.unwrap().version,
+            file.version
+        );
+        let err = write_file(&repo.path, "src/a.txt", "changed", Some("v1:deadbeef"))
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, 409);
+        write_file(&repo.path, "src/a.txt", "changed", Some(&file.version))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn git_status_rename_deleted_untracked() {
+        let repo = TempRepo::new();
+        fs::write(repo.path.join("a.txt"), "a").unwrap();
+        repo.git(&["add", "a.txt"]);
+        repo.git(&["commit", "-m", "init"]);
+        fs::rename(repo.path.join("a.txt"), repo.path.join("b.txt")).unwrap();
+        fs::write(repo.path.join("new.txt"), "new").unwrap();
+        let status = git_status(&repo.path).await.unwrap();
+        assert!(
+            status
+                .files
+                .iter()
+                .any(|f| f.path == "b.txt" || f.original_path.as_deref() == Some("a.txt"))
+        );
+        assert!(status.files.iter().any(|f| f.path == "new.txt"));
+    }
+
+    #[tokio::test]
+    async fn stage_diff_and_unstage() {
+        let repo = TempRepo::new();
+        fs::write(repo.path.join("new.txt"), "hello\n").unwrap();
+        let diff = git_diff(&repo.path, None, false).await.unwrap();
+        assert!(diff.diff.contains("new.txt"));
+        git_stage(&repo.path, &["new.txt".into()]).await.unwrap();
+        assert!(
+            git_diff(&repo.path, None, true)
+                .await
+                .unwrap()
+                .diff
+                .contains("new.txt")
+        );
+        git_unstage(&repo.path, &["new.txt".into()]).await.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlink_escape_is_rejected() {
+        let repo = TempRepo::new();
+        let outside = std::env::temp_dir().join(format!("agentdock-outside-{}", Uuid::new_v4()));
+        fs::write(&outside, "secret").unwrap();
+        std::os::unix::fs::symlink(&outside, repo.path.join("link.txt")).unwrap();
+        assert!(safe_path(&repo.path, "link.txt").is_err());
+        let _ = fs::remove_file(outside);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlink_ancestor_cannot_be_written() {
+        let repo = TempRepo::new();
+        let real = repo.path.join("real");
+        fs::create_dir_all(&real).unwrap();
+        std::os::unix::fs::symlink(&real, repo.path.join("alias")).unwrap();
+        let err = write_file(&repo.path, "alias/file.txt", "nope", None)
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, 403);
+    }
+}

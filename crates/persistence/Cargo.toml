@@ -1,0 +1,13 @@
+[package]
+name = "agentdock-persistence"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agentdock-domain.workspace = true
+chrono.workspace = true
+rusqlite.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+sha2 = "0.10"

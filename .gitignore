@@ -1,0 +1,10 @@
+/target
+/.agentdock
+/agentdock-data
+agentdock.db
+agentdock.db-shm
+agentdock.db-wal
+node_modules
+dist
+*.tsbuildinfo
+.DS_Store

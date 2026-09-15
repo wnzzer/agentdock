@@ -1,0 +1,22 @@
+{
+  "name": "@agentdock/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node node_modules/vite/bin/vite.js",
+    "build": "pnpm typecheck && node node_modules/vite/bin/vite.js build",
+    "typecheck": "node node_modules/vue-tsc/bin/vue-tsc.js --noEmit",
+    "test": "node --no-experimental-webstorage --import tsx --test --test-timeout=30000 \"src/**/*.test.mjs\""
+  },
+  "dependencies": {
+    "@agentdock/protocol": "workspace:*",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "@vitejs/plugin-vue": "6.0.8",
+    "vite": "8.2.2",
+    "typescript": "5.9.3",
+    "vue": "3.5.42"
+  },
+  "devDependencies": { "vue-tsc": "3.3.11" }
+}

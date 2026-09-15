@@ -1,0 +1,151 @@
+import { randomUUID } from 'node:crypto';
+import { ChatBase, NativeProcess, clip, nativeId, MAX_TEXT } from './chat-common.mjs';
+
+export function claudeLaunch(job) {
+  const args=[];let resume=job.resume_id,settingSources=false,sessionId;
+  const values=new Set(['--model','--permission-mode','--permission-prompts','--settings','--setting-sources','--append-system-prompt','--system-prompt','--agent','--agents','--effort','--max-budget-usd','--fallback-model','--allowedTools','--allowed-tools','--disallowedTools','--disallowed-tools','--tools','--add-dir','--plugin-dir','--mcp-config','--name','-n']);
+  for(let i=0;i<job.args.length;i++) {
+    const arg=job.args[i],equal=arg.indexOf('='),flag=equal>0?arg.slice(0,equal):arg;
+    const value=()=>{const result=equal>0?arg.slice(equal+1):job.args[++i];if(typeof result!=='string')throw Error('Missing Claude Code launch option value.');return result;};
+    if(flag==='--resume'||flag==='-r'){const id=value();if(!nativeId(id)||(resume&&resume!==id))throw Error('Invalid or conflicting Claude Code resume ID.');resume=id;}
+    else if(flag==='--session-id'){sessionId=value();if(!nativeId(sessionId))throw Error('Invalid Claude Code session ID.');args.push(flag,sessionId);}
+    else if(flag==='--input-format'||flag==='--output-format')value();
+    else if(flag==='--permission-prompt-tool'){if(value()!=='stdio')throw Error('Custom permission prompt tools are unsupported in structured mode.');}
+    else if(['--print','-p','--verbose','--include-partial-messages','--replay-user-messages'].includes(flag))continue;
+    else if(values.has(flag)) {
+      const next=value();if(flag==='--permission-mode'&&next==='bypassPermissions')throw Error('Structured mode does not enable permission bypass.');
+      if(flag==='--setting-sources')settingSources=true;args.push(flag,next);
+    }else if(['--strict-mcp-config','--disable-slash-commands'].includes(flag))args.push(flag);
+    else throw Error('Unsupported Claude Code launch option in structured mode.');
+  }
+  if(resume&&sessionId&&resume!==sessionId)throw Error('Conflicting Claude Code session identifiers.');
+  if(resume)args.push('--resume',resume);
+  if(!settingSources)args.push('--setting-sources','user,project,local');
+  args.push('--print','--verbose','--input-format','stream-json','--output-format','stream-json','--include-partial-messages','--permission-prompt-tool','stdio');
+  return {args,resume,sessionId};
+}
+
+// What currently occupies the context window. Claude Code documents this as the
+// input tokens in the window including cache reads and writes, so the sum is
+// taken from those official fields rather than inferred from message text.
+function contextTokens(usage) {
+  const parts=[usage?.input_tokens,usage?.cache_read_input_tokens,usage?.cache_creation_input_tokens];
+  if(!parts.some(value=>Number.isSafeInteger(value)&&value>=0))return undefined;
+  return parts.reduce((total,value)=>total+(Number.isSafeInteger(value)&&value>=0?value:0),0);
+}
+
+// The client reports commands as objects at initialize time and as plain names
+// in its later init message. Both are reduced to names; nothing is added.
+function commandNames(value) {
+  if(!Array.isArray(value))return undefined;
+  return value.map(entry=>typeof entry==='string'?entry:entry&&typeof entry==='object'?entry.name:undefined).filter(name=>typeof name==='string');
+}
+
+export class ClaudeChat extends ChatBase {
+  async initialize() {
+    this.launch=claudeLaunch(this.job);this.tools=new Map();
+    this.port=new NativeProcess(this.job.program,this.launch.args,this.job.cwd,message=>this.notification(message),message=>this.fatal(message),()=>this.fatal('Claude Code exited.'),this.options);
+    // This drives the user's installed native CLI, not SDK query() or an OAuth/token proxy.
+    const initialized=await this.port.rpc('initialize',{promptSuggestions:false},true);
+    // The client lists its own commands here, before any turn has run, so the
+    // composer can offer them on a brand new session.
+    this.announce(this.launch.resume??this.launch.sessionId,commandNames(initialized?.commands));
+  }
+  message(message) {
+    const active=this.begin(message);if(!active)return;
+    this.assistantId=undefined;this.finalAssistant=false;
+    try{this.port.send({type:'user',uuid:randomUUID(),session_id:this.nativeSessionId??'',message:{role:'user',content:message.content},parent_tool_use_id:null});}
+    catch{this.error('Could not send the message to Claude Code.');this.finish('failed');}
+  }
+  async interrupt() {
+    const active=this.active;if(!active)return;active.interrupted=true;this.clearApprovals();
+    try{await this.port.rpc('interrupt',{},true);}catch{if(this.active===active)this.error('Claude Code could not confirm turn interruption.');}
+  }
+  notification(message) {
+    if(!message||typeof message!=='object')return;
+    if(message.type==='control_request'){this.request(message);return;}
+    if(message.type==='control_cancel_request'){this.resolveNative(String(message.request_id));return;}
+    if(message.type==='system'&&message.subtype==='init'){this.announce(message.session_id,commandNames(message.slash_commands));return;}
+    if(!this.active)return;
+    if(message.parent_tool_use_id)return; // Subagent text must not overwrite the main assistant message.
+    if(message.type==='stream_event'){
+      const event=message.event??{};
+      if(event.type==='message_start')this.assistantId=event.message?.id;
+      else if(event.type==='content_block_delta'&&event.delta?.type==='text_delta')this.emit({type:'message',id:this.assistantId??`assistant-${this.active.id}`,role:'assistant',text:clip(event.delta.text),delta:true});
+      else if(event.type==='content_block_start'&&event.content_block?.type==='tool_use')this.tool(event.content_block,'running');
+      return;
+    }
+    if(message.type==='assistant'){
+      const body=message.message??{},blocks=Array.isArray(body.content)?body.content:[];
+      if(typeof body.id==='string')this.assistantId=body.id;
+      const text=blocks.filter(block=>block.type==='text'&&typeof block.text==='string').map(block=>block.text).join('');
+      if(text){this.finalAssistant=true;this.emit({type:'message',id:this.assistantId??`assistant-${this.active.id}`,role:'assistant',text:clip(text),delta:false});}
+      for(const block of blocks)if(block.type==='tool_use')this.tool(block,'running');
+      this.usage(body.usage,contextTokens(body.usage));return;
+    }
+    if(message.type==='user'&&Array.isArray(message.message?.content)){
+      for(const result of message.message.content)if(result.type==='tool_result'&&typeof result.tool_use_id==='string'){
+        const text=typeof result.content==='string'?result.content:Array.isArray(result.content)?result.content.filter(block=>block.type==='text').map(block=>block.text??'').join('\n'):'';
+        this.emit({type:'tool',id:result.tool_use_id,name:this.tools.get(result.tool_use_id)??'Native tool',status:result.is_error?'failed':'completed',text:clip(text)});
+      }return;
+    }
+    if(message.type==='tool_progress'&&typeof message.tool_use_id==='string'){
+      this.emit({type:'tool',id:message.tool_use_id,name:clip(message.tool_name??'Native tool',256),status:'running'});return;
+    }
+    if(message.type==='result'){
+      // Claude reports the window per model it actually used this turn. Only a
+      // single agreed size is forwarded; mixed sizes stay unreported.
+      const windows=new Set(Object.values(message.modelUsage??{}).map(entry=>entry?.contextWindow).filter(value=>Number.isSafeInteger(value)&&value>0));
+      // The result totals are cumulative over every API call in the turn, so
+      // deriving a context size from them counts the same prompt once per tool
+      // round and reports several times the real occupancy. Only the last
+      // assistant message describes the live context, so that value is kept and
+      // just the window is taken from here.
+      this.usage(message.usage,undefined,windows.size===1?[...windows][0]:undefined);
+      if(!this.finalAssistant&&typeof message.result==='string')this.emit({type:'message',id:this.assistantId??`assistant-${this.active.id}`,role:'assistant',text:clip(message.result),delta:false});
+      const failed=message.is_error||message.subtype!=='success';
+      if(failed&&!this.active.interrupted){
+        const diagnostic=JSON.stringify(message.errors??[]);
+        this.error(/oauth|subscription.*(?:not|unsupported)|authentication.*(?:not|unsupported)/i.test(diagnostic)?'Claude Code does not support this authentication mode for this interface. Use its native client or an approved API configuration.':'Claude Code could not complete the turn. Check its native account, endpoint and permission settings.');
+      }
+      this.finish(this.active.interrupted?'interrupted':failed?'failed':'completed');
+    }
+  }
+  tool(block,status) {
+    if(typeof block.id!=='string')return;
+    const name=clip(block.name??'Native tool',256);this.tools.set(block.id,name);if(this.tools.size>512)this.tools.delete(this.tools.keys().next().value);
+    this.emit({type:'tool',id:block.id,name,status,text:clip(JSON.stringify(block.input??{}))});
+  }
+  reject(message,text='This Claude Code interaction is unsupported in AgentDock.') {
+    this.port.send({type:'control_response',response:{subtype:'error',request_id:message.request_id,error:text}});this.error(text);
+  }
+  request(message) {
+    const request=message.request??{},key=String(message.request_id);
+    if(typeof message.request_id!=='string'||!message.request_id||message.request_id.length>256){this.fatal('Invalid native request identifier.');return;}
+    if(request.subtype==='request_user_dialog'){
+      // SDK protocol says undeclared dialog kinds must not be answered, including with error/cancel.
+      this.error('This native dialog must be handled in Claude Code directly.');void this.interrupt();return;
+    }
+    if(request.subtype!=='can_use_tool'||!this.active){this.reject(message);return;}
+    const input=request.input&&typeof request.input==='object'?request.input:{};
+    if(Buffer.byteLength(JSON.stringify(input))>MAX_TEXT){this.reject(message,'Native approval is too large to display safely.');return;}
+    if(request.tool_name==='AskUserQuestion'){
+      const questions=Array.isArray(input.questions)?input.questions:[];
+      if(!questions.length||questions.length>16||new Set(questions.map(q=>q.question)).size!==questions.length||questions.some(q=>typeof q.question!=='string'||(q.options!=null&&(!Array.isArray(q.options)||q.options.length>32||q.options.some(option=>typeof option?.label!=='string'))))){this.reject(message);return;}
+      this.approval(key,{title:'Claude Code needs your input',text:'Answer the native client questions.',choices:['accept','decline','cancel'],questions:questions.map((q,index)=>({id:`question-${index}`,header:clip(q.header??'',128),question:clip(q.question),options:(q.options??[]).map(option=>({label:clip(option.label,256),description:clip(option.description??'',2048)})),multiSelect:!!q.multiSelect,isOther:true}))},(decision,answers)=>{
+        if(decision==='accept'&&questions.some((q,index)=>!Array.isArray(answers[`question-${index}`])||!answers[`question-${index}`].length||(!q.multiSelect&&answers[`question-${index}`].length>1)))throw Error('Valid answers required');
+        const updatedInput={...input,answers:Object.fromEntries(questions.map((q,index)=>[q.question,(answers[`question-${index}`]??[]).join(', ')]))};
+        this.permissionResponse(message,decision,updatedInput);
+      });return;
+    }
+    if(request.requires_user_interaction){this.reject(message,'This approval requires a native Claude Code dialog.');return;}
+    const text=JSON.stringify({reason:request.decision_reason,input});
+    if(Buffer.byteLength(text)>MAX_TEXT){this.reject(message,'Native approval is too large to display safely.');return;}
+    this.approval(key,{title:clip(request.title??`Allow ${request.tool_name??'native tool'}?`,512),text:clip(text),choices:['accept','decline','cancel']},decision=>this.permissionResponse(message,decision,input));
+  }
+  permissionResponse(message,decision,input) {
+    const result=decision==='accept'?{behavior:'allow',updatedInput:input,toolUseID:message.request.tool_use_id}:{behavior:'deny',message:'The user declined this tool request.',interrupt:decision==='cancel',toolUseID:message.request.tool_use_id};
+    this.port.send({type:'control_response',response:{subtype:'success',request_id:message.request_id,response:result}});
+    if(decision==='cancel'&&this.active)this.active.interrupted=true;
+  }
+}

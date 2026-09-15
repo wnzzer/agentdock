@@ -1,0 +1,278 @@
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import type { AgentProviderKind, EndpointProfile, NativeHistorySource } from '@agentdock/protocol';
+import { accountLimitPercent, accountLoginUrl, accountResetDate, accountStatusLabel, accountResetCreditState, canResetAccountQuota, quotaResetAttempts, quotaResetOutcomeNotice, usageRetryHint, QUOTA_RESET_STORAGE_WARNING, type AccountLimit, type AccountView } from './account-ui';
+import { backendCapabilities } from './backend-capabilities';
+import { ApiError, errorMessage, json, providerLabel, request } from './api';
+import ModalDialog from './ModalDialog.vue';
+import Icon from './Icon.vue';
+import ProviderIcon from './ProviderIcon.vue';
+import { useI18n } from '../i18n';
+
+const props = defineProps<{ embedded?: boolean }>();
+const embedded = computed(() => props.embedded === true);
+const emit = defineEmits<{ close: []; changed: [profile?: EndpointProfile] }>();
+const { t, locale } = useI18n();
+const supported = computed(() => (backendCapabilities as typeof backendCapabilities & { accounts?: boolean }).accounts === true);
+const accounts = ref<AccountView[]>([]), loading = ref(false), busy = ref(''), error = ref(''), notice = ref(''), unavailable = ref(false);
+const selectedId = ref(''), adding = ref(false), importing = ref(false), name = ref(''), provider = ref<AgentProviderKind>('codex');
+const nativeSources = ref<NativeHistorySource[]>([]), nativeSourceId = ref(''), nativeName = ref(''), sharedConfirmed = ref(false), loadingSources = ref(false), sourcesLoaded = ref(false);
+const selectedSource = computed(() => nativeSources.value.find(source => source.id === nativeSourceId.value));
+const confirmAction = ref<'logout' | 'reset' | 'remove'>(), resetConfirmed = ref(false), resetVersion = ref(0);
+const selected = computed(() => accounts.value.find(account => account.id === selectedId.value));
+const loginUrl = computed(() => selected.value && accountLoginUrl(selected.value));
+const resetAttempt = computed(() => { void resetVersion.value; return selected.value && quotaResetAttempts.get(selected.value.id); });
+const showReset = computed(() => !!selected.value && (canResetAccountQuota(selected.value) || !!resetAttempt.value));
+const resetStorageAvailable = computed(() => { void resetVersion.value; return quotaResetAttempts.storageAvailable(); });
+/** Quote the provider's own wait hint when it sent one; otherwise stay vague rather than invent a delay. */
+const usageRetryText = computed(() => {
+  const hint = usageRetryHint(selected.value?.usage?.retry_after_seconds);
+  if (!hint) return '';
+  return hint.unit === 'seconds'
+    ? t('The official Claude usage endpoint is rate limited. Try again in about {n} seconds.').replace('{n}', String(hint.value))
+    : t('The official Claude usage endpoint is rate limited. Try again in about {n} minutes.').replace('{n}', String(hint.value));
+});
+let disposed = false, revision = 0, controller: AbortController | undefined;
+function upsert(account: AccountView) { const index = accounts.value.findIndex(item => item.id === account.id); if (index < 0) accounts.value.push(account); else accounts.value[index] = account; }
+function choose(id: string) { if (busy.value) return; selectedId.value = id; renaming.value = false; adding.value = false; importing.value = false; error.value = ''; notice.value = ''; confirmAction.value = undefined; resetConfirmed.value = false; }
+async function load() {
+  if (!supported.value) return;
+  const own = ++revision; controller?.abort(); controller = new AbortController(); loading.value = true; error.value = '';
+  try { const items = await request<AccountView[]>('/accounts', { signal: controller.signal }); if (disposed || own !== revision) return; accounts.value = items; unavailable.value = false; if (!items.some(account => account.id === selectedId.value)) selectedId.value = items[0]?.id ?? ''; }
+  catch (cause) { if (!disposed && own === revision && !(cause instanceof Error && cause.name === 'AbortError')) { unavailable.value = cause instanceof ApiError && [404, 501].includes(cause.status); error.value = unavailable.value ? '' : errorMessage(cause); } }
+  finally { if (own === revision) loading.value = false; }
+}
+async function readAccount(id: string) { const account = await request<AccountView>('/accounts/' + encodeURIComponent(id)); if (!disposed) upsert(account); return account; }
+async function create() {
+  if (busy.value || !name.value.trim() || !supported.value) return;
+  busy.value = 'create'; error.value = ''; notice.value = '';
+  try {
+    const account = await request<AccountView>('/accounts', json('POST', { name: name.value.trim(), provider: provider.value }));
+    let profile: EndpointProfile | undefined;
+    try { profile = await request<EndpointProfile>('/endpoint-profiles/' + encodeURIComponent(account.profile_id)); } catch { /* Parent refresh remains the fallback. */ }
+    if (!disposed) { upsert(account); selectedId.value = account.id; name.value = ''; adding.value = false; notice.value = 'Account configuration created. Sign-in starts only when you choose it.'; emit('changed', profile); }
+  }
+  catch (cause) { if (!disposed) error.value = errorMessage(cause); }
+  finally { if (!disposed) busy.value = ''; }
+}
+async function loadNativeSources() {
+  if (!backendCapabilities.nativeConfig) return;
+  loadingSources.value = true; sourcesLoaded.value = false; error.value = ''; nativeSources.value = []; nativeSourceId.value = '';
+  try {
+    const sources = await request<NativeHistorySource[]>('/host/native-configurations');
+    if (disposed || !importing.value) return;
+    nativeSources.value = sources; sourcesLoaded.value = true;
+    nativeSourceId.value = sources.find(source => source.available)?.id ?? '';
+    nativeName.value = selectedSource.value?.label ?? '';
+  } catch (cause) { if (!disposed) error.value = errorMessage(cause); }
+  finally { if (!disposed) loadingSources.value = false; }
+}
+function openImport() {
+  if (busy.value || !backendCapabilities.nativeConfig) return;
+  adding.value = true; importing.value = true; sharedConfirmed.value = false; nativeName.value = ''; error.value = ''; notice.value = '';
+  void loadNativeSources();
+}
+async function importNative() {
+  if (!backendCapabilities.accountImportNative) { error.value = 'Upgrade the backend to import existing configurations.'; return; }
+  const source = selectedSource.value;
+  if (!source?.available || !sharedConfirmed.value || busy.value) return;
+  busy.value = 'import'; error.value = ''; notice.value = '';
+  try {
+    const account = await request<AccountView>('/accounts/import-native', json('POST', { source_id: source.id, ...(nativeName.value.trim() ? { name: nativeName.value.trim() } : {}), confirmed_shared_config: true }));
+    let profile: EndpointProfile | undefined;
+    try { profile = await request<EndpointProfile>('/endpoint-profiles/' + encodeURIComponent(account.profile_id)); } catch { /* account import already succeeded */ }
+    if (!disposed) { upsert(account); selectedId.value = account.id; adding.value = false; importing.value = false; sharedConfirmed.value = false; emit('changed', profile); notice.value = 'Existing native configuration linked as an official account. Credentials remain owned by the native client.'; }
+  } catch (cause) { if (!disposed) error.value = errorMessage(cause); }
+  finally { if (!disposed) busy.value = ''; }
+}
+async function action(kind: 'refresh' | 'refresh-token' | 'device' | 'browser' | 'cancel-login' | 'logout') {
+  const account = selected.value; if (!account || busy.value) return;
+  if ((kind === 'device' || kind === 'browser') && !account.capabilities.login || kind === 'refresh-token' && !account.capabilities.refresh_token || kind === 'logout' && (!account.capabilities.logout || confirmAction.value !== 'logout')) return;
+  busy.value = kind; error.value = ''; notice.value = '';
+  const route = kind === 'refresh-token' ? 'refresh' : kind === 'device' || kind === 'browser' ? 'login' : kind;
+  const body = kind === 'refresh-token' ? { refresh_token: true } : kind === 'device' || kind === 'browser' ? { mode: kind } : kind === 'logout' ? { confirmed: true } : {};
+  try {
+    await request('/accounts/' + encodeURIComponent(account.id) + '/' + route, json('POST', body));
+    if (disposed) return;
+    await readAccount(account.id); confirmAction.value = undefined; emit('changed');
+    // A successful request is not proof that authentication, token refresh or
+    // quota changed. Only AccountView's official status is displayed.
+  } catch (cause) { if (!disposed) error.value = errorMessage(cause); }
+  finally { if (!disposed) busy.value = ''; }
+}
+function askReset() { if (!selected.value || busy.value || !canResetAccountQuota(selected.value) && !resetAttempt.value) return; confirmAction.value = 'reset'; resetConfirmed.value = false; }
+/**
+ * Explicit usage check. It runs only when the user clicks, and it reports the
+ * official client's own capture: an absent capture stays "not captured yet"
+ * rather than becoming an estimated percentage.
+ */
+/**
+ * The official endpoint allows roughly one check per window and answers 429 for
+ * the rest of it. Without a cooldown every extra press spends the one allowance
+ * the user is waiting on, which is why usage could look permanently unavailable.
+ */
+const usageCooldownUntil = ref(0), usageNow = ref(Date.now()), usageRefusals = ref(0);
+let cooldownTimer: ReturnType<typeof setInterval> | undefined;
+const usageCooldown = computed(() => Math.max(0, Math.ceil((usageCooldownUntil.value - usageNow.value) / 1000)));
+const usageCooldownLabel = computed(() => {
+  const hint = usageRetryHint(usageCooldown.value);
+  if (!hint) return t('Check usage');
+  return hint.unit === 'seconds' ? t('Check again in {n}s', { n: hint.value }) : t('Check again in {n} min', { n: hint.value });
+});
+function beginUsageCooldown(seconds: number) {
+  usageCooldownUntil.value = Date.now() + seconds * 1000;
+  usageNow.value = Date.now();
+  clearInterval(cooldownTimer);
+  cooldownTimer = setInterval(() => {
+    usageNow.value = Date.now();
+    if (usageCooldown.value <= 0) { clearInterval(cooldownTimer); cooldownTimer = undefined; }
+  }, 1000);
+}
+onBeforeUnmount(() => clearInterval(cooldownTimer));
+
+const proxyDraft = ref('');
+watch(() => selected.value?.id, () => { proxyDraft.value = selected.value?.proxy_url ?? ''; }, { immediate: true });
+const renaming = ref(false), nameDraft = ref('');
+function beginRename() { if (busy.value) return; nameDraft.value = selected.value?.name ?? ''; renaming.value = true; }
+async function saveName() {
+  const account = selected.value;
+  if (!account || busy.value || !nameDraft.value.trim()) return;
+  busy.value = 'rename'; error.value = ''; notice.value = '';
+  try {
+    const view = await request<AccountView>('/accounts/' + encodeURIComponent(account.id) + '/rename', json('POST', { name: nameDraft.value.trim() }));
+    if (disposed) return;
+    upsert(view); renaming.value = false;
+    // The endpoint profile shares this name, so the parent list must refresh too.
+    emit('changed');
+  } catch (cause) { if (!disposed) error.value = errorMessage(cause); }
+  finally { if (!disposed) busy.value = ''; }
+}
+async function removeAccount() {
+  const account = selected.value;
+  if (!account || busy.value || confirmAction.value !== 'remove') return;
+  busy.value = 'remove'; error.value = ''; notice.value = '';
+  try {
+    await request('/accounts/' + encodeURIComponent(account.id) + '/remove', json('POST', { confirmed: true }));
+    if (disposed) return;
+    accounts.value = accounts.value.filter(item => item.id !== account.id);
+    selectedId.value = accounts.value[0]?.id ?? '';
+    confirmAction.value = undefined;
+    notice.value = account.native_source_id
+      ? t('Account removed. The host configuration directory was left untouched.')
+      : t('Account removed, along with the configuration directory it owned.');
+    emit('changed');
+  } catch (cause) { if (!disposed) error.value = errorMessage(cause); }
+  finally { if (!disposed) busy.value = ''; }
+}
+async function saveProxy() {
+  const account = selected.value;
+  if (!account || busy.value) return;
+  busy.value = 'proxy'; error.value = ''; notice.value = '';
+  try {
+    const view = await request<AccountView>('/accounts/' + encodeURIComponent(account.id) + '/proxy', json('POST', { proxy_url: proxyDraft.value.trim() || null }));
+    if (disposed) return;
+    upsert(view);
+    proxyDraft.value = view.proxy_url ?? '';
+    notice.value = view.proxy_url ? t('Proxy saved. It applies to the next sign-in or usage check.') : t('Proxy cleared. This account now connects directly.');
+  } catch (cause) { if (!disposed) error.value = errorMessage(cause); }
+  finally { if (!disposed) busy.value = ''; }
+}
+async function checkUsage() {
+  const account = selected.value;
+  if (!account || busy.value || !account.capabilities.usage || usageCooldown.value > 0) return;
+  busy.value = 'usage'; error.value = ''; notice.value = '';
+  try {
+    const view = await request<AccountView>('/accounts/' + encodeURIComponent(account.id) + '/usage', json('POST', {}));
+    if (disposed) return;
+    upsert(view);
+    if (view.usage?.availability === 'capture_disabled') notice.value = t('Usage capture is turned off, so nothing has been recorded.');
+    else if (view.usage?.availability === 'capture_missing') notice.value = t('No local usage capture yet. Start an official Claude Code session once, then check again.');
+    else if (view.usage?.availability === 'not_reported') notice.value = t('The official client did not report usage for this account. No estimate is shown.');
+    else if (view.usage?.availability === 'credential_unavailable') notice.value = t('The official Claude OAuth credential could not be read from its native storage. Sign in with Claude Code, then query again.');
+    else if (view.usage?.availability === 'query_failed') notice.value = t('The official Claude usage endpoint could not be reached. Check the network, then query again.');
+    else if (view.usage?.availability === 'unauthorized') notice.value = t('The official Claude usage endpoint rejected the stored credential. Sign in again with Claude Code, then query again.');
+    else if (view.usage?.availability === 'rate_limited') notice.value = usageRetryText.value || t('The official Claude usage endpoint is rate limited right now. Wait a moment, then query again.');
+    else if (view.usage?.availability === 'stale') notice.value = t('This capture predates its reset window, so it is shown as stale rather than current.');
+    // Observed behaviour: repeated probing while refused does not recover, and
+    // appears to push the allowance further out. So each consecutive refusal
+    // doubles the wait instead of retrying on a fixed interval.
+    if (view.usage?.availability === 'rate_limited') {
+      usageRefusals.value += 1;
+      beginUsageCooldown(Math.max(view.usage.retry_after_seconds || 0, Math.min(300 * 2 ** (usageRefusals.value - 1), 1800)));
+    } else { usageRefusals.value = 0; beginUsageCooldown(60); }
+  } catch (cause) { if (!disposed) { error.value = errorMessage(cause); beginUsageCooldown(60); } }
+  finally { if (!disposed) busy.value = ''; }
+}
+async function resetQuota() {
+  const account = selected.value; if (!account || busy.value || confirmAction.value !== 'reset' || !resetConfirmed.value) return;
+  let committed = false; busy.value = 'reset'; error.value = ''; notice.value = '';
+  try {
+    const attempt = quotaResetAttempts.begin(account, true); resetVersion.value++;
+    const result = await request<AccountView | undefined>('/accounts/' + encodeURIComponent(account.id) + '/reset-quota', json('POST', { confirmed: true, idempotency_key: attempt.idempotency_key, ...(attempt.credit_id ? { credit_id: attempt.credit_id } : {}) }));
+    const refreshed = await readAccount(account.id);
+    committed = quotaResetAttempts.complete(account.id); resetVersion.value++;
+    if (disposed) return;
+    confirmAction.value = undefined; resetConfirmed.value = false;
+    notice.value = committed ? quotaResetOutcomeNotice(result?.reset_outcome ?? refreshed.reset_outcome) : QUOTA_RESET_STORAGE_WARNING;
+    emit('changed');
+  } catch (cause) {
+    if (!committed) quotaResetAttempts.unknown(account.id);
+    resetVersion.value++;
+    if (!disposed) { error.value = t(errorMessage(cause)); if (!committed) notice.value = quotaResetAttempts.storageAvailable() ? 'The reset result is uncertain. Its original request key is kept; any explicit retry uses that same key, never a new credit request.' : QUOTA_RESET_STORAGE_WARNING; }
+  } finally { if (!disposed) busy.value = ''; }
+}
+function resetTime(value?: string | number) { const date = accountResetDate(value); return date ? new Intl.DateTimeFormat(locale.value, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date) : t('Reset time unavailable'); }
+function limitTitle(slot: 'primary' | 'secondary', limit?: AccountLimit) {
+  if (limit?.window_kind === 'five_hour') return t('5-hour quota window');
+  if (limit?.window_kind === 'weekly') return t('Weekly quota window');
+  return t(slot === 'primary' ? 'Primary window' : 'Secondary window');
+}
+onMounted(() => { void load(); });
+onBeforeUnmount(() => { disposed = true; revision++; controller?.abort(); });
+</script>
+
+<template>
+  <ModalDialog :title="t('Official accounts')" wide :closable="!busy" :embedded="embedded" @close="emit('close')">
+    <div class="accounts-intro"><span><Icon name="account" :size="22" /></span><div><strong>{{ t('Your accounts, ready for every session') }}</strong><p>{{ t('Each account is a reusable endpoint configuration. Official clients own sign-in and credentials; AgentDock never asks you to paste a token.') }}</p></div></div>
+    <div v-if="!supported||unavailable" class="accounts-unavailable"><Icon name="settings" :size="27" /><h3>{{ t('Account management needs an updated backend') }}</h3><p>{{ t('Existing native configuration references still work. No login, refresh or quota result is being simulated.') }}</p></div>
+    <template v-else>
+      <div v-if="error" class="account-error" role="alert">{{ error }}</div><p v-if="notice" class="account-notice" role="status">{{ t(notice) }}</p>
+      <div class="accounts-layout"><aside class="accounts-list"><div class="accounts-list-heading"><span>{{ t('Accounts') }} <small>{{ accounts.length }}</small></span><button :aria-label="t('Refresh account list')" :disabled="loading||!!busy" @click="load"><Icon name="refresh" :size="16" /></button></div><button v-for="account in accounts" :key="account.id" :class="['account-choice',{selected:selectedId===account.id&&!adding}]" :disabled="!!busy" @click="choose(account.id)"><span :class="['account-provider',account.provider]"><ProviderIcon :provider="account.provider" :size="19" /></span><span class="account-choice-text"><strong>{{ account.name }}</strong><small>{{ account.email??providerLabel(account.provider) }}<template v-if="account.native_source_id"> · {{ t('Imported native config') }}</template></small></span><span :class="['account-dot',account.status]" /></button><p v-if="loading" class="accounts-empty">{{ t('Loading accounts…') }}</p><p v-else-if="!accounts.length" class="accounts-empty">{{ t('Add an account configuration to get started.') }}</p><button class="account-add" :disabled="!!busy" @click="adding=true;importing=false;confirmAction=undefined;error='';notice=''"><Icon name="plus" :size="16" />{{ t('Add account') }}</button><button class="account-add account-import" :disabled="!!busy||!backendCapabilities.nativeConfig" @click="openImport"><Icon name="folder" :size="16" />{{ t('Import existing configuration') }}</button></aside>
+        <main class="account-detail"><form v-if="adding&&!importing" class="account-create" @submit.prevent="create"><h3>{{ t('A separate home for this account') }}</h3><p>{{ t('Creating a configuration does not sign in, copy host credentials, or send a model request.') }}</p><label>{{ t('Account name') }}<input v-model="name" maxlength="120" required :disabled="!!busy" :placeholder="t('Personal account or work account')" /></label><label>{{ t('Native client') }}<select v-model="provider" :disabled="!!busy"><option value="codex">Codex</option><option value="claude_code">Claude Code</option></select></label><div class="account-buttons"><button type="button" :disabled="!!busy" @click="adding=false">{{ t('Cancel') }}</button><button class="account-primary" :disabled="!!busy||!name.trim()">{{ t(busy?'Creating…':'Create account configuration') }}</button></div></form>
+        <form v-else-if="adding&&importing" class="account-create account-native-import" @submit.prevent="importNative"><h3>{{ t('Import existing configuration') }}</h3><p>{{ t('Link an existing Claude Code or Codex home as an official account. Credentials and native settings remain in place.') }}</p><label>{{ t('Host configuration source') }}<select v-model="nativeSourceId" :disabled="!!busy||loadingSources"><option value="" disabled>{{ t('Select a host configuration') }}</option><option v-for="source in nativeSources" :key="source.id" :value="source.id" :disabled="!source.available">{{ source.label }} · {{ t(source.available?'Directory available':'Not found on this host') }}</option></select></label><p v-if="loadingSources" class="form-help" role="status">{{ t('Loading host configurations…') }}</p><p v-else-if="sourcesLoaded&&!nativeSources.some(source=>source.available)" class="form-help">{{ t('No usable native configuration directories were found. Configure the native client on this host, then refresh.') }}</p><template v-if="selectedSource"><div class="shared-config-panel"><strong><ProviderIcon :provider="selectedSource.provider" :size="17" />{{ t('Host configuration · shared sign-in') }}</strong><code>{{ selectedSource.path }}</code><p>{{ t('Directory availability does not confirm sign-in. The native client may still ask you to log in.') }}</p></div><label>{{ t('Account name') }}<input v-model="nativeName" maxlength="120" :disabled="!!busy" :placeholder="selectedSource.label" /></label><div class="shared-config-consent"><p>{{ t('AgentDock only stores a reference. It does not copy credentials, read tokens, or start the native client.') }}</p><label><input v-model="sharedConfirmed" type="checkbox" :disabled="!!busy" />{{ t('I agree to reuse this shared host configuration for the account.') }}</label></div></template><div class="account-buttons"><button type="button" :disabled="!!busy" @click="adding=false;importing=false">{{ t('Cancel') }}</button><button class="account-primary" :disabled="!!busy||loadingSources||!selectedSource?.available||!sharedConfirmed">{{ t(busy?'Importing…':'Import configuration') }}</button></div></form>
+        <template v-else-if="selected"><header class="account-detail-header"><span :class="['account-provider large',selected.provider]"><ProviderIcon :provider="selected.provider" :size="27" /></span><div><form v-if="renaming" class="account-rename" @submit.prevent="saveName"><input v-model="nameDraft" maxlength="120" :disabled="!!busy" :aria-label="t('Account name')" /><button class="small-button" :disabled="!!busy||!nameDraft.trim()">{{ t(busy==='rename'?'Saving…':'Save') }}</button><button type="button" class="small-button" :disabled="!!busy" @click="renaming=false">{{ t('Cancel') }}</button></form><h3 v-else>{{ selected.name }} <button type="button" class="account-rename-button" :aria-label="t('Rename account')" :title="t('Rename account')" :disabled="!!busy" @click="beginRename"><Icon name="edit" :size="13" /></button></h3><p>{{ selected.email??providerLabel(selected.provider) }}<span v-if="selected.plan"> · {{ selected.plan }}</span></p></div><span :class="['account-state',selected.status]">{{ t(accountStatusLabel(selected.status)) }}</span></header>
+          <div class="account-meta"><span>{{ t('Endpoint profile') }}<code>{{ selected.profile_id }}</code></span><details><summary>{{ t('Native account storage') }}</summary><code>{{ selected.storage_path }}</code><p>{{ t('This directory belongs to the official client. Credentials are not displayed or copied into the browser.') }}</p></details></div>
+          <div class="account-proxy-row"><label>{{ t('Proxy') }}<input v-model="proxyDraft" :disabled="!!busy" maxlength="400" placeholder="http://127.0.0.1:7890" @keydown.enter.prevent="saveProxy" /></label><button class="small-button" :disabled="!!busy||proxyDraft.trim()===(selected.proxy_url??'')" @click="saveProxy">{{ t(busy==='proxy'?'Saving…':'Save') }}</button><small>{{ t('Used for sign-in, usage checks and sessions from this account. Empty means direct.') }}</small></div>
+          <div v-if="selected.error" class="account-error" role="alert">{{ selected.error }}</div>
+          <section class="account-section"><div class="account-section-title"><h4>{{ t('Sign-in and connection') }}</h4><button :disabled="!!busy" @click="action('refresh')"><Icon name="refresh" :size="14" />{{ t('Refresh official status') }}</button></div><p v-if="selected.checked_at" class="account-checked">{{ t('Last checked') }} · {{ resetTime(selected.checked_at) }}</p>
+            <div v-if="selected.status==='login_pending'||selected.login" class="account-login"><strong>{{ t('Finish sign-in with the official provider') }}</strong><p>{{ t('Open the official link yourself. The browser may be on another machine; this does not send prompts or grant tool permissions.') }}</p><div v-if="selected.login?.user_code" class="account-device-code"><small>{{ t('One-time device code') }}</small><code>{{ selected.login.user_code }}</code></div><a v-if="loginUrl" class="account-login-link" :href="loginUrl" target="_blank" rel="noopener noreferrer">{{ t('Open official sign-in') }} ↗</a><p v-else-if="selected.login?.url">{{ t('The sign-in URL is not a recognized official HTTPS address. Use the native instructions instead.') }}</p><button :disabled="!!busy" @click="action('cancel-login')">{{ t('Cancel sign-in') }}</button></div>
+            <div v-if="!selected.capabilities.login" class="account-native-help"><strong>{{ t('Native sign-in required') }}</strong><p>{{ selected.guidance??t('This client does not expose a supported managed sign-in flow here. Follow its native login instructions, then refresh official status.') }}</p><code v-if="selected.login_command">{{ selected.login_command }}</code></div>
+            <div class="account-buttons"><template v-if="selected.capabilities.login&&selected.status!=='login_pending'"><button class="account-primary" :disabled="!!busy" @click="action('device')">{{ t('Sign in with device code') }}</button><button :disabled="!!busy" @click="action('browser')">{{ t('Browser sign-in') }}</button></template><button v-if="selected.capabilities.refresh_token" :disabled="!!busy" @click="action('refresh-token')">{{ t('Refresh login token') }}</button><button v-if="selected.capabilities.logout" class="account-danger" :disabled="!!busy" @click="confirmAction='logout';resetConfirmed=false">{{ t('Sign out…') }}</button><button class="account-danger" :disabled="!!busy" @click="confirmAction='remove';resetConfirmed=false">{{ t('Remove account…') }}</button></div>
+          </section>
+          <section class="account-section"><div class="account-section-title"><h4>{{ t('Official usage limits') }}</h4><button v-if="selected.capabilities.usage" type="button" :disabled="!!busy||usageCooldown>0" :title="usageCooldown>0?t('The official endpoint allows about one check per window. Waiting avoids spending the next allowance.'):undefined" @click="checkUsage">{{ busy==='usage'?t('Checking usage…'):usageCooldown>0?usageCooldownLabel:t('Check usage') }}</button><span v-else class="account-source-label">{{ t('Reported by client') }}</span></div>
+            <p v-if="!selected.capabilities.quota&&!selected.capabilities.usage" class="account-quiet">{{ t('This client does not expose account quota through a supported interface. No estimated percentage is shown.') }}</p>
+            <div v-else-if="selected.usage?.availability==='capture_disabled'" class="account-native-help"><strong>{{ t('Usage capture is off') }}</strong><p>{{ t('No OAuth credential was available for the official usage query, and local status-line capture is disabled. Sign in with Claude Code, then query again.') }}</p><code>AGENTDOCK_CLAUDE_USAGE_CAPTURE=1</code></div>
+            <p v-else-if="selected.usage?.availability==='credential_unavailable'" class="account-quiet">{{ t('The official Claude OAuth credential was not available to AgentDock. Sign in with Claude Code, then query again. No token is shown or stored in the browser.') }}</p>
+            <p v-else-if="selected.usage?.availability==='query_failed'" class="account-quiet">{{ t('The official Claude usage endpoint could not be reached. Check the server network or proxy, then query again.') }}</p>
+            <p v-else-if="selected.usage?.availability==='rate_limited'" class="account-quiet">{{ usageRetryText || t('The official Claude usage endpoint is rate limited right now. Wait a moment, then query again.') }} {{ t('This limit is applied by the provider; AgentDock does not retry on its own.') }}</p>
+            <p v-else-if="selected.usage?.availability==='unauthorized'" class="account-quiet">{{ t('The official Claude usage endpoint rejected the stored credential. Sign in again with Claude Code, then query again. AgentDock does not refresh or replace official tokens.') }}</p>
+            <p v-else-if="selected.usage?.availability==='capture_missing'" class="account-quiet">{{ t('No local usage capture yet. Start an official Claude Code session once, then press Check usage. AgentDock reads only the local status line capture and never your credentials.') }}</p>
+            <p v-else-if="selected.usage?.availability==='stale'" class="account-quiet">{{ t('The stored capture predates its reset window. It is shown as stale rather than current.') }}</p>
+            <template v-if="selected.capabilities.quota">
+              <div class="account-limits"><div v-for="slot in (['primary','secondary'] as const)" :key="slot" class="account-limit"><header><strong>{{ limitTitle(slot, selected.limits?.[slot]) }}</strong><span>{{ accountLimitPercent(selected.limits?.[slot])===undefined?t('Unavailable'):t('{count}% used',{count:accountLimitPercent(selected.limits?.[slot])!}) }}</span></header><progress v-if="accountLimitPercent(selected.limits?.[slot])!==undefined" max="100" :value="accountLimitPercent(selected.limits?.[slot])" :aria-label="limitTitle(slot, selected.limits?.[slot])" /><div v-else class="account-no-meter" /><small v-if="selected.limits?.[slot]?.window_minutes">{{ t('{count} minute window',{count:selected.limits[slot]!.window_minutes!}) }} · </small><small>{{ resetTime(selected.limits?.[slot]?.resets_at) }}</small></div></div><template v-if="showReset"><p v-if="!resetStorageAvailable" class="account-notice" role="status">{{ t(QUOTA_RESET_STORAGE_WARNING) }}</p><div class="account-reset"><div><strong>{{ t('Official reset credits') }}</strong><p v-if="selected.limits?.reset_credits_source==='official'&&selected.limits?.reset_credits!==undefined">{{ t('{count} available · official earned credit',{count:selected.limits.reset_credits}) }}</p><p v-else>{{ selected.limits?.reset_credits===undefined?t('Not reported'):t('{count} available · source not confirmed',{count:selected.limits.reset_credits}) }}</p></div><button :disabled="!!busy||(!canResetAccountQuota(selected)&&!resetAttempt)||(!resetStorageAvailable&&!resetAttempt)" @click="askReset">{{ t(resetAttempt?'Review pending reset':'Reset quota…') }}</button></div><p class="account-quiet">{{ t('This may consume a real account resource; there is no local quota bypass.') }}</p></template></template>
+            <template v-else-if="selected.capabilities.usage&&(selected.limits?.primary||selected.limits?.secondary)"><div class="account-limits"><div v-for="slot in (['primary','secondary'] as const)" :key="slot" class="account-limit"><header><strong>{{ limitTitle(slot, selected.limits?.[slot]) }}</strong><span>{{ accountLimitPercent(selected.limits?.[slot])===undefined?t('Unavailable'):t('{count}% used',{count:accountLimitPercent(selected.limits?.[slot])!}) }}</span></header><progress v-if="accountLimitPercent(selected.limits?.[slot])!==undefined" max="100" :value="accountLimitPercent(selected.limits?.[slot])" :aria-label="limitTitle(slot, selected.limits?.[slot])" /><div v-if="confirmAction==='remove'" class="account-confirm"><strong>{{ t('Remove this account?') }}</strong><p>{{ selected.native_source_id ? t('Only the AgentDock reference is removed. The host configuration directory, its sign-in and its history are left untouched.') : t('This account has its own configuration directory, and removing it deletes the sign-in stored there. Existing sessions keep their saved configuration snapshot.') }}</p><div class="account-buttons"><button type="button" :disabled="!!busy" @click="confirmAction=undefined">{{ t('Cancel') }}</button><button type="button" class="account-danger" :disabled="!!busy" @click="removeAccount">{{ t(busy==='remove'?'Removing…':'Confirm removal') }}</button></div></div><div v-else class="account-no-meter" /><small v-if="selected.limits?.[slot]?.window_minutes">{{ t('{count} minute window',{count:selected.limits[slot]!.window_minutes!}) }} · </small><small>{{ resetTime(selected.limits?.[slot]?.resets_at) }}</small></div></div><p v-if="selected.usage?.captured_at" class="account-checked">{{ t('Captured {time}',{time:resetTime(selected.usage.captured_at)}) }}</p><p v-if="selected.usage?.availability==='cached'" class="account-checked" role="status">{{ t('Last read {time}. Kept so the page can show it without spending another check.',{time:resetTime(selected.usage.retained_checked_at)}) }}</p><p v-else-if="selected.usage?.retained_checked_at" class="account-notice" role="status">{{ t('This query did not succeed, so the figures above are the previous result from {time}, not current.',{time:resetTime(selected.usage.retained_checked_at)}) }} {{ usageRetryText||t('Query again to refresh them.') }}</p><p class="account-quiet">{{ selected.usage?.source==='claude_oauth_usage'?t('From the official usage endpoint, only when you ask. Never polled.'):t('Local snapshot written by the official client for its own status line.') }}</p></template></section>
+          <section v-if="confirmAction==='logout'" class="account-confirm"><strong>{{ t('Sign out of this account?') }}</strong><p>{{ t('The official client will remove this account sign-in. Sessions using it may need to authenticate again; other account configurations are unchanged.') }}</p><div class="account-buttons"><button :disabled="!!busy" @click="confirmAction=undefined">{{ t('Keep signed in') }}</button><button class="account-danger" :disabled="!!busy" @click="action('logout')">{{ t('Confirm sign out') }}</button></div></section>
+          <section v-if="confirmAction==='reset'" class="account-confirm"><strong>{{ t(resetAttempt?'Review the previous reset request':'Use an official quota reset credit?') }}</strong><p>{{ t(resetAttempt?'The previous result is uncertain. A retry will use its existing request key, not create a second credit request.':'This request can consume an official reset credit with real resource cost. It cannot be undone by refreshing this page.') }}</p><label><input v-model="resetConfirmed" type="checkbox" :disabled="!!busy" />{{ t('I confirm the possible credit cost and want to submit this reset request.') }}</label><div class="account-buttons"><button :disabled="!!busy" @click="confirmAction=undefined">{{ t('Cancel') }}</button><button class="account-primary" :disabled="!!busy||!resetConfirmed" @click="resetQuota">{{ t(resetAttempt?'Retry the same reset request':'Confirm quota reset') }}</button></div></section>
+        </template><div v-else class="accounts-unavailable"><ProviderIcon provider="codex" :size="36" /><h3>{{ t('Keep your accounts in one place') }}</h3><p>{{ t('Select an account to inspect its official sign-in and usage state.') }}</p></div></main>
+      </div>
+    </template>
+  </ModalDialog>
+</template>
+
+<style scoped>
+.accounts-intro{display:flex;align-items:flex-start;gap:13px;margin-bottom:20px;color:#273745}.accounts-intro>span{display:grid;place-items:center;width:43px;height:43px;border-radius:13px;background:var(--teal-soft);flex-shrink:0}.accounts-intro strong{font-size:15px;font-weight:550}.accounts-intro p{font-size:12px;color:var(--muted);line-height:1.8;margin:6px 0 0}.accounts-layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:22px;min-height:420px}.accounts-list{border-right:1px solid var(--border);padding-right:17px}.accounts-list-heading{display:flex;align-items:center;justify-content:space-between;min-height:44px;font-size:11px;color:#647681;letter-spacing:.5px}.accounts-list-heading small{background:#e8eeef;border-radius:5px;padding:2px 5px;margin-left:5px}.accounts-list-heading button{width:44px;height:44px;display:grid;place-items:center;border:0;background:none;color:var(--muted)}.account-choice{width:100%;display:flex;align-items:center;gap:9px;text-align:left;padding:12px 9px;margin:5px 0;border:1px solid transparent;border-radius:11px;background:none;cursor:pointer;min-height:64px}.account-choice.selected{border-color:#dbeee4;background:var(--teal-soft)}.account-provider{width:35px;height:35px;border-radius:11px;display:grid;place-items:center;background:#F0E9FF;color:#7552B8;flex-shrink:0}.account-provider.claude_code{background:#FFF0E5;color:#B75B27}.account-provider.large{width:49px;height:49px;border-radius:15px}.account-choice-text{flex:1;min-width:0}.account-choice strong{display:block;font-size:12px;font-weight:550;color:#273745}.account-choice small{display:block;margin-top:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:var(--muted)}.account-dot{width:6px;height:6px;background:#a8b4bd;border-radius:50%;flex-shrink:0}.account-dot.signed_in{background:#3ba791}.account-dot.login_pending{background:#c9a351}.account-dot.error{background:#c65f74}.account-add{width:100%;display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;margin-top:12px;border:1px dashed #dfe6ea;border-radius:10px;background:#fbfcfd;color:var(--teal);font-size:12px;cursor:pointer}.account-detail{min-width:0}.account-detail-header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:8px 0 18px}.account-detail-header>div{flex:1;min-width:0}.account-detail-header h3{font-weight:550;font-size:18px;overflow-wrap:anywhere;margin:0}.account-detail-header p{font-size:12px;color:var(--muted);overflow-wrap:anywhere;margin:6px 0 0}.account-state{border-radius:20px;padding:6px 10px;font-size:10px;background:#f1f4f6;color:#647681}.account-state.signed_in{background:#eaf6f0;color:#187e71}.account-state.error{background:#fff0f3;color:#b66179}.account-state.login_pending{background:#fbf5e8;color:#9c844c}.account-meta{border:1px solid var(--border);background:#fbfcfd;border-radius:10px;padding:12px;margin-bottom:18px;font-size:11px;color:#647681}.account-meta span{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.account-meta code{font-size:10px;overflow-wrap:anywhere;color:var(--muted)}.account-meta details summary{min-height:44px;display:flex;align-items:center;cursor:pointer}.account-meta p{font-size:10px;line-height:1.8}.account-rename{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.account-rename input{flex:1;min-width:150px;min-height:36px;padding:7px 9px;border:1px solid #dfe6ea;border-radius:8px;font-size:15px;color:#273745;background:var(--surface)}.account-rename-button{border:0;background:none;color:var(--muted);padding:4px;cursor:pointer;vertical-align:middle}.account-rename-button:hover{color:var(--teal)}.account-proxy-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:18px}.account-proxy-row label{display:flex;align-items:center;gap:8px;flex:1;min-width:210px;font-size:11px;color:#647681}.account-proxy-row input{flex:1;min-width:0;min-height:36px;padding:7px 9px;border:1px solid #dfe6ea;border-radius:8px;background:var(--surface);color:#273745;font-size:12px}.account-proxy-row small{flex-basis:100%;font-size:10px;line-height:1.7;color:var(--muted)}.account-section{border-top:1px solid var(--border);padding-top:17px;margin-top:18px}.account-section-title{display:flex;align-items:center;justify-content:space-between;gap:8px}.account-section-title h4{font-size:12px;font-weight:600;color:#273745;margin:0}.account-section-title button{border:0;background:none;color:var(--teal);font-size:10px;display:flex;align-items:center;gap:6px;min-height:44px;padding:8px 3px;cursor:pointer}.account-checked,.account-quiet{font-size:10px;line-height:1.8;color:var(--muted);margin:6px 0 12px}.account-source-label{font-size:9px;color:var(--muted)}.account-buttons{display:flex;align-items:center;flex-wrap:wrap;gap:9px;margin-top:15px}.account-buttons button,.account-reset button,.account-login>button{min-height:44px;border:1px solid #dfe6ea;background:var(--surface);border-radius:9px;padding:8px 12px;color:#647681;font-size:11px;cursor:pointer}.account-buttons .account-primary{background:var(--teal);border-color:var(--teal);color:white}.account-buttons .account-danger{border-color:#f1dadd;color:#ae4055;background:#fff5f5}.account-login,.account-native-help{border:1px solid #dbeee4;border-radius:12px;padding:14px;background:#f8fafb;margin:12px 0;font-size:12px;color:var(--teal)}.account-login p,.account-native-help p{font-size:11px;line-height:1.8;color:#647681}.account-native-help code{display:block;background:#f1f4f6;padding:12px;border-radius:7px;font-size:11px;line-height:1.8;color:#647681;overflow-wrap:anywhere;white-space:pre-wrap;user-select:all}.account-login-link{display:inline-flex;align-items:center;min-height:44px;margin:8px 10px 5px 0;padding:8px 14px;border-radius:9px;background:var(--teal);color:white;font-size:12px;text-decoration:none}.account-device-code{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.account-device-code small{font-size:10px;color:var(--muted)}.account-device-code code{font:20px monospace;letter-spacing:3px;user-select:all;padding:9px 13px;background:white;border:1px dashed #dfe6ea;border-radius:8px;color:var(--teal)}.account-limits{display:grid;grid-template-columns:1fr 1fr;gap:13px;margin:15px 0}.account-limit{border:1px solid var(--border);border-radius:11px;background:#fbfcfd;padding:13px;min-width:0}.account-limit header{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:10px;color:#647681;margin-bottom:11px}.account-limit strong{font-weight:500;color:var(--teal)}.account-limit small{font-size:9px;color:var(--muted)}.account-limit progress{width:100%;height:6px;display:block;appearance:none;border:0;border-radius:4px;margin:10px 0;background:#e8eeef;overflow:hidden;accent-color:var(--teal)}.account-limit progress::-webkit-progress-bar{background:#e8eeef;border-radius:4px}.account-limit progress::-webkit-progress-value{background:var(--teal);border-radius:4px}.account-limit progress::-moz-progress-bar{background:var(--teal);border-radius:4px}.account-no-meter{height:6px;border-radius:4px;background:repeating-linear-gradient(120deg,#e8eeef,#e8eeef 7px,#f8fafb 7px,#f8fafb 14px);margin:10px 0}.account-reset{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:11px;color:#647681;margin-top:12px}.account-reset strong{font-weight:500}.account-reset p{font-size:10px;color:var(--muted);margin:6px 0}.account-reset button{color:var(--teal);border-color:#dfe6ea}.account-confirm{margin-top:17px;border:1px solid #eee3c6;background:#fffaee;border-radius:12px;padding:16px;font-size:12px;color:#86713e}.account-confirm p{font-size:11px;line-height:1.8}.account-confirm label{display:flex;align-items:flex-start;gap:9px;min-height:44px;font-size:11px;line-height:1.8;padding-top:8px}.account-confirm input{accent-color:var(--teal);width:18px;height:18px;flex-shrink:0;margin-top:2px}.account-create h3{font-size:18px;font-weight:550;color:#273745}.account-create p{font-size:12px;color:#647681;line-height:1.8}.account-create label{display:flex;flex-direction:column;gap:8px;font-size:12px;color:#647681;margin:17px 0}.account-create input,.account-create select{min-height:44px;font-size:16px;width:100%;padding:10px;border:1px solid #dfe6ea;border-radius:9px;background:var(--surface);color:#273745}.account-error{padding:12px 14px;background:#fff3f5;border:1px solid #f1dfe4;color:#a34a61;border-radius:10px;font-size:12px;line-height:1.8;overflow-wrap:anywhere;margin:10px 0}.account-notice{padding:12px 14px;background:var(--teal-soft);border:1px solid #dbeee4;color:#187e71;border-radius:10px;font-size:12px;line-height:1.8}.accounts-empty{font-size:11px;color:var(--muted);text-align:center;line-height:1.8;padding:15px 5px}.accounts-unavailable{text-align:center;padding:38px 20px;color:var(--muted)}.accounts-unavailable>svg{margin:auto}.accounts-unavailable h3{font-size:18px;font-weight:550;margin:17px 0 10px}.accounts-unavailable p{font-size:12px;line-height:1.9;color:#647681;max-width:440px;margin:auto}.accounts-layout button:disabled{opacity:.45;cursor:not-allowed}.accounts-layout button:focus-visible,.accounts-layout a:focus-visible,.accounts-layout summary:focus-visible,.accounts-layout input:focus-visible,.accounts-layout select:focus-visible{outline:2px solid #51b4a3;outline-offset:3px}@media(max-width:680px){.accounts-layout{grid-template-columns:minmax(0,1fr);gap:15px}.accounts-list{border-right:0;border-bottom:1px solid var(--border);padding-right:0;padding-bottom:13px;display:flex;gap:8px;overflow-x:auto;align-items:center}.accounts-list-heading{flex-shrink:0}.accounts-list-heading>span{display:none}.account-choice{width:190px;min-width:170px;margin:0;min-height:60px}.account-add{min-width:125px;width:125px;margin:0;padding:8px}.accounts-intro strong{font-size:14px}.account-detail-header{gap:10px}.account-state{font-size:10px}.account-limits{gap:9px}.account-limit{padding:10px}.account-section-title button,.account-buttons button{font-size:12px}.account-device-code code{font-size:22px}.account-confirm label{font-size:12px}.account-native-help code{font-size:12px}.account-meta code{font-size:11px}.account-create label{font-size:14px}}
+.accounts-intro p,.account-choice small,.account-detail-header p,.account-meta,.account-meta code,.account-checked,.account-quiet,.account-source-label,.account-native-help p,.account-login p,.account-limit small,.account-limit header,.account-reset p,.account-create p,.accounts-empty,.accounts-unavailable p{color:#647681}.account-detail-header h3,.account-create h3,.account-section-title h4,.account-choice strong,.account-reset strong,.account-create label,.accounts-unavailable h3{color:#273745}.account-buttons button,.account-reset button,.account-section-title button,.account-add{color:var(--teal)}.account-buttons .account-primary{color:white;background:var(--teal);border-color:var(--teal)}.account-login-link{background:var(--teal)}.account-notice{color:var(--teal)}.account-error{color:#a34a61}.account-confirm{color:#86713e}
+.account-create .shared-config-consent>label{display:flex;flex-direction:row;align-items:flex-start;gap:8px;line-height:17px}
+.account-create .shared-config-consent input[type="checkbox"]{width:14px;height:14px;min-width:14px;min-height:14px;padding:0;margin:2px 0 0;flex:0 0 14px;accent-color:var(--teal)}
+.account-limit header>div{display:flex;flex-direction:column;gap:4px;min-width:0}
+</style>
