@@ -157,7 +157,10 @@ export class ChatBase {
     const list=Array.isArray(models)
       ? models.flatMap(entry=>{
           if(!entry||typeof entry!=='object'||typeof entry.id!=='string'||!entry.id||entry.id.length>128)return [];
-          const efforts=Array.isArray(entry.efforts)?entry.efforts.filter(value=>typeof value==='string'&&/^[a-z]{1,16}$/.test(value)).slice(0,16):undefined;
+          // Only levels both clients share. An unfamiliar one drops itself
+          // rather than taking the whole list down with it downstream.
+          const EFFORTS=['low','medium','high','xhigh','max'];
+          const efforts=Array.isArray(entry.efforts)?entry.efforts.filter(value=>EFFORTS.includes(value)).slice(0,16):undefined;
           return [{id:entry.id,name:clip(typeof entry.name==='string'&&entry.name?entry.name:entry.id,128),
             ...(typeof entry.description==='string'&&entry.description?{description:clip(entry.description,256)}:{}),
             ...(efforts?.length?{efforts}:{})}];

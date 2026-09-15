@@ -33,7 +33,8 @@ for await(const line of createInterface({input:process.stdin})) {
     if(message.method==='initialize'){send({id:message.id,result:{}});continue;}
     if(message.method==='initialized')continue;
     // A real app-server publishes its models and the levels each one supports.
-    if(message.method==='model/list'){send({id:message.id,result:{models:[{id:'gpt-fixture',displayName:'Fixture',supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}]},{id:'gpt-plain'}]}});continue;}
+    // The real app-server answers with `data`, and marks some entries hidden.
+    if(message.method==='model/list'){send({id:message.id,result:{data:[{id:'gpt-fixture',displayName:'Fixture',isDefault:true,supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}]},{id:'gpt-plain'},{id:'gpt-hidden',hidden:true}],nextCursor:null}});continue;}
     if(message.method==='thread/start'||message.method==='thread/resume'){thread=message.params.threadId??thread;send({id:message.id,result:{thread:{id:thread}}});continue;}
     if(message.method==='turn/interrupt'){send({id:message.id,result:{}});native('turn/completed',{threadId:thread,turn:{id:activeTurn,status:'interrupted'}});continue;}
     if(message.method==='turn/start'){

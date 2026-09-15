@@ -21,7 +21,12 @@ export function codexLaunch(job) {
 // Codex states the effort levels each model supports; a model that lists none
 // is offered without a depth control rather than with an invented ladder.
 function codexModels(result) {
-  const rows=Array.isArray(result?.models)?result.models:Array.isArray(result)?result:undefined;
+  // app-server answers model/list with `data`; `models` is accepted too so a
+  // build that renames it still works. Reading only `models` is what left
+  // Codex sessions with no model picker and no depth control at all.
+  const rows=Array.isArray(result?.data)?result.data
+    :Array.isArray(result?.models)?result.models
+    :Array.isArray(result)?result:undefined;
   if(!rows)return undefined;
   return rows.flatMap(row=>{
     const id=row&&typeof row==='object'?row.id??row.model??row.name:undefined;
@@ -29,7 +34,8 @@ function codexModels(result) {
     const efforts=Array.isArray(row.supportedReasoningEfforts)
       ? row.supportedReasoningEfforts.map(level=>typeof level==='string'?level:level?.reasoningEffort).filter(level=>typeof level==='string')
       : undefined;
-    return [{id,name:typeof row.displayName==='string'?row.displayName:id,
+    if(row.hidden===true)return [];
+    return [{id,name:typeof row.displayName==='string'?row.displayName:id,...(row.isDefault===true?{isDefault:true}:{}),
       ...(typeof row.description==='string'?{description:row.description}:{}),
       ...(efforts?.length?{efforts}:{})}];
   });
@@ -47,7 +53,14 @@ export class CodexChat extends ChatBase {
     // Asking for models must not hold up the session. A Codex build without
     // model/list simply offers no picker rather than a list AgentDock guessed.
     void this.port.rpc('model/list',{limit:100,includeHidden:false},false,true)
-      .then(result=>{if(this.closed)return;this.models=codexModels(result);this.settings(this.models,this.launch.thread.model);})
+      .then(result=>{
+        this.models=codexModels(result);
+        // Codex runs its own default when a turn names no model, and it says
+        // which that is. Reporting it is what gives a session that never chose
+        // a model its depth control, which reads from the model in use.
+        this.defaultModel=this.models?.find(entry=>entry.isDefault)?.id;
+        this.settings(this.models,this.launch.thread.model??this.defaultModel,this.effort);
+      })
       .catch(()=>{});
   }
   /**
@@ -58,7 +71,7 @@ export class CodexChat extends ChatBase {
     if(this.active)throw Error('Wait for the current turn to finish before changing the model.');
     if(message.model)this.launch.thread.model=message.model;
     if(message.effort)this.effort=message.effort;
-    this.settings(this.models,this.launch.thread.model,this.effort);
+    this.settings(this.models,this.launch.thread.model??this.defaultModel,this.effort);
   }
   async message(message) {
     const active=this.begin(message);if(!active)return;

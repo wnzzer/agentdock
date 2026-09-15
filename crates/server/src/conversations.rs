@@ -890,11 +890,19 @@ fn normalize_event(mut value: Value) -> Option<Value> {
         }
         // A model list is the client's own; a malformed entry drops the list
         // rather than reaching the picker as something half-known.
+        // Lengths are counted in characters, because that is what the bridge
+        // clips by. Counting bytes here rejected a whole model list over a
+        // description that was within its limit but contained a multi-byte
+        // character, and a rejected event looks to the user like a client that
+        // offers no models at all.
         "settings" => {
+            let chars = |value: &Value, limit: usize| {
+                value.as_str().is_some_and(|v| v.chars().count() <= limit)
+            };
             object.get("model").is_none_or(|value| {
                 value
                     .as_str()
-                    .is_some_and(|v| !v.is_empty() && v.len() <= 128)
+                    .is_some_and(|v| !v.is_empty() && v.chars().count() <= 128)
             }) && object.get("effort").is_none_or(|value| {
                 value
                     .as_str()
@@ -903,12 +911,10 @@ fn normalize_event(mut value: Value) -> Option<Value> {
                 value.as_array().is_some_and(|rows| {
                     rows.len() <= 64
                         && rows.iter().all(|row| {
-                            let field = |key: &str| row.get(key).and_then(Value::as_str);
-                            field("id").is_some_and(|v| !v.is_empty() && v.len() <= 128)
-                                && field("name").is_some_and(|v| v.len() <= 128)
-                                && row
-                                    .get("description")
-                                    .is_none_or(|v| v.as_str().is_some_and(|v| v.len() <= 256))
+                            row.get("id").is_some_and(|v| {
+                                v.as_str().is_some_and(|v| !v.is_empty()) && chars(v, 128)
+                            }) && row.get("name").is_some_and(|v| chars(v, 128))
+                                && row.get("description").is_none_or(|v| chars(v, 256))
                                 && row.get("efforts").is_none_or(|v| {
                                     v.as_array().is_some_and(|levels| {
                                         levels.len() <= 16

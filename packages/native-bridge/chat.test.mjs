@@ -118,6 +118,12 @@ for(const provider of ['codex','claude_code']){
     assert.ok(announced.models.every(entry=>typeof entry.id==='string'&&typeof entry.name==='string'));
     assert.ok(announced.models.some(entry=>entry.efforts?.length));
     assert.ok(announced.models.some(entry=>entry.efforts===undefined));
+    // A client marks entries it does not offer; showing them would put models
+    // in the picker that the account cannot run.
+    assert.equal(announced.models.some(entry=>entry.id==='gpt-hidden'),false);
+    // A session that never chose a model still runs one, and the depth control
+    // reads from the model in use — so the client's own default is reported.
+    if(provider==='codex')assert.equal(announced.model,'gpt-fixture');
 
     send({type:'message',id:'before',content:'simple'});await wait(event=>event.type==='turn'&&event.id==='before'&&event.status==='completed');
     const startsBefore=(await log()).filter(item=>provider==='codex'?item.method==='thread/start':item.type==='control_request'&&item.request?.subtype==='initialize').length;
