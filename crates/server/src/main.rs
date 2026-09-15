@@ -5,6 +5,7 @@ mod canvas;
 mod clients;
 mod conversations;
 mod directories;
+mod embedded;
 mod environment;
 mod installation;
 mod model_catalog;
@@ -246,6 +247,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     )
     .await;
     let claude_manual_mode = matches!(help,Ok(Ok(ref output)) if String::from_utf8_lossy(&output.stdout).contains("\"manual\""));
+    // Before anything resolves a bridge path: a single-file release carries the
+    // Node modules inside it and has to place them first.
+    installation::place_native_bridge(&state_dir)?;
     let state = AppState {
         store,
         runtime: RuntimeManager::new(),
@@ -290,7 +294,16 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 }
 
 fn router(state: AppState) -> Router {
+    // A real build on disk wins, so a development tree or an installed layout
+    // serves the files it just wrote. Otherwise the build that travels inside
+    // this binary is served from memory. Existence decides it rather than the
+    // override merely being set, so a path that points nowhere degrades to the
+    // embedded copy instead of serving nothing at all.
     let web = installation::web_directory(&state.state_dir);
+    let from_disk = web.join("index.html").exists();
+    if !from_disk && !embedded::has_web() {
+        tracing::warn!("no web assets on disk or in this binary; run the web build");
+    }
     Router::new()
         .merge(accounts::routes())
         .merge(clients::routes())
@@ -390,9 +403,13 @@ fn router(state: AppState) -> Router {
             "/api/{*path}",
             get(|| async { ApiError::missing("API route") }),
         )
-        .fallback_service(
-            ServeDir::new(&web).not_found_service(ServeFile::new(web.join("index.html"))),
-        )
+        .fallback_service(if from_disk {
+            axum::routing::any_service(
+                ServeDir::new(&web).not_found_service(ServeFile::new(web.join("index.html"))),
+            )
+        } else {
+            axum::routing::any(|uri: axum::http::Uri| async move { embedded::serve_web(&uri) })
+        })
         .layer(DefaultBodyLimit::max(3 * 1024 * 1024))
         .layer(middleware::from_fn_with_state(
             state.clone(),

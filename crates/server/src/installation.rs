@@ -209,6 +209,18 @@ pub fn native_bridge(state_dir: &Path) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/native-bridge/history.mjs"),
     )
 }
+/// Put the bridges where `native_bridge` will look for them.
+///
+/// They are Node modules launched as child processes, so a single-file release
+/// still has to place them on disk. A host that pinned its own copy through
+/// `AGENTDOCK_NATIVE_BRIDGE` keeps it: that override is a deliberate choice and
+/// is never overwritten.
+pub fn place_native_bridge(state_dir: &Path) -> std::io::Result<()> {
+    if env::var_os("AGENTDOCK_NATIVE_BRIDGE").is_some() {
+        return Ok(());
+    }
+    crate::embedded::extract_bridge(&state_dir.join("native-bridge")).map(|_| ())
+}
 fn asset_path(key: &str, installed: PathBuf, development: PathBuf) -> PathBuf {
     if let Some(path) = env::var_os(key) {
         return PathBuf::from(path);
