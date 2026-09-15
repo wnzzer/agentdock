@@ -32,19 +32,41 @@ pub fn validate_profile(p: &EndpointProfile) -> Result<(), ApiError> {
         ));
     }
     if let Some(reference) = &p.native_config {
+        // Where the requests go and who they authenticate as belong to the
+        // native configuration; AgentDock must not redirect either.
         if reference.source_id.is_empty()
             || !Path::new(&reference.config_dir).is_absolute()
             || p.permission_mode != "native"
             || p.endpoint_url.is_some()
-            || p.model.is_some()
             || p.secret_ref.is_some()
-            || p.proxy_url.is_some()
-            || !p.model_aliases.is_empty()
-            || p.effort.is_some()
         {
             return Err(ApiError::bad(
-                "An existing native configuration cannot be combined with endpoint, model, proxy or permission overrides",
+                "An existing native configuration cannot be combined with endpoint, credential, proxy or permission overrides",
             ));
+        }
+        // A proxy is how the account reaches its own endpoint, not a different
+        // endpoint, so an official account may carry one. Account settings
+        // write it here, and forbidding it left those profiles unvalidatable.
+        if let Some(proxy) = p.proxy_url.as_deref() {
+            validate_proxy(proxy)?;
+        }
+        // Mapping an official slot onto another upstream model is something both
+        // clients already do themselves — Claude Code through its
+        // ANTHROPIC_DEFAULT_*_MODEL variables, Codex through model_providers.
+        // A second alias table here would compete with theirs and would apply
+        // only to sessions AgentDock launched, so it stays refused.
+        if !p.model_aliases.is_empty() {
+            return Err(ApiError::bad(
+                "An official account maps models through its own client configuration, not through aliases here",
+            ));
+        }
+        // A model and a depth are launch choices, not a redirection: the client
+        // still resolves and validates them against its own account.
+        validate_effort(p.effort.as_deref())?;
+        if let Some(model) = p.model.as_deref()
+            && (model.trim().is_empty() || model.len() > 200 || model.chars().any(char::is_control))
+        {
+            return Err(ApiError::bad("Model must be a real model ID"));
         }
         return Ok(());
     }
@@ -406,6 +428,53 @@ mod tests {
         assert!(validate_profile(&p).is_err());
         p.secret_ref = Some("env:AGENTDOCK_SECRET_WORK".into());
         assert!(validate_profile(&p).is_ok());
+    }
+
+    #[test]
+    fn an_official_account_may_choose_a_model_but_never_where_requests_go() {
+        let mut p = EndpointProfile {
+            id: uuid::Uuid::new_v4(),
+            name: "official".into(),
+            provider: ProviderKind::ClaudeCode,
+            endpoint_url: None,
+            model: None,
+            permission_mode: "native".into(),
+            secret_ref: None,
+            proxy_url: None,
+            effort: None,
+            model_aliases: Default::default(),
+            native_config: Some(agentdock_domain::NativeConfigReference {
+                source_id: "claude-default".into(),
+                config_dir: "/tmp/agentdock-fixture".into(),
+                config_env: None,
+            }),
+            environment: Default::default(),
+            created_at: chrono::Utc::now(),
+        };
+        assert!(validate_profile(&p).is_ok());
+        // A model and a depth are launch choices the client still resolves
+        // against its own account, so an official account may carry them.
+        p.model = Some("claude-fable-5-1[1m]".into());
+        p.effort = Some("high".into());
+        assert!(validate_profile(&p).is_ok());
+        // The account writes its proxy here; refusing it left those profiles
+        // stored but unvalidatable.
+        p.proxy_url = Some("http://192.168.0.253:7890".into());
+        assert!(validate_profile(&p).is_ok());
+        p.proxy_url = Some("http://user:pass@proxy.test".into());
+        assert!(validate_profile(&p).is_err());
+        p.proxy_url = None;
+        // Where the requests go and who they authenticate as stay the native
+        // configuration's, and a second alias table would compete with the
+        // client's own mapping.
+        p.model_aliases = [("fast".to_string(), "haiku".to_string())].into();
+        assert!(validate_profile(&p).is_err());
+        p.model_aliases = Default::default();
+        p.endpoint_url = Some("https://relay.test/v1".into());
+        assert!(validate_profile(&p).is_err());
+        p.endpoint_url = None;
+        p.secret_ref = Some("env:AGENTDOCK_SECRET_WORK".into());
+        assert!(validate_profile(&p).is_err());
     }
 
     #[test]

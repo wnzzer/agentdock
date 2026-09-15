@@ -124,15 +124,16 @@ fn parse_models(value: Value, source_url: String) -> Result<ModelCatalog, ApiErr
     })
 }
 pub async fn discover(
-    state_dir: &std::path::Path,
+    state: &crate::AppState,
     profile: &EndpointProfile,
 ) -> Result<ModelCatalog, ApiError> {
-    if profile.native_config.is_some() {
-        return Err(ApiError::bad(
-            "Models for an existing native configuration stay managed by the native client",
-        ));
-    }
+    let state_dir = state.state_dir.as_path();
     providers::validate_profile(profile)?;
+    // An official account is asked directly: its client is the authority on
+    // which models that account can run, third-party mappings included.
+    if let Some(reference) = &profile.native_config {
+        return native_models(state, profile, reference).await;
+    }
     if profile.provider == ProviderKind::Codex
         && profile.endpoint_url.is_none()
         && profile.secret_ref.is_none()
@@ -286,6 +287,190 @@ async fn fetch(profile: &EndpointProfile, secret: Option<&str>) -> Result<ModelC
         ApiError::bad("Model endpoint returned non-JSON content; enter a model ID manually")
     })?;
     parse_models(value, url.to_string())
+}
+
+/// Models an official account can actually run, asked of that client itself.
+///
+/// Both clients already own this answer, including any third-party mapping the
+/// operator configured — Claude Code through its `ANTHROPIC_DEFAULT_*_MODEL`
+/// variables, Codex through `model_providers`. Reading their list keeps those
+/// mappings visible here instead of competing with a second table.
+async fn native_models(
+    state: &crate::AppState,
+    profile: &EndpointProfile,
+    reference: &agentdock_domain::NativeConfigReference,
+) -> Result<ModelCatalog, ApiError> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let directory = providers::private_dir(
+        &std::env::temp_dir().join(format!("agentdock-models-{}", uuid::Uuid::new_v4())),
+    )?;
+    let spec = crate::native_config::build(state, &profile.provider, reference, directory.clone())?;
+    let claude = profile.provider == ProviderKind::ClaudeCode;
+    let mut command = tokio::process::Command::new(&spec.program);
+    if claude {
+        // The same read-only handshake a chat session performs. No prompt is
+        // ever sent, so no turn runs against the account.
+        command.args([
+            "--print",
+            "--verbose",
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
+            "--permission-prompt-tool",
+            "stdio",
+        ]);
+    } else {
+        command.args(["app-server"]);
+    }
+    command
+        .current_dir(&directory)
+        .kill_on_drop(true)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    for key in &spec.env_remove {
+        command.env_remove(key);
+    }
+    for (key, value) in &spec.env {
+        command.env(key, value);
+    }
+    let result = async {
+        let mut child = command.spawn().map_err(|_| {
+            ApiError::bad("That client is not installed on the server; enter a model ID manually")
+        })?;
+        let mut input = child
+            .stdin
+            .take()
+            .ok_or_else(|| ApiError::bad("Unable to open the client input"))?;
+        let output = child
+            .stdout
+            .take()
+            .ok_or_else(|| ApiError::bad("Unable to open the client output"))?;
+        let query = async {
+            let opening = if claude {
+                "{\"type\":\"control_request\",\"request_id\":\"agentdock-models\",\"request\":{\"subtype\":\"initialize\"}}\n".to_string()
+            } else {
+                "{\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"agentdock_models\",\"version\":\"0.1.0\"}}}\n".to_string()
+            };
+            input
+                .write_all(opening.as_bytes())
+                .await
+                .map_err(ApiError::internal)?;
+            let mut lines = BufReader::new(output).lines();
+            let mut bytes = 0usize;
+            let mut initialized = false;
+            while let Some(line) = lines.next_line().await.map_err(ApiError::internal)? {
+                bytes += line.len();
+                if bytes > MAX_BYTES {
+                    return Err(ApiError::bad("Native model list exceeds limit"));
+                }
+                let Ok(packet) = serde_json::from_str::<Value>(&line) else {
+                    continue;
+                };
+                if claude {
+                    let Some(response) = packet.get("response") else {
+                        continue;
+                    };
+                    if response.get("request_id").and_then(Value::as_str) != Some("agentdock-models")
+                    {
+                        continue;
+                    }
+                    let models = response
+                        .get("response")
+                        .and_then(|body| body.get("models"))
+                        .ok_or_else(|| {
+                            ApiError::bad("This Claude Code version does not publish its models")
+                        })?;
+                    return parse_claude_models(models.clone());
+                }
+                if packet.get("id") == Some(&Value::from(1)) && !initialized {
+                    if packet.get("error").is_some() {
+                        return Err(ApiError::bad("Codex app-server initialization failed"));
+                    }
+                    input.write_all(b"{\"method\":\"initialized\",\"params\":{}}\n{\"id\":2,\"method\":\"model/list\",\"params\":{\"limit\":100,\"includeHidden\":false}}\n").await.map_err(ApiError::internal)?;
+                    initialized = true;
+                }
+                if packet.get("id") == Some(&Value::from(2)) {
+                    let body = packet
+                        .get("result")
+                        .ok_or_else(|| ApiError::bad("This Codex version cannot list models"))?;
+                    let mut catalog = parse_models(body.clone(), "codex://model/list".into())?;
+                    catalog.has_more = body.get("nextCursor").is_some_and(|c| !c.is_null());
+                    return Ok(catalog);
+                }
+            }
+            Err(ApiError::bad("The client ended without listing its models"))
+        };
+        let result = match tokio::time::timeout(Duration::from_secs(12), query).await {
+            Ok(result) => result,
+            Err(_) => Err(ApiError::bad("Native model discovery timed out")),
+        };
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        result
+    }
+    .await;
+    // This directory existed only for a read-only handshake; real account state
+    // lives elsewhere and is never touched here.
+    let _ = tokio::fs::remove_dir_all(&directory).await;
+    result
+}
+
+/// Claude publishes `{value, displayName, description, supportedEffortLevels}`,
+/// including entries an operator remapped or added through its own environment
+/// variables. A model that states no effort levels genuinely supports none.
+fn parse_claude_models(value: Value) -> Result<ModelCatalog, ApiError> {
+    let rows = value
+        .as_array()
+        .ok_or_else(|| ApiError::bad("The client did not return a supported model list"))?;
+    let mut seen = BTreeSet::new();
+    let mut models = Vec::new();
+    for row in rows.iter().take(200) {
+        let Some(id) = row
+            .get("value")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty() && s.len() <= 200 && !s.chars().any(char::is_control))
+        else {
+            continue;
+        };
+        if !seen.insert(id.to_owned()) {
+            continue;
+        }
+        let name = row
+            .get("displayName")
+            .and_then(Value::as_str)
+            .filter(|s| s.len() <= 300 && !s.chars().any(char::is_control))
+            .unwrap_or(id);
+        let efforts = if row.get("supportsEffort").and_then(Value::as_bool) == Some(true) {
+            row.get("supportedEffortLevels")
+                .and_then(Value::as_array)
+                .map(|levels| {
+                    levels
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .filter(|level| providers::EFFORT_LEVELS.contains(level))
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        models.push(ModelEntry {
+            id: id.into(),
+            name: name.into(),
+            efforts,
+        });
+    }
+    if models.is_empty() {
+        return Err(ApiError::bad("The client returned no usable model IDs"));
+    }
+    Ok(ModelCatalog {
+        models,
+        source_url: "claude://initialize".into(),
+        has_more: false,
+    })
 }
 
 #[cfg(test)]

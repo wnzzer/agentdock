@@ -317,6 +317,10 @@ fn router(state: AppState) -> Router {
             post(discover_models),
         )
         .route(
+            "/api/endpoint-profiles/{id}/models",
+            get(discover_profile_models),
+        )
+        .route(
             "/api/endpoint-profiles/import-native",
             post(import_native_profile),
         )
@@ -530,9 +534,22 @@ async fn discover_models(
         environment: input.environment,
         created_at: chrono::Utc::now(),
     };
-    model_catalog::discover(&state.state_dir, &p)
-        .await
-        .map(Json)
+    model_catalog::discover(&state, &p).await.map(Json)
+}
+
+/// Models a stored profile can run.
+///
+/// Official accounts are asked through the profile AgentDock already holds,
+/// never through a native configuration supplied by the caller: the directory a
+/// client is pointed at decides which credentials it reads.
+async fn discover_profile_models(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<model_catalog::ModelCatalog>> {
+    let profile = db(&state, move |s| s.get_endpoint_profile(id))
+        .await?
+        .ok_or_else(|| ApiError::missing("Profile"))?;
+    model_catalog::discover(&state, &profile).await.map(Json)
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
