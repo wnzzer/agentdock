@@ -30,6 +30,9 @@ export function usageRetryHint(seconds?: number): { unit: 'seconds' | 'minutes';
 export type AccountResetOutcome = 'reset' | 'alreadyRedeemed' | 'nothingToReset' | 'noCredit';
 export interface AccountView {
   id: string; name: string; provider: AgentProviderKind; profile_id: string; storage_path: string;
+  /** The account points at a configuration the host already had, so anything
+   * else editing that directory changes this account too. */
+  shared_configuration?: boolean;
   native_source_id?: string | null;
   status: 'unknown' | 'signed_out' | 'signed_in' | 'login_pending' | 'error';
   email?: string; plan?: string; checked_at?: string; error?: string; login_command?: string; guidance?: string;

@@ -343,6 +343,13 @@ pub struct AccountView {
     /// Source id is exposed for UI provenance only (never credential data).
     pub native_source_id: Option<String>,
     pub storage_path: String,
+    /// True when this account points at a configuration the host already had,
+    /// rather than one of its own. Its sign-in is then whatever that directory
+    /// currently holds, so anything else editing it — another tool switching
+    /// profiles, a native re-login — changes this account too. A user cannot
+    /// infer that from a path, and being surprised by it is how an account
+    /// stops working for no visible reason.
+    pub shared_configuration: bool,
     pub status: String,
     pub email: Option<String>,
     pub plan: Option<String>,
@@ -739,6 +746,9 @@ fn initial_view(state: &AppState, record: &AccountRecord) -> Result<AccountView>
             .as_ref()
             .map(|reference| reference.source_id.clone()),
         storage_path: directory.to_string_lossy().into_owned(),
+        // An account AgentDock created owns its directory; one that references a
+        // configuration the host already had does not.
+        shared_configuration: record.native_config.is_some(),
         proxy_url: record.proxy_url.clone(),
         status: "unknown".into(),
         email: None,
@@ -1240,6 +1250,11 @@ mod tests {
         .unwrap()
         .0;
         assert_eq!(account.native_source_id.as_deref(), Some("fixture-codex"));
+        // A linked account's sign-in lives in a directory the host owns, so
+        // anything else editing it changes this account too. Saying so is the
+        // difference between "my account stopped working for no reason" and
+        // "the thing I share it with switched it".
+        assert!(account.shared_configuration);
         assert_eq!(account.storage_path, native.to_string_lossy());
         assert!(
             !f.root
@@ -1295,6 +1310,9 @@ mod tests {
                 && !account.capabilities.refresh_token
         );
         assert!(account.guidance.unwrap().contains("claude auth login"));
+        // An account AgentDock created owns its directory, so nothing else on
+        // the host edits its sign-in.
+        assert!(!account.shared_configuration);
         assert_eq!(
             login(
                 State(f.state.clone()),

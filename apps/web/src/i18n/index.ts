@@ -261,6 +261,7 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Account removed, along with the configuration directory it owned.": "账号已移除，其独立配置目录也一并删除。",
   "New session here": "在此新建会话",
   "Cached from {time}": "缓存自 {time}",
+  "Shared configuration: this account signs in through a directory the host already had. Anything else that edits it — a profile switcher, a native re-login — changes this account too.": "共享配置：该账号通过宿主已有的目录登录。任何其他改动该目录的操作——配置切换工具、原生重新登录——都会一并改变此账号。",
   "Query failed; showing the earlier result from {time}.": "查询失败，显示 {time} 的旧结果。",
   "From the official client's own status-line snapshot.": "来自官方客户端自己的状态栏快照。",
   "Follow this client's native login, then refresh official status.": "请按该客户端的原生登录方式操作，然后刷新官方状态。",
