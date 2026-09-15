@@ -722,10 +722,19 @@ fn initial_view(state: &AppState, record: &AccountRecord) -> Result<AccountView>
     let guidance = if codex {
         None
     } else {
-        let config_prefix = record
-            .native_config
-            .as_ref()
-            .and_then(|reference| reference.config_env.as_deref())
+        // Where this account's sign-in has to land.
+        //
+        // A linked account signs in wherever the configuration it references
+        // already points, which for the host default is no override at all. An
+        // account that owns its directory has to be told to sign in *there*:
+        // without the override the command writes the credentials into the
+        // host's own configuration, the account's directory stays empty, and
+        // the account never works while appearing to exist.
+        let login_home = match record.native_config.as_ref() {
+            Some(reference) => reference.config_env.clone(),
+            None => Some(metadata_directory.to_string_lossy().into_owned()),
+        };
+        let config_prefix = login_home
             .map(|value| format!(" CLAUDE_CONFIG_DIR='{}'", value.replace('\'', "'\\''")))
             .unwrap_or_default();
         // The command is the part a user has to act on; everything else this
@@ -1309,10 +1318,18 @@ mod tests {
                 && !account.capabilities.reset_quota
                 && !account.capabilities.refresh_token
         );
-        assert!(account.guidance.unwrap().contains("claude auth login"));
+        let guidance = account.guidance.clone().unwrap();
+        assert!(guidance.contains("claude auth login"));
         // An account AgentDock created owns its directory, so nothing else on
         // the host edits its sign-in.
         assert!(!account.shared_configuration);
+        // And its sign-in has to land in that directory. Without the override
+        // the command writes into the host configuration instead, leaving this
+        // account empty while it still appears in the list.
+        assert!(
+            guidance.contains(&format!("CLAUDE_CONFIG_DIR='{}'", account.storage_path)),
+            "an owned account signs in into its own directory: {guidance}"
+        );
         assert_eq!(
             login(
                 State(f.state.clone()),
