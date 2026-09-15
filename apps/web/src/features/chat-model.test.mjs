@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import { acknowledgeReceipt } from './chat-model.ts';
 import assert from 'node:assert/strict';
-import { acknowledgeDraft, appendChatEvent, approvalPayloadAnswers, conversationView, createChatDraftStore, isChatEvent, markdownBlocks, markdownInline, parseConversationSnapshot, pendingMessageRetry, pruneChatEvents, safeWebUrl, sessionConfigurationPayload } from './chat-model.ts';
+import { acknowledgeDraft, appendChatEvent, approvalPayloadAnswers, canClearContext, conversationView, createChatDraftStore, isChatEvent, markdownBlocks, markdownInline, parseConversationSnapshot, pendingMessageRetry, pruneChatEvents, safeWebUrl, sessionConfigurationPayload } from './chat-model.ts';
 
 const session = { id: 'session', provider: 'codex', status: 'stopped' };
 const profiles = [{ id: 'codex-work', provider: 'codex' }, { id: 'claude-work', provider: 'claude_code' }];
@@ -297,4 +297,21 @@ test('a sent message leaves the composer, even when the wire content was reshape
   const edited = { text: 'a newer thought', pending: { id: 'm3', content: '/model', text: '/model ', state: 'sending' } };
   acknowledgeReceipt(edited, { accepted: true, id: 'm3' });
   assert.equal(edited.text, 'a newer thought');
+});
+
+test('clearing is offered whenever the client can do it, including with an empty composer', () => {
+  const live = { preview: false, running: true, ready: true, busy: false, connected: true, commands: ['clear', 'model'] };
+  // Nothing here depends on the composer. A first attempt gated this on "a
+  // message could be sent", which needs typed text, so the action vanished
+  // exactly when someone reaches for it.
+  assert.equal(canClearContext(live), true);
+  // Only the client can drop its own context, so it must have said it can.
+  assert.equal(canClearContext({ ...live, commands: ['model'] }), false);
+  assert.equal(canClearContext({ ...live, commands: [] }), false);
+  // A client that is not there, not ready, mid-turn or disconnected cannot.
+  assert.equal(canClearContext({ ...live, running: false }), false);
+  assert.equal(canClearContext({ ...live, ready: false }), false);
+  assert.equal(canClearContext({ ...live, busy: true }), false);
+  assert.equal(canClearContext({ ...live, connected: false }), false);
+  assert.equal(canClearContext({ ...live, preview: true }), false);
 });

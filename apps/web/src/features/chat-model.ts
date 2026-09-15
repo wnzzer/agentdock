@@ -151,6 +151,26 @@ export function approvalPayloadAnswers(questions: readonly ApprovalQuestion[], s
   }));
 }
 
+/**
+ * Whether the client's own /clear can be offered right now.
+ *
+ * This is a pure function because the condition is easy to get subtly wrong:
+ * it once included "a message could be sent", which requires typed text, so
+ * the action disappeared whenever the composer was empty — exactly when it is
+ * wanted. Clearing needs a live, idle client that advertised the command, and
+ * nothing about what is in the composer.
+ */
+export function canClearContext(state: {
+  preview: boolean;
+  running: boolean;
+  ready: boolean;
+  busy: boolean;
+  connected: boolean;
+  commands: readonly string[];
+}): boolean {
+  return !state.preview && state.running && state.ready && !state.busy && state.connected && state.commands.includes('clear');
+}
+
 export interface ChatDraft {
   text: string;
   pending?: {

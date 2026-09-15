@@ -5,7 +5,7 @@ import { ApiConnectionError, errorMessage, json, providerLabel, request } from '
 import { backendCapabilities } from './backend-capabilities';
 import { sessionConnections } from './session-connection';
 import { createSessionStream, type SessionStreamState } from './session-stream';
-import { acknowledgeDraft, appendChatEvent, approvalPayloadAnswers, chatDrafts, createChatDraftStore, conversationView, isChatEvent, markdownBlocks, markdownInline, parseConversationSnapshot, pendingMessageRetry, pruneChatEvents, sessionConfigurationPayload, type ChatDraft, type ChatEvent, type ChatItem, type ConversationSnapshot, type MarkdownInline } from './chat-model';
+import { acknowledgeDraft, appendChatEvent, approvalPayloadAnswers, canClearContext, chatDrafts, createChatDraftStore, conversationView, isChatEvent, markdownBlocks, markdownInline, parseConversationSnapshot, pendingMessageRetry, pruneChatEvents, sessionConfigurationPayload, type ChatDraft, type ChatEvent, type ChatItem, type ConversationSnapshot, type MarkdownInline } from './chat-model';
 import ProviderIcon from './ProviderIcon.vue';
 import Icon from './Icon.vue';
 import ChipMenu from './ChipMenu.vue';
@@ -121,7 +121,7 @@ async function pickModel(id: string) {
  * advertised that command; AgentDock never invents one.
  */
 const timelineMenu = ref<{ x: number; y: number; text: string } | null>(null);
-const canClearContext = computed(() => view.value.commands.includes('clear') && canSend.value !== false && !turnBusy.value && running.value && view.value.ready);
+const clearAvailable = computed(() => canClearContext({ preview: isPreview.value, running: running.value, ready: view.value.ready, busy: turnBusy.value || actionBusy.value, connected: streamState.value === 'connected', commands: view.value.commands }));
 function openTimelineMenu(event: MouseEvent) {
   if (isPreview.value) return;
   event.preventDefault();
@@ -142,7 +142,7 @@ async function copyFromTimeline(value: string) {
  * can drop its own. */
 async function clearContext() {
   closeTimelineMenu();
-  if (!canClearContext.value) return;
+  if (!clearAvailable.value) return;
   const id = props.session.id, messageId = crypto.randomUUID();
   actionBusy.value = true; error.value = '';
   try { await request('/sessions/' + encodeURIComponent(id) + '/conversation/message', json('POST', { id: messageId, content: '/clear' })); }
@@ -470,7 +470,7 @@ function keydown(event: KeyboardEvent) {
 
 <template>
   <section :class="['chat-pane', { 'has-tab-menu': !!paneId }]" :aria-label="t('Conversation with {provider}', {provider:providerLabel(session.provider)})" @keydown="paneKeydown">
-    <Teleport to="body"><div v-if="timelineMenu" class="chat-timeline-backdrop" @pointerdown="closeTimelineMenu" @contextmenu.prevent="closeTimelineMenu"><nav class="chat-timeline-menu" :style="timelineMenuStyle" role="menu" :aria-label="t('Conversation actions')" @pointerdown.stop @keydown.esc.stop.prevent="closeTimelineMenu"><button v-if="timelineMenu.text" type="button" role="menuitem" @click="copyFromTimeline(timelineMenu!.text)">{{ t('Copy selection') }}</button><button type="button" role="menuitem" @click="closeTimelineMenu(); scrollToLatest(true)">{{ t('Latest message') }}</button><button type="button" role="menuitem" :disabled="loading" @click="closeTimelineMenu(); load()">{{ t('Refresh conversation') }}</button><template v-if="canClearContext"><hr/><button type="button" role="menuitem" :disabled="actionBusy" :title="t('Runs this client\'s own /clear: the transcript and its context are dropped together.')" @click="clearContext">{{ t('Clear context') }}</button></template></nav></div></Teleport>
+    <Teleport to="body"><div v-if="timelineMenu" class="chat-timeline-backdrop" @pointerdown="closeTimelineMenu" @contextmenu.prevent="closeTimelineMenu"><nav class="chat-timeline-menu" :style="timelineMenuStyle" role="menu" :aria-label="t('Conversation actions')" @pointerdown.stop @keydown.esc.stop.prevent="closeTimelineMenu"><button v-if="timelineMenu.text" type="button" role="menuitem" @click="copyFromTimeline(timelineMenu!.text)">{{ t('Copy selection') }}</button><button type="button" role="menuitem" @click="closeTimelineMenu(); scrollToLatest(true)">{{ t('Latest message') }}</button><button type="button" role="menuitem" :disabled="loading" @click="closeTimelineMenu(); load()">{{ t('Refresh conversation') }}</button><template v-if="clearAvailable"><hr/><button type="button" role="menuitem" :disabled="actionBusy" :title="t('Runs this client\'s own /clear: the transcript and its context are dropped together.')" @click="clearContext">{{ t('Clear context') }}</button></template></nav></div></Teleport>
     <Teleport v-if="!isPreview" to="body" :disabled="!paneId"><details ref="sessionMenu" :style="tabMenuStyle" :class="['chat-menu','chat-floating-menu', { 'chat-tab-menu': !!paneId }]" @toggle="positionMenu" @keydown.esc.stop.prevent="closeSessionMenu(true)"><summary :aria-label="t('Session actions')" :title="t('Session actions')"><Icon name="more" :size="17" /></summary><nav :style="tabMenuPanelStyle"><div class="chat-menu-status"><span class="chat-status-dot" :class="{working:turnBusy}" />{{ t(statusLabel) }}</div><button @click="closeSessionMenu(); load()"><Icon name="refresh" :size="14" />{{ t('Refresh conversation') }}</button><button @click="closeSessionMenu(); emit('environment',session.id)"><Icon name="settings" :size="14" />{{ t('Session environment') }}</button><button @click="closeSessionMenu(); emit('profiles')"><Icon name="account" :size="14" />{{ t('Manage endpoint profiles') }}</button><button v-if="legacyAvailable" @click="closeSessionMenu(); emit('legacy')"><Icon name="terminal" :size="14" />{{ t('Open native client view') }}</button><slot name="session-actions" :close-menu="closeSessionMenu" /><button v-if="running" class="chat-end-button" :disabled="actionBusy" @click="requestEnd"><Icon name="stop" :size="14" />{{ t('End session…') }}</button></nav></details></Teleport>
     <div v-if="!supported" class="chat-notice">{{ t('Structured conversation requires an updated backend. Your native session is unchanged.') }}<button v-if="legacyAvailable" class="chat-link" @click="emit('legacy')">{{ t('Open native client view') }}</button></div>
     <div v-if="error" class="chat-alert" role="alert">{{ error }}<button @click="load()">{{ t('Refresh conversation') }}</button></div>
