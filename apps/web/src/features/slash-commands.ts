@@ -62,22 +62,19 @@ export function moveHighlight(index: number, count: number, delta: number): numb
 /**
  * Whether a message would be sent as a command the client cannot act on.
  *
- * A command the client never announced reaches the model as literal prose and
- * quietly does nothing the user intended — `/model` in a Codex session is the
- * case that kept coming up. Saying so is better than sending it.
+ * Codex's app-server protocol has no slash-command concept at all, so `/model`
+ * typed here would reach the model as literal prose and quietly do nothing the
+ * user intended. Saying so is better than sending it; the native terminal view
+ * still runs that client's own commands.
  *
- * `announced` is what separates "this client offers none" from "it has not told
- * us yet". A session that has never reached ready — a window created a moment
- * ago — has an empty list for the second reason, and refusing its `/model`
- * there would block a command the client does in fact run.
- *
- * Only a bare `/word` is judged. Once an argument follows, the text may be
- * addressed to the model, and a client that takes arguments for its own
- * commands is the one that has to parse them.
+ * `announced` is what separates "this client has none" from "it has not told us
+ * yet". A session that has never reached ready — a window created a moment ago —
+ * has an empty list for the second reason, and refusing its `/model` there would
+ * block a command the client does in fact run. Only a client that has announced
+ * its list and left it empty is known to have none.
  */
 export function unsupportedCommand(text: string, commands: string[], announced = true): string | undefined {
-  if (!announced) return undefined;
+  if (!announced || commands.length) return undefined;
   const match = /^\/([A-Za-z0-9][\w:-]{0,63})\s*$/.exec(text.trim());
-  if (!match || commands.includes(match[1])) return undefined;
-  return match[1];
+  return match?.[1];
 }

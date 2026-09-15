@@ -262,18 +262,12 @@ async function wake() {
 }
 async function send() {
   if (!canSend.value) return;
-  // A command this client never announced would reach the model as prose. Say
-  // so instead of sending something that cannot do what was asked. Codex
-  // announces only the few its protocol can carry out, so `/model` lands here —
-  // and the thing it names is a control beside this box, not a command.
+  // This client exposes no commands, so a bare slash command would reach the
+  // model as prose. Say so instead of sending something that cannot work.
   const unsupported = unsupportedCommand(draft.value.text, view.value.commands, view.value.commandsAnnounced);
-  if (unsupported) {
-    draft.value.notice = undefined;
-    error.value = view.value.commands.length
-      ? t('{command} is not one of this client’s commands. Type / to see them; model and thinking depth are the controls below.', { command: '/' + unsupported })
-      : t('{command} is not a command this client accepts. Model and thinking depth are the controls below; anything else belongs in the native terminal view.', { command: '/' + unsupported });
-    return;
-  }
+  // Codex has no slash commands in its protocol at all; what its terminal
+  // offers as /model and /approvals are the controls beside this box here.
+  if (unsupported) { draft.value.notice = undefined; error.value = t('{command} is not a command this client accepts. Model and thinking depth are the controls below; anything else belongs in the native terminal view.', { command: '/' + unsupported }); return; }
   const id = props.session.id, target = draft.value, messageId = crypto.randomUUID();
   // Attachment paths travel with the text, so an accepted receipt covers both.
   const typed = target.text;

@@ -109,7 +109,6 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Native client commands": "原生客户端命令",
   "From this client · Enter or Tab to complete": "来自该客户端 · Enter 或 Tab 补全",
   "{command} is not a command this client accepts. Model and thinking depth are the controls below; anything else belongs in the native terminal view.": "{command} 不是该客户端支持的命令。模型和思考深度请用下方的控件；其他操作请在原生终端视图中执行。",
-  "{command} is not one of this client’s commands. Type / to see them; model and thinking depth are the controls below.": "{command} 不在该客户端提供的命令里。输入 / 查看全部；模型和思考深度请用下方的控件。",
   "Official accounts": "官方账号",
   "Official account": "官方账号",
   "Imported native config": "已引入原生配置",
