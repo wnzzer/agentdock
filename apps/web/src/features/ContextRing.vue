@@ -32,12 +32,16 @@ const label = computed(() => meter.value
       />
     </svg>
     <span class="context-ring-text">{{ meter.percent }}%</span>
+    <!-- The share alone reads as arbitrary when the window is unusual: 143k of a
+         1M model is 14%, which looks wrong until the denominator is visible. -->
+    <span class="context-ring-scale">{{ compactTokens(meter.used) }}/{{ compactTokens(meter.window) }}</span>
   </span>
 </template>
 
 <style scoped>
 .context-ring{display:inline-flex;align-items:center;gap:5px;color:#647681;font-size:10px;line-height:1;white-space:nowrap}
 .context-ring svg{display:block;flex-shrink:0}
+.context-ring-scale{opacity:.72;font-variant-numeric:tabular-nums}
 .context-ring-track{stroke:#e3eaec}
 .context-ring-value{stroke:var(--teal);transition:stroke-dashoffset .3s ease}
 .context-ring.high .context-ring-value{stroke:#C77916}

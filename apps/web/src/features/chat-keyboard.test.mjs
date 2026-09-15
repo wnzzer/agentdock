@@ -60,3 +60,15 @@ test('the composer uses compact desktop controls and restores touch targets on m
   const width = /@container\(max-width:480px\)\{\n(?:.*\n)*?\}/.exec(source)[0];
   assert.equal(/min-height:44px|width:44px/.test(width), false, width);
 });
+
+test('the working indicator actually animates rather than showing three still dots', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('./ChatSessionPane.vue', import.meta.url), 'utf8');
+  // "Agent is working" was a static row for long enough to look frozen.
+  assert.match(source, /\.chat-working>span\{[^}]*animation:chat-wave/);
+  assert.match(source, /@keyframes chat-wave\{/);
+  assert.match(source, /\.chat-working-label\{animation:chat-breathe/);
+  // Motion is opt-out, like every other animation in this pane.
+  const reduced = /@media\(prefers-reduced-motion:reduce\)\{[^}]*\}[^@]*/.exec(source)[0];
+  assert.match(reduced, /\.chat-working>span,\.chat-working-label\{animation:none\}/);
+});

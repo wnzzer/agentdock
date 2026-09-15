@@ -47,3 +47,14 @@ test('a nearly full context is visually distinct and localized', async () => {
   assert.match(chinese, /上下文已用 25%/);
   i18n.useI18n().setLocale('en');
 });
+
+test('the share is shown with the window it is a share of', async () => {
+  // 143k of a 1M model really is 14%. Without the denominator that reads as a
+  // bug, because the same count against 200k would be 71%.
+  const wide = await render({ usage: { context_tokens: 142827, context_window: 1000000 } });
+  assert.match(wide, /14%/);
+  assert.match(wide, /143k\/1M/);
+  const narrow = await render({ usage: { context_tokens: 142827, context_window: 200000 } });
+  assert.match(narrow, /71%/);
+  assert.match(narrow, /143k\/200k/);
+});
