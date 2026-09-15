@@ -208,7 +208,9 @@ function attach(id: string, own: number) {
       if (message.type === 'exit') { running.value = false; emit('changed'); }
       if (message.type === 'approval_resolved') clearAnswers(message.id);
       if (message.type === 'configuration' || message.type === 'exit') clearAnswers();
-      if (message.type === 'turn' && message.status !== 'running') emit('changed');
+      // A turn starting is also worth reporting: the session takes its name from
+      // the message that opened it, and the sidebar is where that name is read.
+      if (message.type === 'turn') emit('changed');
       void scrollToLatest();
     },
   });

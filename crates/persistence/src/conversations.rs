@@ -7,6 +7,31 @@ fn content_hash(content: &str) -> String {
     format!("{:x}", Sha256::digest(content.as_bytes()))
 }
 
+/// A session name taken from the message that opened it.
+///
+/// Both clients used to leave a summary in their transcripts and no longer do —
+/// there is not one `"type":"summary"` line left across the local Claude
+/// history — so the first thing the user asked for is the only description of a
+/// session that exists anywhere. It is what `claude --resume` falls back to for
+/// the same reason.
+///
+/// Attachment paths and a slash command are stripped: a session called
+/// `/model` describes every session. Returns `None` when nothing legible is
+/// left, which keeps the created-at name rather than inventing one.
+fn derived_title(text: &str) -> Option<String> {
+    let body = text
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with("@") && !line.starts_with('/'))?;
+    // Count characters, not bytes: the limit is about how wide the sidebar row
+    // reads, and CJK is where a byte limit would cut a name to a third.
+    let mut title: String = body.chars().take(60).collect();
+    if body.chars().count() > 60 {
+        title.push('…');
+    }
+    Some(title).filter(|value| !value.is_empty())
+}
+
 pub struct StoredConversation {
     pub events: Vec<Value>,
     pub truncated: bool,
@@ -234,6 +259,17 @@ pub(super) fn append(
     // The display window may rotate while a tool waits for input. Keep a
     // separate bounded set of exact native approval cards and current controls.
     let kind = event["type"].as_str().unwrap_or("");
+    // The first thing asked names the session. Only a title this code wrote
+    // itself is replaced, so a rename stays put, and only the first message
+    // counts, so the name does not follow the conversation around.
+    if kind == "message" && event["role"].as_str() == Some("user") {
+        if let Some(title) = event["text"].as_str().and_then(derived_title) {
+            tx.execute(
+                "UPDATE sessions SET title=?1,title_source='derived' WHERE id=?2 AND title_source='auto'",
+                params![title, id.to_string()],
+            )?;
+        }
+    }
     if matches!(
         kind,
         "ready" | "turn" | "exit" | "configuration" | "usage" | "approval" | "approval_resolved"
@@ -453,5 +489,60 @@ mod tests {
             store.chat_submission(id, "receipt", prompt).unwrap(),
             Some(true)
         );
+    }
+
+    #[test]
+    fn the_first_message_names_the_session_and_a_rename_is_never_overwritten() {
+        let path = std::env::temp_dir().join(format!("agentdock-title-{}.db", Uuid::new_v4()));
+        let store = Store::open(&path).unwrap();
+        let workspace = store.create_workspace("Fixture", "/fixture").unwrap();
+        let user = |text: &str| json!({"type":"message","role":"user","text":text});
+        let named = |store: &Store, id| store.get_session(id).unwrap().unwrap().title;
+
+        let first = store
+            .create_session(workspace.id, ProviderKind::Codex, "Codex session")
+            .unwrap()
+            .id;
+        // A leading slash command or file mention describes no session, so the
+        // first legible line is what names it.
+        store.append_conversation_event(first, user("/model")).unwrap();
+        assert_eq!(named(&store, first), "Codex session");
+        store
+            .append_conversation_event(first, user("@notes.md\nfix the retry backoff"))
+            .unwrap();
+        assert_eq!(named(&store, first), "fix the retry backoff");
+        // Later messages are the conversation moving on, not a new name.
+        store.append_conversation_event(first, user("and add a test")).unwrap();
+        assert_eq!(named(&store, first), "fix the retry backoff");
+
+        // A name typed by hand outranks anything derived, before or after.
+        let second = store
+            .create_session(workspace.id, ProviderKind::ClaudeCode, "Claude session")
+            .unwrap()
+            .id;
+        store.update_session_title(second, "Release checklist").unwrap();
+        store.append_conversation_event(second, user("look at the logs")).unwrap();
+        assert_eq!(named(&store, second), "Release checklist");
+
+        // Long titles are cut by characters; a byte limit would cut CJK to a third.
+        let third = store
+            .create_session(workspace.id, ProviderKind::Codex, "Codex session")
+            .unwrap()
+            .id;
+        store
+            .append_conversation_event(third, user(&"\u{6d4b}".repeat(80)))
+            .unwrap();
+        let title = named(&store, third);
+        assert_eq!(title.chars().count(), 61);
+        assert!(title.ends_with('\u{2026}'));
+
+        // Whitespace alone leaves the created-at name rather than a blank row.
+        let fourth = store
+            .create_session(workspace.id, ProviderKind::Codex, "Codex session")
+            .unwrap()
+            .id;
+        store.append_conversation_event(fourth, user("   \n  ")).unwrap();
+        assert_eq!(named(&store, fourth), "Codex session");
+        let _ = std::fs::remove_file(&path);
     }
 }

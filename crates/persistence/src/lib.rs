@@ -31,7 +31,7 @@ impl Store {
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 10 {
+        if version > 11 {
             return Err(rusqlite::Error::InvalidQuery);
         }
         let tx = connection.transaction()?;
@@ -93,6 +93,11 @@ impl Store {
                 "../../../migrations/0010_ephemeral_sessions.sql"
             ))?;
         }
+        if version < 11 {
+            tx.execute_batch(include_str!(
+                "../../../migrations/0011_session_title_source.sql"
+            ))?;
+        }
         // Capture the endpoint settings for legacy M0 sessions once, before templates change.
         let legacy = {
             let mut stmt = tx.prepare("SELECT s.id,p.id FROM sessions s JOIN endpoint_profiles p ON p.id=s.endpoint_profile_id WHERE s.endpoint_snapshot IS NULL")?;
@@ -111,7 +116,7 @@ impl Store {
                 params![snapshot, id],
             )?;
         }
-        tx.pragma_update(None, "user_version", 10)?;
+        tx.pragma_update(None, "user_version", 11)?;
         tx.commit()?;
         Ok(Self {
             connection: Mutex::new(connection),
@@ -367,7 +372,10 @@ impl Store {
             .map(serde_json::to_string)
             .transpose()
             .map_err(conversion_error)?;
-        tx.execute("INSERT INTO sessions (id,workspace_id,provider,title,status,created_at,updated_at,endpoint_profile_id,endpoint_snapshot,environment,ephemeral) VALUES (?1,?2,?3,?4,?5,?6,?6,?7,?8,?9,?10)",
+        // A created session starts with a placeholder name, so the first message
+        // may replace it. An imported native session keeps the default 'manual':
+        // its name came from the client's own history, not from this column.
+        tx.execute("INSERT INTO sessions (id,workspace_id,provider,title,status,created_at,updated_at,endpoint_profile_id,endpoint_snapshot,environment,ephemeral,title_source) VALUES (?1,?2,?3,?4,?5,?6,?6,?7,?8,?9,?10,'auto')",
             params![session.id.to_string(),workspace_id.to_string(),provider_name(&session.provider),session.title,"stopped",now.to_rfc3339(),endpoint_profile_id.map(|v|v.to_string()),snapshot_json,environment_json,ephemeral])?;
         tx.commit()?;
         Ok(session)
@@ -396,7 +404,8 @@ impl Store {
         let mut connection = self.connection.lock().expect("sqlite lock");
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute(
-            "UPDATE sessions SET title=?1,updated_at=?2 WHERE id=?3",
+            // A name typed by hand is never replaced by a derived one afterwards.
+            "UPDATE sessions SET title=?1,title_source='manual',updated_at=?2 WHERE id=?3",
             params![title, Utc::now().to_rfc3339(), id.to_string()],
         )?;
         let session = tx
@@ -1690,7 +1699,7 @@ mod tests {
                     .unwrap()
                     .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                     .unwrap(),
-                10
+                11
             );
             let current = store.get_endpoint_profile(profile.id).unwrap().unwrap();
             assert!(current.native_config.is_none());
@@ -2080,7 +2089,7 @@ mod tests {
                     .unwrap()
                     .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                     .unwrap(),
-                10
+                11
             );
             assert!(matches!(
                 store.get_session(session_id).unwrap().unwrap().status,
