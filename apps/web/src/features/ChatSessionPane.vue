@@ -104,8 +104,29 @@ async function pickModel(id: string) {
     // Only send a depth when one was actually chosen; otherwise the client
     // keeps whatever it is already using.
     await request('/sessions/' + encodeURIComponent(session) + '/conversation/model', json('POST', selectedEffort.value ? { model: id, effort: selectedEffort.value } : { model: id }));
+    // The client answers on the event stream, not in this response: a refusal
+    // arrives moments later as an error. Some endpoints reject the availability
+    // probe a live switch makes, and for those the only way onto that model is
+    // to start with it — which is offered rather than done silently, because it
+    // begins a new context.
+    await new Promise(resolve => setTimeout(resolve, 2500));
+    if (props.session.id === session && mounted.value && view.value.model !== id) launchFallback.value = id;
   } catch (cause) { if (props.session.id === session && mounted.value) error.value = errorMessage(cause); }
   finally { if (props.session.id === session) actionBusy.value = false; }
+}
+/** A model the live switch could not reach, offered as a launch choice. */
+const launchFallback = ref('');
+const launchFallbackName = computed(() => models.value.find(entry => entry.id === launchFallback.value)?.name ?? launchFallback.value);
+async function applyModelAtLaunch() {
+  const id = props.session.id, model = launchFallback.value;
+  if (!model || !canConfigure.value) return;
+  actionBusy.value = true; error.value = '';
+  try {
+    const payload = sessionConfigurationPayload(props.session, props.profiles, selectedProfile.value || null, true, { mode: mode.value, ready: view.value.ready, busy: view.value.turn === 'running', awaitingApproval: view.value.awaitingApproval }, { model, effort: selectedEffort.value });
+    await request<Session>('/sessions/' + encodeURIComponent(id) + '/configuration', json('PATCH', payload));
+    if (props.session.id === id && mounted.value) { launchFallback.value = ''; notice.value = 'Endpoint changed. The next message starts a fresh native context; earlier messages stay visible here only.'; emit('changed'); await load(); }
+  } catch (cause) { if (props.session.id === id && mounted.value) error.value = errorMessage(cause); }
+  finally { if (props.session.id === id) actionBusy.value = false; }
 }
 function pickEndpoint(id: string) {
   if (!canConfigure.value) return;
@@ -182,7 +203,7 @@ async function load(consumeOpenIntent = false) {
 }
 watch([() => props.session.id, () => props.session.interaction_mode, () => props.session.configuration_revision, () => entry.value.epoch, () => props.previewSnapshot, mounted, supported], () => {
   clearAnswers();
-  wakeAttempted = '';
+  wakeAttempted = ''; launchFallback.value = '';
   mode.value = undefined; events.value = []; endpointConfirm.value = false; confirmEnd.value = false; approvalBusy.value = ''; actionBusy.value = false; notice.value = ''; selectedProfile.value = props.session.endpoint_profile_id ?? ''; followBottom.value = true;
   void load(props.consumeOpenIntent !== false && props.session.interaction_mode === 'structured');
 });
@@ -222,6 +243,34 @@ async function pickAttachments(event: Event) {
   const input = event.target as HTMLInputElement;
   const files = [...(input.files ?? [])];
   input.value = '';
+  await uploadFiles(files);
+}
+/**
+ * Files dropped on, or pasted into, the composer.
+ *
+ * A pasted screenshot arrives as a file with no name of its own, so one is
+ * built from its type rather than sending the browser's "image.png" for every
+ * paste and overwriting the last one.
+ */
+async function pasteFiles(event: ClipboardEvent) {
+  const files = [...(event.clipboardData?.files ?? [])];
+  if (isPreview.value || !files.length) return;
+  // Text on the clipboard still pastes normally; only files are intercepted.
+  event.preventDefault();
+  await uploadFiles(files.map(file => {
+    if (file.name && file.name !== 'image.png') return file;
+    const extension = file.type.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'bin';
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    return new File([file], `pasted-${stamp}.${extension}`, { type: file.type });
+  }));
+}
+async function dropFiles(event: DragEvent) {
+  const files = [...(event.dataTransfer?.files ?? [])];
+  if (isPreview.value || !files.length) return;
+  event.preventDefault();
+  await uploadFiles(files);
+}
+async function uploadFiles(files: File[]) {
   if (isPreview.value || !files.length) return;
   uploading.value = true; error.value = '';
   try {
@@ -416,9 +465,9 @@ function keydown(event: KeyboardEvent) {
     </div>
     <button v-if="!followBottom" class="chat-latest" @click="scrollToLatest(true)">↓ {{ t('Latest message') }}</button>
     <form class="chat-composer" @submit.prevent="send">
-      <div v-if="endpointConfirm" class="chat-endpoint-confirm"><strong>{{ t('Apply this configuration change?') }}</strong><p>{{ t('Only an idle session can switch. Its current bridge will close; the next message starts a new native context. Old messages stay visible but are never sent to the new endpoint.') }}</p><div><button type="button" :disabled="!canConfigure" @click="configure">{{ t('Confirm endpoint change') }}</button><button type="button" @click="endpointConfirm=false;selectedProfile=session.endpoint_profile_id??'';selectedEffort=''">{{ t('Cancel') }}</button></div></div>
+      <div v-if="launchFallback" class="chat-endpoint-confirm"><strong>{{ t('{model} could not be switched to mid-conversation', { model: launchFallbackName }) }}</strong><p>{{ t('This endpoint refuses the availability check the client makes when switching models live. Starting the session on this model works instead, but begins a new native context: earlier messages stay visible here and are not sent to it.') }}</p><div><button type="button" :disabled="!canConfigure" @click="applyModelAtLaunch">{{ t('Start a new context on this model') }}</button><button type="button" @click="launchFallback=''">{{ t('Cancel') }}</button></div></div><div v-if="endpointConfirm" class="chat-endpoint-confirm"><strong>{{ t('Apply this configuration change?') }}</strong><p>{{ t('Only an idle session can switch. Its current bridge will close; the next message starts a new native context. Old messages stay visible but are never sent to the new endpoint.') }}</p><div><button type="button" :disabled="!canConfigure" @click="configure">{{ t('Confirm endpoint change') }}</button><button type="button" @click="endpointConfirm=false;selectedProfile=session.endpoint_profile_id??'';selectedEffort=''">{{ t('Cancel') }}</button></div></div>
       <div v-if="commandsOpen" class="chat-commands" role="listbox" :aria-label="t('Native client commands')"><button v-for="(command,index) in commandMatches" :key="command" type="button" role="option" :aria-selected="index===commandIndex" :class="{highlighted:index===commandIndex}" @mousedown.prevent="chooseCommand(command)" @mouseenter="commandIndex=index">/{{ command }}</button><small>{{ t('From this client · Enter or Tab to complete') }}</small></div>
-      <textarea ref="composerInput" v-model="draft.text" :aria-label="t('Message your agent')" :placeholder="t('Ask your agent to build, explore, or fix something…')" rows="2" :disabled="!supported||mode!=='structured'||!!draft.pending" @focus="wake" @compositionstart="composing=true" @compositionend="composing=false" @keydown="keydown" @keyup="syncCaret" @click="syncCaret" @input="syncCaret" />
+      <textarea ref="composerInput" v-model="draft.text" :aria-label="t('Message your agent')" :placeholder="t('Ask your agent to build, explore, or fix something…')" rows="2" :disabled="!supported||mode!=='structured'||!!draft.pending" @focus="wake" @paste="pasteFiles" @dragover.prevent @drop="dropFiles" @compositionstart="composing=true" @compositionend="composing=false" @keydown="keydown" @keyup="syncCaret" @click="syncCaret" @input="syncCaret" />
       <ul v-if="attachments.length" class="chat-attachments" :aria-label="t('Attached files')"><li v-for="file in attachments" :key="file.path"><Icon name="file" :size="13"/><span class="chat-attachment-name" :title="file.path">{{ file.name }}</span><small>{{ formatBytes(file.bytes) }}</small><button type="button" :aria-label="t('Remove {name}',{name:file.name})" @click="removeAttachment(file.path)"><Icon name="close" :size="12"/></button></li></ul>
       <div class="chat-composer-controls"><input ref="fileInput" class="sr-only" type="file" multiple :disabled="isPreview||uploading" @change="pickAttachments"/><button type="button" class="chat-attach" :aria-label="t(uploading?'Uploading…':'Attach files')" :title="t('Attach files to this workspace')" :disabled="isPreview||uploading||!supported" @click="fileInput?.click()"><Icon name="plus" :size="18"/></button><ChipMenu ref="endpointMenu" class="chat-endpoint" :label="endpointName" :disabled="!canConfigure" :title="canConfigure?t('Endpoint profile'):t('Wait for the current turn and approvals before changing endpoints.')"><template #mark><ProviderIcon :provider="session.provider" :size="14"/></template><nav :aria-label="t('Endpoint profile')"><button type="button" :class="{selected:selectedProfile===''}" @click="pickEndpoint('')">{{ t('Native · isolated configuration') }}</button><button v-for="profile in matchingProfiles" :key="profile.id" type="button" :class="{selected:selectedProfile===profile.id}" @click="pickEndpoint(profile.id)">{{ profile.name }}</button><button v-if="session.endpoint_profile_id&&!matchingProfiles.some(p=>p.id===session.endpoint_profile_id)" type="button" class="selected" disabled>{{ endpointName }}</button></nav></ChipMenu><ChipMenu v-if="canPickModel" ref="modelMenu" class="chat-model" :label="modelName" :title="t('Model')"><nav :aria-label="t('Model')"><button v-for="entry in models" :key="entry.id" type="button" :class="{selected:entry.id===currentModel}" @click="pickModel(entry.id)"><strong>{{ entry.name }}</strong><small v-if="entry.description">{{ entry.description }}</small></button></nav></ChipMenu><ChipMenu v-if="effortChoices.length" class="chat-effort" :class="{vivid:effortVivid}" :label="effortName" :active="!!liveEffort" :disabled="!canConfigure" :title="canConfigure?t('Thinking depth'):t('Wait for the current turn and approvals before changing endpoints.')"><template #mark><Icon v-if="effortVivid" name="spark" :size="12"/></template><div class="chat-effort-body"><header><strong>{{ t('Thinking depth') }}</strong><em>{{ effortName }}</em></header><div class="chat-effort-slider" :style="{'--effort-fill':effortFill}"><span class="chat-effort-track"><i v-for="(stop,index) in effortStops" :key="stop||'default'" :style="{left:effortStops.length<2?'50%':index/(effortStops.length-1)*100+'%'}"/></span><span class="chat-effort-fill"/><span class="chat-effort-thumb"/><input type="range" min="0" :max="effortStops.length-1" step="1" :value="effortIndex" :disabled="!canPickModel" :aria-label="t('Thinking depth')" :aria-valuetext="effortName" @input="dragEffort"/></div><footer><span>{{ t('Faster') }}</span><span>{{ t('Smarter') }}</span></footer></div></ChipMenu><button v-if="view.turn==='running'" type="button" class="chat-send chat-stop" :aria-label="t('Cancel turn')" :disabled="isPreview||actionBusy" @click="interrupt">■</button><button v-else class="chat-send" type="submit" :aria-label="t('Send message')" :disabled="!canSend">↑</button></div>
       <footer><span :title="t('Ctrl / ⌘ Enter also sends. Esc closes menus first; in the message box it cancels the active reply, not the session.')">{{ t('Enter to send · Shift+Enter for a new line · Esc to dismiss or cancel') }}</span><span class="chat-usage"><ContextRing :usage="view.usage"/><span v-if="view.usage.context_window===undefined&&view.usage.context_tokens!==undefined">{{ t('{count} context tokens',{count:view.usage.context_tokens}) }}</span><span v-else-if="view.usage.context_window===undefined&&view.usage.input_tokens!==undefined">{{ t('{count} input tokens',{count:view.usage.input_tokens}) }}</span></span></footer>

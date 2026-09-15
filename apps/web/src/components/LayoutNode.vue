@@ -26,6 +26,34 @@ const splitElement = ref<HTMLElement | null>(null);
 const paneElement = ref<HTMLElement | null>(null);
 const dropPosition = ref<DockPosition | null>(null);
 const addMenu = ref<HTMLDetailsElement | null>(null);
+/**
+ * Tab context menu.
+ *
+ * Closing tabs one cross at a time is the tedious part of a busy layout, so
+ * the bulk actions live here. Each one resolves to a list of panes first and
+ * then closes them, because the tab list changes as they go.
+ */
+const tabMenu = ref<{ pane: PaneNode; x: number; y: number } | null>(null);
+function openTabMenu(event: MouseEvent, pane: PaneNode) {
+  event.preventDefault();
+  tabMenu.value = { pane, x: event.clientX, y: event.clientY };
+}
+function closeTabMenu() { tabMenu.value = null; }
+const tabMenuStyle = computed(() => tabMenu.value
+  // Kept inside the viewport: a tab near the right or bottom edge would
+  // otherwise open a menu that runs off the screen.
+  ? { left: Math.min(tabMenu.value.x, window.innerWidth - 190) + 'px', top: Math.min(tabMenu.value.y, window.innerHeight - 180) + 'px' }
+  : {});
+const menuOthers = computed(() => tabMenu.value ? tabs.value.filter(pane => pane.id !== tabMenu.value!.pane.id) : []);
+const menuRight = computed(() => {
+  const current = tabMenu.value; if (!current) return [];
+  const index = tabs.value.findIndex(pane => pane.id === current.pane.id);
+  return index < 0 ? [] : tabs.value.slice(index + 1);
+});
+function closePanes(panes: PaneNode[]) {
+  closeTabMenu();
+  for (const pane of [...panes]) emit("close", pane.id);
+}
 const activePane = computed(() => {
   const node = props.node;
   return node.type === "pane" ? node : node.type === "stack" ? node.panes.find((pane) => pane.id === node.activePaneId) ?? node.panes[0] : undefined;
@@ -199,7 +227,7 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
   <section v-else ref="paneElement" class="dock-pane" :class="{ 'is-selected': activePane?.id === selected, 'is-collapsed': node.type === 'stack' && node.collapsedFrom, 'is-located': !!locatedPaneId && activePane?.id === locatedPaneId }" :data-pane-id="activePane?.id" :data-node-id="targetId" @pointerdown="activePane && select(activePane)" @dragover="dragOver" @dragleave="dragLeave" @drop="drop">
     <header class="dock-header">
       <div class="dock-tabs" role="tablist" :aria-label="t('Pane tabs')">
-        <div v-for="pane in tabs" :key="pane.id" :id="`dock-tab-${pane.id}`" :data-pane-tab-id="pane.id" role="tab" class="dock-tab" :class="{ 'is-active': pane.id === activePane?.id, 'is-ephemeral': isEphemeral(pane) }" :aria-selected="pane.id === activePane?.id" :aria-controls="`dock-panel-${pane.id}`" :aria-label="tabLabel(pane)" :tabindex="pane.id === activePane?.id ? 0 : -1" :title="t(isEphemeral(pane) ? '{title} · temporary window · discarded when closed' : '{title} · drag to arrange', { title: qualifiedTitle(pane) })" draggable="true" @dragstart="dragStart($event, pane)" @click.stop="select(pane)" @keydown="tabKey($event, pane)" @keydown.enter.prevent="select(pane)" @keydown.space.prevent="select(pane)">
+        <div v-for="pane in tabs" :key="pane.id" :id="`dock-tab-${pane.id}`" :data-pane-tab-id="pane.id" role="tab" class="dock-tab" :class="{ 'is-active': pane.id === activePane?.id, 'is-ephemeral': isEphemeral(pane) }" :aria-selected="pane.id === activePane?.id" :aria-controls="`dock-panel-${pane.id}`" :aria-label="tabLabel(pane)" :tabindex="pane.id === activePane?.id ? 0 : -1" :title="t(isEphemeral(pane) ? '{title} · temporary window · discarded when closed' : '{title} · drag to arrange', { title: qualifiedTitle(pane) })" draggable="true" @contextmenu="openTabMenu($event, pane)" @dragstart="dragStart($event, pane)" @click.stop="select(pane)" @keydown="tabKey($event, pane)" @keydown.enter.prevent="select(pane)" @keydown.space.prevent="select(pane)">
           <TabIcon :kind="pane.kind" :metadata="pane.metadata" :session-providers="sessionProviders" />
           <span v-if="isEphemeral(pane)" class="dock-tab-ephemeral" role="img" :aria-label="t('Temporary window')" :title="t('Temporary window')" />
           <span class="dock-tab-title">{{ titleFor(pane) }}</span>
@@ -213,6 +241,7 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
           <button class="dock-tab-close" type="button" :aria-label="t('Close {title} pane', { title: tabLabel(pane) })" :title="t(isEphemeral(pane) ? 'Close and discard this temporary session' : 'Close pane (session keeps running)')" @pointerdown.stop @click.stop="emit('close', pane.id)"><Icon name="close" :size="12" /></button>
         </div>
         <span v-if="!tabs.length" class="dock-empty-label">{{ t('Empty pane') }}</span>
+        <Teleport to="body"><div v-if="tabMenu" class="dock-tab-menu-backdrop" @pointerdown="closeTabMenu" @contextmenu.prevent="closeTabMenu"><nav class="dock-tab-menu" :style="tabMenuStyle" role="menu" :aria-label="t('Tab actions')" @pointerdown.stop @keydown.esc.stop.prevent="closeTabMenu"><button type="button" role="menuitem" @click="closePanes([tabMenu.pane])">{{ t('Close tab') }}</button><button type="button" role="menuitem" :disabled="!menuOthers.length" @click="closePanes(menuOthers)">{{ t('Close other tabs') }}</button><button type="button" role="menuitem" :disabled="!menuRight.length" @click="closePanes(menuRight)">{{ t('Close tabs to the right') }}</button><button type="button" role="menuitem" @click="closePanes(tabs)">{{ t('Close all tabs') }}</button><hr/><button type="button" role="menuitem" @click="closeTabMenu(); emit('maximize', tabMenu!.pane.id)">{{ t(maximized === tabMenu.pane.id ? 'Restore layout' : 'Maximize pane') }}</button><button type="button" role="menuitem" @click="closeTabMenu(); emit('split', tabMenu!.pane.id, 'horizontal')">{{ t('Split side by side') }}</button><button type="button" role="menuitem" @click="closeTabMenu(); emit('split', tabMenu!.pane.id, 'vertical')">{{ t('Split top and bottom') }}</button></nav></div></Teleport>
       </div>
       <div class="dock-actions" @pointerdown.stop>
         <button v-if="node.type === 'stack' && node.collapsedFrom" type="button" class="dock-action dock-adaptive" :title="t('Reset folded split to 1:1; expands when space allows')" :aria-label="t('Restore folded split ratio')" @click="emit('resize', targetId, 0.5, true)"><Icon name="restore" :size="13" /></button>
@@ -241,6 +270,15 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
 </template>
 
 <style scoped>
+/* The menu is teleported to the body so a tab strip with overflow clipping
+   cannot cut it off, and the backdrop makes any click elsewhere dismiss it. */
+.dock-tab-menu-backdrop{position:fixed;inset:0;z-index:60}
+.dock-tab-menu{position:fixed;min-width:180px;padding:5px;background:var(--surface);border:1px solid var(--border);border-radius:11px;box-shadow:0 14px 38px #243b4c2b}
+.dock-tab-menu button{display:block;width:100%;min-height:32px;padding:7px 10px;border:0;border-radius:7px;background:none;text-align:left;font-size:12px;color:var(--ink-soft);white-space:nowrap;cursor:pointer}
+.dock-tab-menu button:hover:not(:disabled){background:var(--teal-soft);color:var(--teal)}
+.dock-tab-menu button:disabled{opacity:.4;cursor:not-allowed}
+.dock-tab-menu hr{border:0;border-top:1px solid var(--border);margin:4px 6px}
+@media(pointer:coarse){.dock-tab-menu button{min-height:44px}}
 .dock-split,.dock-child { width:100%;height:100%;min-width:0;min-height:0; }
 .dock-split { display:grid; }
 .dock-child { overflow:hidden; }
