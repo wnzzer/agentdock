@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
 import type { AgentProviderKind, EndpointProfile, ModelCatalog, NativeHistorySource } from "@agentdock/protocol";
 import { errorMessage, json, providerLabel, request } from "./api";
 import { parseModelAliases, formatModelAliases } from "./endpoint-models";
-import { isSameNativeSource, nativeProfileImportPayload, nativeProfileRenamePayload, nativeProfileUpdatePayload, profileEnvironmentPayload, profileEnvironmentDraftChanged } from "./native-profiles";
+import { isSameNativeSource, nativeProfileImportPayload, sharesHostConfig, nativeProfileRenamePayload, nativeProfileUpdatePayload, profileEnvironmentPayload, profileEnvironmentDraftChanged } from "./native-profiles";
 import { environmentRows, type EnvironmentRow } from "./environment-model";
 import EnvironmentEditor from "./EnvironmentEditor.vue";
 import { rememberProfileSelection } from "./profile-preferences";
@@ -86,7 +86,7 @@ async function save() {
   busy.value=true;error.value="";notice.value="";
   try{
     const saved=await request<EndpointProfile>("/endpoint-profiles"+(editing.value?"/"+encodeURIComponent(editing.value):""),json(editing.value?"PATCH":"POST",payload()));
-    notice.value=editingNative.value?(backendCapabilities.environment?"Profile updated. Process environment overrides were saved without changing the shared native configuration.":"Profile name updated. The shared native configuration was not changed."):editing.value?"Profile updated. Existing session snapshots are unchanged.":"Profile created. Select it when creating a session.";
+    notice.value=editingNative.value?(backendCapabilities.environment?"Profile updated. Process environment overrides were saved without changing the native configuration.":"Profile name updated. The native configuration was not changed."):editing.value?"Profile updated. Existing session snapshots are unchanged.":"Profile created. Select it when creating a session.";
     pendingNavigation.value=undefined;formVisible.value=false;emit("changed",saved);
   }catch(cause){error.value=errorMessage(cause);}finally{busy.value=false;}
 }
@@ -134,7 +134,7 @@ onBeforeUnmount(()=>{disposed=true;nativeRevision++;discoveryRevision++;});
         <button class="secondary-button" :disabled="busy" @click="requestLeave(() => edit())"><Icon name="plus" :size="14" />{{ t('New profile') }}</button>
         <button v-for="p in profiles" :key="p.id" :class="['profile-card',{selected:editing===p.id&&formVisible}]" :disabled="busy" @click="requestLeave(() => edit(p))">
           <span :class="['provider-mark',p.provider]"><ProviderIcon :provider="p.provider" /></span>
-          <span><strong>{{ p.name }}</strong><small>{{ providerLabel(p.provider) }} · {{ p.native_config ? t('Native settings') : p.model || t('Native client default') }}</small><small v-if="p.native_config" class="shared-profile-label">{{ t('Host configuration · shared sign-in') }}</small><small v-else>{{ t(p.permission_mode) }} · {{ p.proxy_url ? t('Proxy configured') : t('Host network') }}</small><small v-if="p.native_config" class="profile-path" :title="p.native_config.config_dir">{{ p.native_config.config_dir }}</small></span>
+          <span><strong>{{ p.name }}</strong><small>{{ providerLabel(p.provider) }} · {{ p.native_config ? t('Native settings') : p.model || t('Native client default') }}</small><small v-if="p.native_config" class="shared-profile-label">{{ sharesHostConfig(p.native_config) ? t('Host configuration · shared sign-in') : t('Isolated configuration · this account only') }}</small><small v-else>{{ t(p.permission_mode) }} · {{ p.proxy_url ? t('Proxy configured') : t('Host network') }}</small><small v-if="p.native_config" class="profile-path" :title="p.native_config.config_dir">{{ p.native_config.config_dir }}</small></span>
         </button>
         <p v-if="!profiles.length" class="small-empty">{{ t('No profiles yet. Native, isolated sessions also work without one.') }}</p>
       </section>
@@ -165,7 +165,7 @@ onBeforeUnmount(()=>{disposed=true;nativeRevision++;discoveryRevision++;});
             <label>{{ t('Provider') }}<select v-model="form.provider" :disabled="!!editing||busy"><option value="claude_code">Claude Code</option><option value="codex">Codex</option></select></label>
           </div>
           <template v-if="editingNative">
-            <div class="shared-config-panel"><strong><ProviderIcon :provider="editingProfile!.provider" :size="17" />{{ t('Host configuration · shared sign-in') }}</strong><code>{{ editingNative.config_dir }}</code><p>{{ t('Native account and directory settings remain managed by the client. Advanced environment overrides only affect new child processes.') }}</p><p>{{ t('Edit the profile name and process environment here. Native configuration files and account directories are not changed.') }}</p></div>
+            <div class="shared-config-panel"><strong><ProviderIcon :provider="editingProfile!.provider" :size="17" />{{ sharesHostConfig(editingNative) ? t('Host configuration · shared sign-in') : t('Isolated configuration · this account only') }}</strong><code>{{ editingNative.config_dir }}</code><p v-if="sharesHostConfig(editingNative)">{{ t('This directory belonged to the host already. Anything else that edits it — a profile switcher, a native re-login — changes this account too.') }}</p><p v-else>{{ t('AgentDock created this directory for this account, and nothing else signs in through it.') }}</p><p>{{ t('Native account and directory settings remain managed by the client. Advanced environment overrides only affect new child processes.') }}</p><p>{{ t('Edit the profile name and process environment here. Native configuration files and account directories are not changed.') }}</p></div>
             <p class="form-help">{{ t('Directory availability does not confirm sign-in. The native client may still ask you to log in.') }}</p>
             <p class="form-help">{{ t('AgentDock does not copy credentials or rewrite this configuration. The native client may update its own sign-in cache and history.') }}</p>
             <p class="form-help">{{ t('This is a live directory reference, not a snapshot of its contents. Changes to native settings affect subsequent starts.') }}</p>

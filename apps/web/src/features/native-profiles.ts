@@ -22,6 +22,26 @@ export function nativeProfileUpdatePayload(name: string, rows: EnvironmentRow[],
   return { ...nativeProfileRenamePayload(name), ...profileEnvironmentPayload(rows, supported, initial) };
 }
 
+/**
+ * Whether a native configuration directory is one AgentDock created and owns.
+ *
+ * A profile having a `native_config` only says it runs against a client's own
+ * configuration directory — not whose directory that is. An account created
+ * here gets its own under `.agentdock/accounts/<id>` and is the only thing
+ * signing in through it; an imported one points at a directory the host already
+ * had, where a profile switcher or a native re-login changes this account too.
+ *
+ * `source_id` separates them, by the same `account:` convention the server uses
+ * to refuse unlinking a managed profile. Reading `native_config` itself as
+ * "shared" is what labelled a hand-made account as a shared host sign-in.
+ */
+export function ownsNativeConfig(native?: { source_id: string } | null): boolean {
+  return !!native && native.source_id.startsWith("account:");
+}
+/** True only for a directory the host already had, which other tools also edit. */
+export function sharesHostConfig(native?: { source_id: string } | null): boolean {
+  return !!native && !ownsNativeConfig(native);
+}
 /** Native auth can distinguish unset directory env from an explicit value for the same directory. */
 export function isSameNativeSource(profile: EndpointProfile, source: NativeHistorySource | undefined): boolean {
   return !!source && profile.provider === source.provider && profile.native_config?.source_id === source.id && profile.native_config.config_dir === source.path && (profile.native_config.config_env ?? null) === (source.config_env ?? null);

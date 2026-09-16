@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isSameNativeSource, nativeProfileImportPayload, nativeProfileRenamePayload, nativeProfileUpdatePayload, profileEnvironmentPayload, profileEnvironmentDraftChanged, sessionEffortOverride, sessionModelOverride } from './native-profiles.ts';
+import { isSameNativeSource, nativeProfileImportPayload, ownsNativeConfig, sharesHostConfig, nativeProfileRenamePayload, nativeProfileUpdatePayload, profileEnvironmentPayload, profileEnvironmentDraftChanged, sessionEffortOverride, sessionModelOverride } from './native-profiles.ts';
 import { environmentRows } from './environment-model.ts';
 
 const source = { id: 'native-codex', provider: 'codex', label: 'Host Codex', path: '/host/native/config', available: true };
@@ -78,4 +78,27 @@ test('session effort overrides stay with the selected non-native client configur
   assert.deepEqual(sessionEffortOverride('codex', profile, 'high'), {});
   assert.deepEqual(sessionEffortOverride('terminal', undefined, 'high'), {});
   assert.deepEqual(sessionEffortOverride('codex', undefined, '  '), {});
+});
+
+test('a directory AgentDock made for one account is not a shared host sign-in', () => {
+  // The distinction the UI got wrong: having a native_config says the profile
+  // runs against a client's configuration directory, not whose directory it is.
+  const owned = { source_id: 'account:4b624e9e-e721-4207-be56-9a9b17c0663d', config_dir: '/state/.agentdock/accounts/4b624e9e' };
+  assert.equal(ownsNativeConfig(owned), true);
+  assert.equal(sharesHostConfig(owned), false);
+  // An imported one points at a directory the host already had, where a profile
+  // switcher or a native re-login changes this account too.
+  for (const source_id of ['claude-default', 'codex-default', 'claude-cc-switch']) {
+    assert.equal(sharesHostConfig({ source_id, config_dir: '/home/kl/.claude' }), true, source_id);
+    assert.equal(ownsNativeConfig({ source_id, config_dir: '/home/kl/.claude' }), false, source_id);
+  }
+  // A profile with no native configuration is neither; it has no directory to
+  // describe, so both answers stay false rather than defaulting to shared.
+  for (const empty of [undefined, null]) {
+    assert.equal(ownsNativeConfig(empty), false);
+    assert.equal(sharesHostConfig(empty), false);
+  }
+  // The prefix has to open the id: a directory merely named after the word is
+  // still the host's.
+  assert.equal(ownsNativeConfig({ source_id: 'host-account:1' }), false);
 });
