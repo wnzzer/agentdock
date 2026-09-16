@@ -17,6 +17,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Windows is absent on purpose: it fails on libc::SIGKILL, which that
+        # platform has no equivalent for, and nothing here — the PTY, the
+        # process groups, the client config paths — has ever been run there.
         include:
           - target: aarch64-apple-darwin
             os: macos-latest
@@ -28,8 +31,6 @@ jobs:
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
             zig: true
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -74,18 +75,10 @@ jobs:
           version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
           name="agentdock-${version}-${{ matrix.target }}"
           mkdir -p "dist/${name}"
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cp "target/${{ matrix.target }}/release/agentdock-server.exe" "dist/${name}/"
-          else
-            cp "target/${{ matrix.target }}/release/agentdock-server" "dist/${name}/"
-          fi
+          cp "target/${{ matrix.target }}/release/agentdock-server" "dist/${name}/"
           cp README.md "dist/${name}/"
           cd dist
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            7z a "${name}.zip" "${name}" >/dev/null
-          else
-            tar czf "${name}.tar.gz" "${name}"
-          fi
+          tar czf "${name}.tar.gz" "${name}"
           rm -rf "${name}"
           ls -la
 
