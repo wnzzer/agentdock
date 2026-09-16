@@ -19,8 +19,12 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The server embeds apps/web/dist, and rust-embed against a folder that
+      # does not exist compiles to a struct with no iter/get rather than to an
+      # error naming the folder. So the web build comes before anything cargo,
+      # and what the Rust tests link is the real bundle.
+      - run: pnpm build:web
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: pnpm test
-      - run: pnpm build:web

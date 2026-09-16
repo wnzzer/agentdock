@@ -262,13 +262,14 @@ pub(super) fn append(
     // The first thing asked names the session. Only a title this code wrote
     // itself is replaced, so a rename stays put, and only the first message
     // counts, so the name does not follow the conversation around.
-    if kind == "message" && event["role"].as_str() == Some("user") {
-        if let Some(title) = event["text"].as_str().and_then(derived_title) {
-            tx.execute(
-                "UPDATE sessions SET title=?1,title_source='derived' WHERE id=?2 AND title_source='auto'",
-                params![title, id.to_string()],
-            )?;
-        }
+    if kind == "message"
+        && event["role"].as_str() == Some("user")
+        && let Some(title) = event["text"].as_str().and_then(derived_title)
+    {
+        tx.execute(
+            "UPDATE sessions SET title=?1,title_source='derived' WHERE id=?2 AND title_source='auto'",
+            params![title, id.to_string()],
+        )?;
     }
     if matches!(
         kind,
@@ -505,14 +506,18 @@ mod tests {
             .id;
         // A leading slash command or file mention describes no session, so the
         // first legible line is what names it.
-        store.append_conversation_event(first, user("/model")).unwrap();
+        store
+            .append_conversation_event(first, user("/model"))
+            .unwrap();
         assert_eq!(named(&store, first), "Codex session");
         store
             .append_conversation_event(first, user("@notes.md\nfix the retry backoff"))
             .unwrap();
         assert_eq!(named(&store, first), "fix the retry backoff");
         // Later messages are the conversation moving on, not a new name.
-        store.append_conversation_event(first, user("and add a test")).unwrap();
+        store
+            .append_conversation_event(first, user("and add a test"))
+            .unwrap();
         assert_eq!(named(&store, first), "fix the retry backoff");
 
         // A name typed by hand outranks anything derived, before or after.
@@ -520,8 +525,12 @@ mod tests {
             .create_session(workspace.id, ProviderKind::ClaudeCode, "Claude session")
             .unwrap()
             .id;
-        store.update_session_title(second, "Release checklist").unwrap();
-        store.append_conversation_event(second, user("look at the logs")).unwrap();
+        store
+            .update_session_title(second, "Release checklist")
+            .unwrap();
+        store
+            .append_conversation_event(second, user("look at the logs"))
+            .unwrap();
         assert_eq!(named(&store, second), "Release checklist");
 
         // Long titles are cut by characters; a byte limit would cut CJK to a third.
@@ -541,7 +550,9 @@ mod tests {
             .create_session(workspace.id, ProviderKind::Codex, "Codex session")
             .unwrap()
             .id;
-        store.append_conversation_event(fourth, user("   \n  ")).unwrap();
+        store
+            .append_conversation_event(fourth, user("   \n  "))
+            .unwrap();
         assert_eq!(named(&store, fourth), "Codex session");
         let _ = std::fs::remove_file(&path);
     }

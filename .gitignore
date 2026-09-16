@@ -8,3 +8,11 @@ node_modules
 dist
 *.tsbuildinfo
 .DS_Store
+
+# The server embeds apps/web/dist. rust-embed against a folder that does not
+# exist compiles to a struct with no iter/get instead of an error naming it, so
+# the directory is kept even though its contents are built, and `cargo build`
+# works in a fresh clone that has not run the web build yet.
+!apps/web/dist/
+apps/web/dist/*
+!apps/web/dist/.gitkeep
