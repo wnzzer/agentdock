@@ -204,6 +204,22 @@ fn is_protected_path(relative: &Path) -> bool {
     })
 }
 
+/// What the tree calls an entry, from the metadata of the entry itself. A link
+/// is a link here rather than what it resolves to, which is what a rename acts
+/// on and what the tree already shows.
+fn entry_kind(metadata: &fs::Metadata) -> String {
+    if metadata.file_type().is_symlink() {
+        "symlink"
+    } else if metadata.is_dir() {
+        "directory"
+    } else if metadata.is_file() {
+        "file"
+    } else {
+        "other"
+    }
+    .into()
+}
+
 fn has_symlink_component(root: &Path, relative: &Path) -> Result<bool, IoError> {
     let mut current = root.to_path_buf();
     for component in relative.components() {
@@ -929,6 +945,130 @@ pub async fn write_attachment(
 /// the root itself is never removable, and a symlink is unlinked rather than
 /// followed — otherwise deleting a link inside the workspace would delete
 /// whatever it points at.
+/// Create an empty file the workspace does not have yet.
+///
+/// Writing would serve for a file that is new, but not for one that is not: an
+/// overwrite is what a blank new file looks like to `write_file`, and losing
+/// what was there is the one outcome this must never have. Refusing an existing
+/// name says so instead.
+///
+/// Missing parent directories are created, so naming `docs/notes.md` in a
+/// workspace without a `docs` makes both, the way typing the path suggests.
+pub async fn create_file(root: &Path, relative: &str) -> Result<FileEntry, IoError> {
+    let root = root.to_path_buf();
+    let relative = relative.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let canonical_root = fs::canonicalize(&root).map_err(IoError::from)?;
+        let rel = safe_relative(&relative)?;
+        if rel.as_os_str().is_empty() {
+            return Err(IoError::new(400, "file name is required"));
+        }
+        if is_protected_path(&rel) {
+            return Err(IoError::new(403, "this path is protected"));
+        }
+        if has_symlink_component(&canonical_root, &rel)? {
+            return Err(IoError::new(403, "symlink writes are not allowed"));
+        }
+        let target = canonical_root.join(&rel);
+        if fs::symlink_metadata(&target).is_ok() {
+            return Err(IoError::new(409, "something with this name already exists"));
+        }
+        let parent = target
+            .parent()
+            .ok_or_else(|| IoError::new(400, "invalid file path"))?;
+        fs::create_dir_all(parent).map_err(IoError::from)?;
+        // `create_new` is the check: between looking and creating, someone else
+        // may have made this name, and this is what refuses rather than truncates.
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&target)
+            .map_err(|error| match error.kind() {
+                io::ErrorKind::AlreadyExists => {
+                    IoError::new(409, "something with this name already exists")
+                }
+                _ => IoError::from(error),
+            })?;
+        Ok(FileEntry {
+            name: rel
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            path: rel.to_string_lossy().replace('\\', "/"),
+            kind: "file".into(),
+            size: 0,
+        })
+    })
+    .await
+    .map_err(|error| IoError::new(500, format!("file create task failed: {error}")))?
+}
+
+/// Give an existing file or directory another name, or another place in this
+/// workspace.
+///
+/// Both ends are checked the same way, because a rename is two paths and either
+/// one leaving the workspace, naming protected state, or passing through a link
+/// would be a way out of it. An occupied destination is refused rather than
+/// replaced: renaming onto a name is not a request to destroy what holds it.
+pub async fn rename_entry(root: &Path, from: &str, to: &str) -> Result<FileEntry, IoError> {
+    let root = root.to_path_buf();
+    let from = from.to_owned();
+    let to = to.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let canonical_root = fs::canonicalize(&root).map_err(IoError::from)?;
+        let source = safe_relative(&from)?;
+        let destination = safe_relative(&to)?;
+        if source.as_os_str().is_empty() || destination.as_os_str().is_empty() {
+            return Err(IoError::new(400, "both names are required"));
+        }
+        if is_protected_path(&source) || is_protected_path(&destination) {
+            return Err(IoError::new(403, "this path is protected"));
+        }
+        if source == destination {
+            return Err(IoError::new(400, "the name is unchanged"));
+        }
+        // The source's own final component may be a link -- renaming one is
+        // renaming the link, not what it points at -- but a link anywhere above
+        // either path would take the rename outside the workspace.
+        if has_symlink_component(&canonical_root, source.parent().unwrap_or(Path::new("")))?
+            || has_symlink_component(&canonical_root, &destination)?
+        {
+            return Err(IoError::new(403, "symlink writes are not allowed"));
+        }
+        let source_path = canonical_root.join(&source);
+        let destination_path = canonical_root.join(&destination);
+        let metadata = fs::symlink_metadata(&source_path).map_err(|error| match error.kind() {
+            io::ErrorKind::NotFound => IoError::new(404, "this file no longer exists"),
+            _ => IoError::from(error),
+        })?;
+        if fs::symlink_metadata(&destination_path).is_ok() {
+            return Err(IoError::new(409, "something with this name already exists"));
+        }
+        let parent = destination_path
+            .parent()
+            .ok_or_else(|| IoError::new(400, "invalid file path"))?;
+        if !parent.is_dir() {
+            return Err(IoError::new(404, "the destination folder does not exist"));
+        }
+        fs::rename(&source_path, &destination_path).map_err(IoError::from)?;
+        Ok(FileEntry {
+            name: destination
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            path: destination.to_string_lossy().replace('\\', "/"),
+            kind: entry_kind(&metadata),
+            size: if metadata.is_file() {
+                metadata.len()
+            } else {
+                0
+            },
+        })
+    })
+    .await
+    .map_err(|error| IoError::new(500, format!("file rename task failed: {error}")))?
+}
+
 pub async fn delete_entry(root: &Path, relative: &str) -> Result<(), IoError> {
     let canonical = safe_path(root, relative)?;
     let canonical_root = fs::canonicalize(root).map_err(IoError::from)?;
@@ -957,6 +1097,139 @@ pub async fn delete_entry(root: &Path, relative: &str) -> Result<(), IoError> {
 mod tests {
     use super::*;
     use std::process::Command as StdCommand;
+
+    #[tokio::test]
+    async fn a_new_file_is_only_ever_a_new_one_and_never_an_emptied_old_one() {
+        let repo = TempRepo::new();
+        let root = &repo.path;
+        fs::write(root.join("kept.txt"), "precious").unwrap();
+
+        let made = create_file(root, "notes.md").await.unwrap();
+        assert_eq!(
+            (made.path.as_str(), made.kind.as_str(), made.size),
+            ("notes.md", "file", 0)
+        );
+        assert_eq!(fs::read_to_string(root.join("notes.md")).unwrap(), "");
+
+        // Naming the path makes the folders it names.
+        create_file(root, "docs/guide/start.md").await.unwrap();
+        assert!(root.join("docs/guide/start.md").is_file());
+
+        // A taken name is refused, so nothing here can empty a file that has
+        // something in it.
+        assert_eq!(create_file(root, "kept.txt").await.unwrap_err().status, 409);
+        assert_eq!(
+            fs::read_to_string(root.join("kept.txt")).unwrap(),
+            "precious"
+        );
+        assert_eq!(create_file(root, "docs").await.unwrap_err().status, 409);
+
+        // The workspace boundary and protected state hold here as everywhere.
+        assert!(create_file(root, "../escape.txt").await.is_err());
+        assert!(create_file(root, ".git/hooks/pre-commit").await.is_err());
+        assert!(create_file(root, "").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn renaming_moves_a_name_without_replacing_what_already_holds_one() {
+        let repo = TempRepo::new();
+        let root = &repo.path;
+        fs::write(root.join("draft.txt"), "body").unwrap();
+        fs::write(root.join("taken.txt"), "someone else's").unwrap();
+        fs::create_dir_all(root.join("docs")).unwrap();
+
+        let renamed = rename_entry(root, "draft.txt", "final.txt").await.unwrap();
+        assert_eq!(
+            (
+                renamed.path.as_str(),
+                renamed.name.as_str(),
+                renamed.kind.as_str()
+            ),
+            ("final.txt", "final.txt", "file")
+        );
+        assert_eq!(fs::read_to_string(root.join("final.txt")).unwrap(), "body");
+        assert!(!root.join("draft.txt").exists());
+
+        // A path, not just a name: an existing folder is a valid destination.
+        rename_entry(root, "final.txt", "docs/final.txt")
+            .await
+            .unwrap();
+        assert!(root.join("docs/final.txt").is_file());
+        // A folder goes with everything under it, and reports itself as one.
+        let moved = rename_entry(root, "docs", "guide").await.unwrap();
+        assert_eq!(moved.kind, "directory");
+        assert!(root.join("guide/final.txt").is_file());
+
+        // What already holds a name keeps it.
+        assert_eq!(
+            rename_entry(root, "guide/final.txt", "taken.txt")
+                .await
+                .unwrap_err()
+                .status,
+            409
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("taken.txt")).unwrap(),
+            "someone else's"
+        );
+        // And the destination's folder has to exist, rather than being invented.
+        assert_eq!(
+            rename_entry(root, "taken.txt", "nowhere/taken.txt")
+                .await
+                .unwrap_err()
+                .status,
+            404
+        );
+        assert_eq!(
+            rename_entry(root, "missing.txt", "anything.txt")
+                .await
+                .unwrap_err()
+                .status,
+            404
+        );
+        assert!(rename_entry(root, "taken.txt", "taken.txt").await.is_err());
+
+        // Neither end may leave the workspace or touch protected state.
+        assert!(
+            rename_entry(root, "taken.txt", "../escaped.txt")
+                .await
+                .is_err()
+        );
+        assert!(
+            rename_entry(root, "../outside.txt", "inside.txt")
+                .await
+                .is_err()
+        );
+        assert!(rename_entry(root, ".git", "history").await.is_err());
+        assert!(
+            rename_entry(root, "taken.txt", ".ssh/id_rsa")
+                .await
+                .is_err()
+        );
+        assert!(root.join(".git").exists());
+
+        #[cfg(unix)]
+        {
+            // Renaming a link renames the link. Its target is not this
+            // workspace's to move, and following it would move it anyway.
+            let outside =
+                std::env::temp_dir().join(format!("agentdock-rename-target-{}", Uuid::new_v4()));
+            fs::write(&outside, "precious").unwrap();
+            std::os::unix::fs::symlink(&outside, root.join("outward")).unwrap();
+            let link = rename_entry(root, "outward", "pointer").await.unwrap();
+            assert_eq!(link.kind, "symlink");
+            assert!(outside.exists(), "the link's target must not move");
+            assert_eq!(fs::read_to_string(&outside).unwrap(), "precious");
+            // But a link above either path is a way out of the workspace.
+            std::os::unix::fs::symlink(std::env::temp_dir(), root.join("elsewhere")).unwrap();
+            assert!(
+                rename_entry(root, "taken.txt", "elsewhere/taken.txt")
+                    .await
+                    .is_err()
+            );
+            fs::remove_file(&outside).ok();
+        }
+    }
 
     #[tokio::test]
     async fn delete_removes_workspace_entries_but_not_the_root_or_what_a_link_points_at() {

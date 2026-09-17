@@ -172,6 +172,19 @@ struct FileWrite {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct FileCreate {
+    path: String,
+}
+/// Both ends, because a rename is a move: the tree offers it as renaming in
+/// place, but the path is what is sent and a different folder is a valid one.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileRename {
+    from: String,
+    to: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct GitPaths {
     paths: Vec<String>,
 }
@@ -539,6 +552,8 @@ fn router(state: AppState) -> Router {
             "/api/workspaces/{id}/file",
             get(read_file).put(write_file).delete(delete_file),
         )
+        .route("/api/workspaces/{id}/file/create", post(create_file))
+        .route("/api/workspaces/{id}/file/rename", post(rename_file))
         .route(
             "/api/workspaces/{id}/attachments",
             // Raw bytes, so a phone upload costs no base64 inflation. The limit
@@ -1555,6 +1570,29 @@ async fn write_file(
             input.expected_version.as_deref(),
         )
         .await?,
+    ))
+}
+/// Add an empty file to a workspace. Refuses a name already taken rather than
+/// writing over what holds it.
+async fn create_file(
+    State(state): State<AppState>,
+    Path(id): Path<WorkspaceId>,
+    Json(input): Json<FileCreate>,
+) -> Result<(StatusCode, Json<workspace_io::FileEntry>)> {
+    let _guard = state.operations.lock().await;
+    let entry = workspace_io::create_file(&root(&state, id).await?, &input.path).await?;
+    Ok((StatusCode::CREATED, Json(entry)))
+}
+/// Rename a file or directory within one workspace. Nothing is overwritten and
+/// nothing leaves the workspace, so this is reversible by renaming back.
+async fn rename_file(
+    State(state): State<AppState>,
+    Path(id): Path<WorkspaceId>,
+    Json(input): Json<FileRename>,
+) -> Result<Json<workspace_io::FileEntry>> {
+    let _guard = state.operations.lock().await;
+    Ok(Json(
+        workspace_io::rename_entry(&root(&state, id).await?, &input.from, &input.to).await?,
     ))
 }
 /// Delete a file or directory a workspace owns. Destructive and not undoable,
