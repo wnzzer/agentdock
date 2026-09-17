@@ -133,6 +133,9 @@ test('the publish loop does not feed the package list to npm on stdin', async ()
   // `npm publish dist-npm/agentdock-darwin-arm64` fetches over ssh and dies on
   // a public key rather than publishing the directory sitting right there.
   assert.match(step, /npm publish "\.\/dist-npm\//, 'the publish path needs a ./ prefix to stay a path');
+  // A dry run skips authentication entirely, so the credential is the one part
+  // it cannot cover unless the job checks it outright.
+  assert.match(step, /npm whoami/, 'the job must prove its credential in dry runs too');
   for (const call of step.match(/npm (view|publish)[^\n]*/g) ?? []) {
     assert.match(call, /<\/dev\/null/, `npm call must not inherit stdin: ${call.trim()}`);
   }

@@ -143,6 +143,10 @@ jobs:
           DRY_RUN: ${{ steps.version.outputs.dry_run }}
         run: |
           set -euo pipefail
+          # --dry-run does not authenticate, so without this the dry run proves
+          # everything except whether the credential works, and the first real
+          # answer would arrive on a tag. Also catches the token's expiry.
+          npm whoami </dev/null
           # Read the list up front rather than piping it into the loop: npm
           # inherits stdin, and a command that reads any of it swallows the
           # packages still to come, publishing a partial release quietly. The
