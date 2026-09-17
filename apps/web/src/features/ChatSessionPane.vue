@@ -21,6 +21,7 @@ import { useI18n } from '../i18n';
 import { acknowledgeReceipt } from './chat-model';
 import { useSessionMenuPosition } from './session-menu-position';
 import { canReopenInTerminal, terminalReopen } from './terminal-reopen';
+import { randomId } from './random-id';
 
 const props = defineProps<{ paneId?: string; session: Session; profiles: EndpointProfile[]; previewSnapshot?: ConversationSnapshot; consumeOpenIntent?: boolean }>();
 const emit = defineEmits<{ changed: []; environment: [id: string]; renameRequest: [id: string]; legacy: []; profiles: []; openSession: [session: Session] }>();
@@ -215,7 +216,7 @@ async function copyFromTimeline(value: string) {
 async function clearContext() {
   closeTimelineMenu();
   if (!clearAvailable.value) return;
-  const id = props.session.id, messageId = crypto.randomUUID();
+  const id = props.session.id, messageId = randomId();
   actionBusy.value = true; error.value = '';
   try { await request('/sessions/' + encodeURIComponent(id) + '/conversation/message', json('POST', { id: messageId, content: '/clear' })); }
   catch (cause) { if (props.session.id === id && mounted.value) error.value = errorMessage(cause); }
@@ -335,7 +336,7 @@ async function send() {
   // Codex has no slash commands in its protocol at all; what its terminal
   // offers as /model and /approvals are the controls beside this box here.
   if (unsupported) { draft.value.notice = undefined; error.value = t('{command} is not a command this client accepts. Model and thinking depth are the controls below; anything else belongs in the native terminal view.', { command: '/' + unsupported }); return; }
-  const id = props.session.id, target = draft.value, messageId = crypto.randomUUID();
+  const id = props.session.id, target = draft.value, messageId = randomId();
   // Attachment paths travel with the text, so an accepted receipt covers both.
   const typed = target.text;
   const content = composeMessage(typed, attachments.value);

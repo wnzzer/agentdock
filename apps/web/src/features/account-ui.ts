@@ -1,3 +1,4 @@
+import { randomId } from "./random-id";
 import type { AgentProviderKind } from '@agentdock/protocol';
 
 export type AccountWindowKind = 'five_hour' | 'weekly';
@@ -122,7 +123,7 @@ export interface QuotaResetAttempt { idempotency_key: string; credit_id?: string
 export const QUOTA_RESET_STORAGE_KEY = 'agentdock.pending-quota-resets.v1';
 export const QUOTA_RESET_STORAGE_WARNING = 'Pending reset protection is unavailable in this browser. Do not repeat a quota reset; refresh official quota first. New reset requests are blocked.';
 type ResetStorage = Pick<Storage, 'getItem' | 'setItem'>;
-export function createQuotaResetStore(uuid: () => string = () => crypto.randomUUID(), storage?: ResetStorage | (() => ResetStorage | undefined), requirePersistence = false) {
+export function createQuotaResetStore(uuid: () => string = randomId, storage?: ResetStorage | (() => ResetStorage | undefined), requirePersistence = false) {
   const attempts = new Map<string, QuotaResetAttempt>(), durable = new Set<string>();
   let hydrated = false, storageFailed = false;
   function resolveStorage() { try { return typeof storage === 'function' ? storage() : storage; } catch { return undefined; } }
@@ -168,4 +169,4 @@ export function createQuotaResetStore(uuid: () => string = () => crypto.randomUU
     complete(id: string) { hydrate(); if (requirePersistence && !persist(id)) { const attempt = attempts.get(id); if (attempt) attempt.outcome = 'unknown'; return false; } attempts.delete(id); durable.delete(id); return true; },
   };
 }
-export const quotaResetAttempts = createQuotaResetStore(() => crypto.randomUUID(), () => typeof window === 'undefined' ? undefined : window.sessionStorage, true);
+export const quotaResetAttempts = createQuotaResetStore(randomId, () => typeof window === 'undefined' ? undefined : window.sessionStorage, true);
