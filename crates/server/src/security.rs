@@ -125,8 +125,12 @@ impl Security {
                     .into());
                 }
                 Some(value) if value.chars().count() < MINIMUM_TOKEN => {
+                    // A token set in the environment wins over the generated
+                    // one, so a short one left over from an earlier attempt
+                    // blocks the path that would have fixed it. Say how to get
+                    // out rather than only what is wrong.
                     return Err(format!(
-                        "AGENTDOCK_TOKEN is {} characters; {MINIMUM_TOKEN} is the minimum for a binding that reaches other machines.",
+                        "AGENTDOCK_TOKEN is {} characters; {MINIMUM_TOKEN} is the minimum for a binding that reaches other machines. Set a longer one, or `unset AGENTDOCK_TOKEN` to have one generated.",
                         value.chars().count()
                     )
                     .into());
@@ -194,6 +198,28 @@ impl Security {
         let name = name.trim_start_matches('[').trim_end_matches(']');
         name.parse::<std::net::IpAddr>().is_ok()
     }
+
+    /// Whether an `Origin` is this server's own, named by address.
+    ///
+    /// The same reasoning as the Host check, and needed for the same reason:
+    /// only a page this server actually served can send this origin, because a
+    /// page on a name the attacker controls sends that name instead.
+    ///
+    /// It is separate from the Host check because a browser applies them to
+    /// different requests. Typing the address sends no `Origin` at all, so the
+    /// document loaded while every module script — fetched in CORS mode, which
+    /// sends `Origin` even same-origin — was refused, and the workspace came up
+    /// as a blank page with two 403s in the console.
+    fn own_origin(&self, origin: &str) -> bool {
+        let Some(authority) = origin
+            .strip_prefix("http://")
+            .or_else(|| origin.strip_prefix("https://"))
+        else {
+            return false;
+        };
+        // An origin has no path, so anything after the authority disqualifies it.
+        !authority.contains('/') && self.addressed_by_ip(authority)
+    }
     fn authenticated(&self, headers: &axum::http::HeaderMap) -> bool {
         let Some(token) = &self.token else {
             return true;
@@ -241,7 +267,7 @@ pub async fn guard(State(state): State<AppState>, request: Request, next: Next) 
         && !origin
             .to_str()
             .ok()
-            .is_some_and(|v| state.security.origins.contains(v))
+            .is_some_and(|v| state.security.origins.contains(v) || state.security.own_origin(v))
     {
         return error(StatusCode::FORBIDDEN, "Untrusted Origin");
     }
@@ -372,6 +398,44 @@ mod tests {
             "[fe80::1]:28789",
         ] {
             assert!(security.addressed_by_ip(host), "{host}");
+        }
+    }
+
+    /// A module script is fetched in CORS mode and sends `Origin` even when it
+    /// is same-origin, so relaxing only the Host check left every asset
+    /// refused: the document loaded, nothing else did, and the workspace was a
+    /// blank page. curl does not send that header, which is why this needed a
+    /// browser to find.
+    #[test]
+    fn this_servers_own_address_is_accepted_as_an_origin_not_only_as_a_host() {
+        let security = bound(28789);
+        for origin in [
+            "http://192.168.0.252:28789",
+            "http://10.100.5.41:28789",
+            "https://192.168.0.252:28789",
+            "http://[fe80::1]:28789",
+        ] {
+            assert!(security.own_origin(origin), "{origin}");
+        }
+    }
+
+    #[test]
+    fn an_origin_that_is_not_this_server_is_still_refused() {
+        let security = bound(28789);
+        for origin in [
+            // A name, which is what an attacker's page actually sends.
+            "http://evil.com:28789",
+            // The right address on somebody else's port.
+            "http://192.168.0.252:28790",
+            // Not an origin at all: an origin carries no path.
+            "http://192.168.0.252:28789/evil",
+            "http://192.168.0.252:28789@evil.com",
+            // Schemes a page cannot be served from here under.
+            "ftp://192.168.0.252:28789",
+            "null",
+            "",
+        ] {
+            assert!(!security.own_origin(origin), "{origin}");
         }
     }
 
