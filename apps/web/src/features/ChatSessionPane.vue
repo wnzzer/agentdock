@@ -121,6 +121,12 @@ async function pickModel(id: string) {
  * advertised that command; AgentDock never invents one.
  */
 const timelineMenu = ref<{ x: number; y: number; text: string } | null>(null);
+// The collapsed summary shows where a subagent is now, not where it began.
+function lastLine(activity: string) {
+  const lines = activity.split('\n').filter(line => line.trim() && line !== '…');
+  const last = lines[lines.length - 1] ?? '';
+  return last.length > 80 ? `${last.slice(0, 79)}…` : last;
+}
 const clearAvailable = computed(() => canClearContext({ preview: isPreview.value, running: running.value, ready: view.value.ready, busy: turnBusy.value || actionBusy.value, connected: streamState.value === 'connected', commands: view.value.commands }));
 function openTimelineMenu(event: MouseEvent) {
   if (isPreview.value) return;
@@ -487,7 +493,7 @@ function keydown(event: KeyboardEvent) {
       <div v-if="!view.items.length" class="chat-welcome"><span class="chat-welcome-mark"><ProviderIcon :provider="session.provider" :size="32" /></span><h3>{{ t('What shall we build?') }}</h3><p>{{ t('A real conversation with your native agent, with room for tools, changes and your next idea.') }}</p><span class="chat-context-chip">{{ endpointName }}</span><p v-if="session.provider==='claude_code'" class="chat-trust-note">{{ t('Claude headless mode skips the interactive workspace-trust prompt. Send messages only for directories you trust; supported tool approvals still come from the native client.') }}</p></div>
       <template v-for="(item,index) in view.items" :key="item.type+':'+index+':'+item.id">
         <article v-if="item.type==='message'" :class="['chat-message',item.role]"><div class="chat-message-label"><ProviderIcon v-if="item.role==='assistant'" :provider="session.provider" :size="15" /><span>{{ item.role==='user'?t('You'):providerLabel(session.provider) }}</span></div><MarkdownContent :text="item.text" /></article>
-        <details v-else-if="item.type==='tool'" class="chat-tool"><summary><span :class="['tool-indicator',item.status]">{{ item.status==='completed'?'✓':item.status==='failed'?'!':'↻' }}</span><strong>{{ item.name }}</strong><small>{{ t(item.status==='running'?(running?'Working…':'Session ended'):item.status==='failed'?'Failed':'Completed') }}</small><Icon class="chat-tool-chevron" name="chevron" :size="14" /></summary><pre v-if="item.text">{{ item.text }}</pre><p v-else>{{ t('The client did not provide tool output.') }}</p></details>
+        <details v-else-if="item.type==='tool'" class="chat-tool"><summary><span :class="['tool-indicator',item.status]">{{ item.status==='completed'?'✓':item.status==='failed'?'!':'↻' }}</span><strong>{{ item.name }}</strong><small>{{ item.activity && item.status==='running' ? lastLine(item.activity) : t(item.status==='running'?(running?'Working…':'Session ended'):item.status==='failed'?'Failed':'Completed') }}</small><Icon class="chat-tool-chevron" name="chevron" :size="14" /></summary><pre v-if="item.activity" class="tool-activity">{{ item.activity }}</pre><pre v-if="item.text">{{ item.text }}</pre><p v-else-if="!item.activity">{{ t('The client did not provide tool output.') }}</p></details>
         <article v-else-if="item.type==='approval'" :class="['chat-approval',{resolved:item.resolved}]"><header><Icon name="info" :size="18" /><strong>{{ item.title }}</strong><span v-if="item.resolved">{{ t('Resolved') }}</span></header><MarkdownContent :text="item.text" /><template v-if="!item.resolved">
           <div v-for="question in item.questions" :key="question.id" class="chat-question"><label :for="'answer-'+session.id+'-'+item.id+'-'+question.id">{{ question.header }} {{ question.question }}</label>
             <div v-if="question.multiSelect&&!question.isSecret&&question.options.length" class="chat-multi-options"><label v-for="option in question.options" :key="option.label"><input type="checkbox" :checked="approvalAnswers[item.id]?.[question.id]?.includes(option.label)??false" :disabled="isPreview||!!approvalBusy" @change="toggleAnswer(item.id,question.id,option.label,$event)" /><span><strong>{{ option.label }}</strong><small v-if="option.description">{{ option.description }}</small></span></label><label v-if="question.isOther" class="chat-other-answer"><span>{{ t('Other answer') }}</span><input type="text" autocomplete="off" :value="approvalOther[item.id]?.[question.id]??''" :disabled="isPreview||!!approvalBusy" @input="otherAnswer(item.id,question.id,$event)" /></label></div>
@@ -582,6 +588,10 @@ function keydown(event: KeyboardEvent) {
 .chat-attachments button{position:relative}
 .chat-attachments button::after{content:'';position:absolute;inset:-7px}
 @container(max-width:480px){.chat-attachment-name{max-width:140px}}
+/* Subagent progress is a different kind of content from the tool's own input
+   and result, so it reads as a distinct block rather than more of the same. */
+.tool-activity{background:#f7f5fc;color:#655a80;border-bottom:1px solid var(--border)}
+.chat-tool small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:45%}
 .chat-tool-chevron{transform:rotate(90deg)}.chat-tool[open] .chat-tool-chevron{transform:rotate(270deg)}
 .chat-end-confirm{flex-shrink:0;background:#fff3f5;color:var(--danger-ink);border-bottom:1px solid #f1dfe4;padding:11px 16px;font-size:12px;line-height:1.7}.chat-end-confirm p{margin:0 0 8px}.chat-end-confirm>div{display:flex;gap:8px;flex-wrap:wrap}.chat-end-confirm button{min-height:44px;padding:8px 13px;border:1px solid #f1dadd;border-radius:8px;background:var(--surface);color:#ae4055}.chat-end-confirm button:first-child{background:var(--danger);color:white;border-color:var(--danger)}.chat-menu .chat-end-button{color:var(--danger)}
 .chat-multi-options{display:flex;flex-direction:column;gap:7px}.chat-multi-options>label{display:flex;align-items:center;gap:10px;min-height:44px;border:1px solid #eee3c6;background:var(--surface);border-radius:9px;padding:9px 11px}.chat-multi-options input[type=checkbox]{min-height:0;width:18px;height:18px;accent-color:var(--teal);flex-shrink:0}.chat-multi-options strong{font-weight:500;font-size:13px}.chat-multi-options small{display:block;font-size:11px;color:var(--ink-soft);margin-top:4px;line-height:1.6}.chat-multi-options>.chat-other-answer{display:flex;align-items:stretch;flex-direction:column;font-size:12px}.chat-other-answer input{font-size:16px}

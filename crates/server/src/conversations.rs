@@ -513,6 +513,54 @@ fn model_command(model: Option<&str>, effort: Option<&str>) -> Value {
 }
 
 #[cfg(test)]
+mod event_whitelist_tests {
+    use super::normalize_event;
+    use serde_json::json;
+
+    // The whitelist strips fields it does not name, and a stripped field is not
+    // an error anywhere — the bridge emits it, the client never sees it, and
+    // nothing says so. This already cost one silently dropped model list.
+    #[test]
+    fn subagent_progress_survives_normalisation() {
+        let event = normalize_event(json!({
+            "type": "tool", "id": "task-1", "name": "Task",
+            "status": "running", "activity": "Scanning the bridge."
+        }))
+        .expect("a tool event carrying subagent progress must be accepted");
+        assert_eq!(event["activity"], "Scanning the bridge.");
+    }
+
+    #[test]
+    fn progress_is_optional_and_must_be_text() {
+        assert!(
+            normalize_event(json!({"type":"tool","id":"t","name":"Read","status":"completed"}))
+                .is_some(),
+            "a tool card without a subagent is still a valid event"
+        );
+        assert!(
+            normalize_event(json!({
+                "type":"tool","id":"t","name":"Read","status":"running","activity":{"nested":1}
+            }))
+            .is_none(),
+            "progress must be text, not an arbitrary structure"
+        );
+    }
+
+    #[test]
+    fn unknown_fields_are_still_refused() {
+        // Proving the guard is real: were it not, the test above would pass for
+        // a field nobody added to the list.
+        assert!(
+            normalize_event(json!({
+                "type":"tool","id":"t","name":"Read","status":"running","invented":"x"
+            }))
+            .is_none_or(|event| event.get("invented").is_none()),
+            "a field outside the whitelist must not reach the client"
+        );
+    }
+}
+
+#[cfg(test)]
 mod model_command_tests {
     use super::model_command;
 
@@ -845,7 +893,7 @@ fn normalize_event(mut value: Value) -> Option<Value> {
         "settings" => &["type", "model", "effort", "models"],
         "cleared" => &["type"],
         "message" => &["type", "id", "role", "text", "delta"],
-        "tool" => &["type", "id", "name", "status", "text"],
+        "tool" => &["type", "id", "name", "status", "text", "activity"],
         "approval" => &["type", "id", "title", "text", "choices", "questions"],
         "approval_resolved" => &["type", "id"],
         "turn" => &["type", "id", "status"],
@@ -940,6 +988,9 @@ fn normalize_event(mut value: Value) -> Option<Value> {
         "tool" => {
             id() && text("name")
                 && object.get("text").is_none_or(Value::is_string)
+                // Subagent progress, kept apart from `text` so it cannot displace
+                // the tool's own input and result.
+                && object.get("activity").is_none_or(Value::is_string)
                 && matches!(
                     object.get("status").and_then(Value::as_str),
                     Some("running" | "completed" | "failed")

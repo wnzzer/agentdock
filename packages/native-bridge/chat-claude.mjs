@@ -112,7 +112,10 @@ export class ClaudeChat extends ChatBase {
       return;
     }
     if(!this.active)return;
-    if(message.parent_tool_use_id)return; // Subagent text must not overwrite the main assistant message.
+    // A subagent's output belongs to the tool call that started it. Emitting it
+    // as a message would overwrite the main assistant reply, which is why this
+    // was dropped; routing it to the parent card shows the work instead.
+    if(typeof message.parent_tool_use_id==='string'&&message.parent_tool_use_id){this.subagent(message);return;}
     if(message.type==='stream_event'){
       const event=message.event??{};
       if(event.type==='message_start')this.assistantId=event.message?.id;
@@ -157,6 +160,22 @@ export class ClaudeChat extends ChatBase {
       this.finish(this.active.interrupted?'interrupted':failed?'failed':'completed');
     }
   }
+  // Progress only: an activity line names what the subagent is doing and never
+  // replaces the card's own text, which holds the tool's input and result.
+  subagent(message) {
+    const parent=message.parent_tool_use_id;
+    if(!this.tools.has(parent))return; // A card we never announced has nothing to attach to.
+    const lines=[];
+    if(message.type==='assistant'){
+      for(const block of message.message?.content??[]){
+        if(block.type==='text'&&block.text?.trim())lines.push(block.text.trim());
+        else if(block.type==='tool_use')lines.push(`\u2192 ${clip(block.name??'tool',120)}`);
+      }
+    }
+    if(!lines.length)return;
+    this.emit({type:'tool',id:parent,name:this.tools.get(parent),status:'running',activity:clip(lines.join('\n'),4096)});
+  }
+
   tool(block,status) {
     if(typeof block.id!=='string')return;
     const name=clip(block.name??'Native tool',256);this.tools.set(block.id,name);if(this.tools.size>512)this.tools.delete(this.tools.keys().next().value);

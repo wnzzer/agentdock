@@ -240,3 +240,44 @@ test('context window is forwarded only when the native client states it', () => 
   chat.usage(undefined, undefined, undefined);
   assert.equal(emitted.length, before);
 });
+
+test('Claude subagent output reaches its parent tool card instead of the main reply',()=>{
+  const events=[];
+  const chat=Object.create(ClaudeChat.prototype);
+  chat.emit=event=>events.push(event);
+  chat.tools=new Map([['task-1','Task']]);
+  chat.active={id:'m1',interrupted:false};
+  chat.assistantId='assistant-1';
+
+  // Main-agent text: the ordinary path, unchanged.
+  chat.notification({type:'assistant',message:{id:'assistant-1',content:[{type:'text',text:'Delegating.'}]}});
+  // Subagent text and a nested tool call, both carrying the parent's id.
+  chat.notification({type:'assistant',parent_tool_use_id:'task-1',message:{id:'sub-1',content:[
+    {type:'text',text:'Scanning the bridge.'},{type:'tool_use',id:'nested-1',name:'Grep',input:{}},
+  ]}});
+
+  const messages=events.filter(event=>event.type==='message');
+  // The original `return` existed because subagent text overwrote the main
+  // reply. Nothing the subagent says may become a message of its own.
+  assert.deepEqual(messages.map(event=>event.text),['Delegating.']);
+
+  const progress=events.filter(event=>event.type==='tool'&&event.activity!==undefined);
+  assert.equal(progress.length,1);
+  assert.equal(progress[0].id,'task-1','progress must attach to the parent card');
+  assert.equal(progress[0].name,'Task');
+  assert.equal(progress[0].status,'running');
+  assert.match(progress[0].activity,/Scanning the bridge\./);
+  assert.match(progress[0].activity,/→ Grep/);
+  // A nested tool must not open a second top-level card.
+  assert.ok(!events.some(event=>event.type==='tool'&&event.id==='nested-1'));
+  // And progress never carries `text`, which would clobber the tool's input.
+  assert.equal(progress[0].text,undefined);
+});
+
+test('subagent output for an unknown parent is dropped rather than inventing a card',()=>{
+  const events=[];
+  const chat=Object.create(ClaudeChat.prototype);
+  chat.emit=event=>events.push(event);chat.tools=new Map();chat.active={id:'m1',interrupted:false};
+  chat.notification({type:'assistant',parent_tool_use_id:'never-announced',message:{content:[{type:'text',text:'orphan'}]}});
+  assert.deepEqual(events,[]);
+});

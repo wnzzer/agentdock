@@ -315,3 +315,42 @@ test('clearing is offered whenever the client can do it, including with an empty
   assert.equal(canClearContext({ ...live, connected: false }), false);
   assert.equal(canClearContext({ ...live, preview: true }), false);
 });
+
+test('subagent progress joins its parent tool card without displacing the tool output', () => {
+  const view = conversationView([
+    { type: 'tool', id: 't1', name: 'Task', status: 'running', text: '{"prompt":"find the bug"}' },
+    { type: 'message', id: 'a1', role: 'assistant', text: 'Delegating.' },
+    { type: 'tool', id: 't1', name: 'Task', status: 'running', activity: 'Reading chat-model.ts' },
+    { type: 'tool', id: 't1', name: 'Task', status: 'running', activity: '→ Grep' },
+    { type: 'tool', id: 't1', name: 'Task', status: 'completed', text: 'Found it in conversationView.' },
+  ]);
+  const card = view.items.find(item => item.id === 't1');
+  // The reason the bridge used to drop subagent output was that emitting it as
+  // a message overwrote the main reply. It must still stand untouched.
+  assert.equal(view.items.filter(item => item.type === 'message').length, 1);
+  assert.equal(view.items.find(item => item.type === 'message').text, 'Delegating.');
+  // Progress accumulates, and the tool's own result is not replaced by it.
+  assert.equal(card.activity, 'Reading chat-model.ts\n→ Grep');
+  assert.equal(card.text, 'Found it in conversationView.');
+  assert.equal(card.status, 'completed');
+});
+
+test('a long-running subagent cannot grow a card without bound', () => {
+  const events = [{ type: 'tool', id: 't1', name: 'Task', status: 'running', text: '{}' }];
+  for (let i = 0; i < 400; i += 1) events.push({ type: 'tool', id: 't1', name: 'Task', status: 'running', activity: `step ${i} `.repeat(20) });
+  const card = conversationView(events).items.find(item => item.id === 't1');
+  assert.ok(card.activity.length <= 4100, `activity grew to ${card.activity.length}`);
+  // Truncation keeps the newest work, which is what a running card is for.
+  assert.ok(card.activity.includes('step 399'), 'the latest step must survive truncation');
+  assert.ok(!card.activity.includes('step 0 '), 'the oldest step should have been dropped');
+  assert.ok(card.activity.startsWith('…'), 'truncation must be visible');
+});
+
+test('an event without activity leaves existing progress alone', () => {
+  const card = conversationView([
+    { type: 'tool', id: 't1', name: 'Task', status: 'running', activity: 'searching' },
+    { type: 'tool', id: 't1', name: 'Task', status: 'completed', text: 'done' },
+  ]).items.find(item => item.id === 't1');
+  assert.equal(card.activity, 'searching');
+  assert.equal(card.text, 'done');
+});

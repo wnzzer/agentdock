@@ -9,7 +9,7 @@ export type ChatEvent = ({ seq?: number } & (
   | { type: 'ready'; native_session_id?: string; commands?: string[] }
   | { type: 'settings'; model?: string; effort?: string; models?: NativeModel[] }
   | { type: 'message'; id: string; role: 'user' | 'assistant'; text: string; delta?: boolean }
-  | { type: 'tool'; id: string; name: string; status: 'running' | 'completed' | 'failed'; text?: string }
+  | { type: 'tool'; id: string; name: string; status: 'running' | 'completed' | 'failed'; text?: string; activity?: string }
   | { type: 'approval'; id: string; title: string; text: string; choices: string[]; questions?: ApprovalQuestion[] }
   | { type: 'approval_resolved'; id: string }
   | { type: 'turn'; id?: string; status: 'running' | 'completed' | 'failed' | 'interrupted' }
@@ -22,10 +22,16 @@ export type ChatEvent = ({ seq?: number } & (
 export interface ConversationSnapshot { mode?: 'structured' | 'pty'; running: boolean; events: ChatEvent[]; truncated?: boolean }
 export type ChatItem =
   | { type: 'message'; id: string; role: 'user' | 'assistant'; text: string }
-  | { type: 'tool'; id: string; name: string; status: 'running' | 'completed' | 'failed'; text: string }
+  | { type: 'tool'; id: string; name: string; status: 'running' | 'completed' | 'failed'; text: string; activity?: string }
   | { type: 'approval'; id: string; title: string; text: string; choices: string[]; questions: ApprovalQuestion[]; resolved: boolean }
   | { type: 'configuration'; id: string; profile_name: string; text: string }
   | { type: 'error'; id: string; text: string };
+
+/** Newest-first truncation: the latest subagent step matters more than its first. */
+const MAX_ACTIVITY = 4000;
+function clipTail(value: string, limit: number) {
+  return value.length <= limit ? value : `…\n${value.slice(value.length - limit)}`;
+}
 
 export function conversationView(events: readonly ChatEvent[], running?: boolean) {
   const items: ChatItem[] = [], indexes = new Map<string, number>(), seen = new Set<number>();
@@ -39,7 +45,13 @@ export function conversationView(events: readonly ChatEvent[], running?: boolean
       if (index === undefined) { indexes.set(key, items.length); items.push(next); } else items[index] = next;
     } else if (event.type === 'tool') {
       const key = 'tool:' + event.id, index = indexes.get(key), previous = index === undefined ? undefined : items[index];
-      const next: ChatItem = { ...event, text: event.text ?? (previous?.type === 'tool' ? previous.text : '') };
+      // Subagent progress accumulates so the card reads as a log, while `text`
+      // still carries only the tool's own input and result. Capped because a
+      // long-running subagent would otherwise grow this without bound.
+      const before = previous?.type === 'tool' ? previous : undefined;
+      const activity = event.activity === undefined ? before?.activity
+        : clipTail(before?.activity ? `${before.activity}\n${event.activity}` : event.activity, MAX_ACTIVITY);
+      const next: ChatItem = { ...event, text: event.text ?? before?.text ?? '', ...(activity === undefined ? {} : { activity }) };
       if (index === undefined) { indexes.set(key, items.length); items.push(next); } else items[index] = next;
     } else if (event.type === 'approval') {
       const key = 'approval:' + event.id, index = indexes.get(key);
@@ -118,7 +130,7 @@ export function isChatEvent(value: unknown): value is ChatEvent {
       }));
     case 'exit': case 'cleared': return true;
     case 'message': return text('id') && text('text') && ['user', 'assistant'].includes(String(v.role)) && (v.delta === undefined || typeof v.delta === 'boolean');
-    case 'tool': return text('id') && text('name') && ['running', 'completed', 'failed'].includes(String(v.status)) && (v.text === undefined || text('text'));
+    case 'tool': return text('id') && text('name') && ['running', 'completed', 'failed'].includes(String(v.status)) && (v.text === undefined || text('text')) && (v.activity === undefined || text('activity'));
     case 'approval': return text('id') && text('title') && text('text') && Array.isArray(v.choices) && v.choices.every(choice => typeof choice === 'string') && (v.questions === undefined || Array.isArray(v.questions) && v.questions.every(question => {
       if (!question || typeof question !== 'object') return false;
       const q = question as Record<string, unknown>;
