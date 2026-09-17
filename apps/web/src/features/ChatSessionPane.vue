@@ -13,6 +13,9 @@ import ContextRing from './ContextRing.vue';
 import { effortLabel, modelEfforts } from './reasoning-effort';
 import { attachmentError, canSendMessage, composeMessage, formatBytes, MAX_ATTACHMENTS_PER_MESSAGE, type Attachment } from './attachment-state';
 import { applyCommand, matchCommands, moveHighlight, slashQuery, unsupportedCommand } from './slash-commands';
+import { mentionQuery, applyMention } from './file-mentions';
+import { createFileSearch } from './file-search';
+import type { SearchHit } from './file-search';
 import { useI18n } from '../i18n';
 import { acknowledgeReceipt } from './chat-model';
 import { useSessionMenuPosition } from './session-menu-position';
@@ -52,6 +55,37 @@ const commandsOpen = computed(() => commandMatches.value.length > 0);
 // A changed filter is a different list, so the highlight starts over instead of
 // pointing at a stale row that may no longer exist.
 watch(() => commandMatches.value.join('\u0000'), () => { commandIndex.value = 0; });
+/**
+ * `@path` completion, backed by the workspace index rather than this pane's
+ * own knowledge — the composer has never loaded a file tree.
+ *
+ * Only one suggestion list is ever open: a slash command and a mention cannot
+ * both be under the caret, and letting both claim the arrow keys would make
+ * neither work.
+ */
+const mentionHits = ref<SearchHit[]>([]);
+const mentionsDismissed = ref(false);
+const mentionSearch = createFileSearch();
+const mentionTarget = computed(() => (mentionsDismissed.value || commandsOpen.value) ? undefined : mentionQuery(draft.value.text, caret.value));
+watch(() => mentionTarget.value?.term, term => {
+  if (term === undefined) { mentionSearch.cancel(); mentionHits.value = []; return; }
+  mentionSearch.search(props.session.workspace_id, term, results => { mentionHits.value = results?.files ?? []; });
+});
+const mentionsOpen = computed(() => !!mentionTarget.value && mentionHits.value.length > 0);
+const mentionIndex = ref(0);
+watch(() => mentionHits.value.map(hit => hit.path).join('\u0000'), () => { mentionIndex.value = 0; });
+watch(() => draft.value.text, () => { mentionsDismissed.value = false; });
+onBeforeUnmount(() => mentionSearch.cancel());
+function chooseMention(hit: SearchHit | undefined) {
+  const query = mentionTarget.value; if (!query || !hit) return;
+  const next = applyMention(draft.value.text, query, hit.path);
+  draft.value.text = next.text; mentionsDismissed.value = false; mentionIndex.value = 0; mentionHits.value = [];
+  void nextTick(() => {
+    const input = composerInput.value; if (!input) return;
+    input.focus(); input.setSelectionRange(next.caret, next.caret); caret.value = next.caret;
+  });
+}
+
 const fileInput = ref<HTMLInputElement>();
 const OTHER_ANSWER = '__agentdock_other__';
 const canSend = computed(() => !isPreview.value && supported.value && mode.value === 'structured' && !loading.value && !actionBusy.value && !turnBusy.value && streamState.value === 'connected' && !uploading.value && canSendMessage(draft.value.text, attachments.value));
@@ -469,6 +503,21 @@ function keydown(event: KeyboardEvent) {
     }
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); commandsDismissed.value = true; return; }
   }
+  // Mentions take the same keys, and only when no command list is open — the
+  // two cannot be under one caret, so they never contend for the arrows.
+  if (mentionsOpen.value) {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      mentionIndex.value = moveHighlight(mentionIndex.value, mentionHits.value.length, event.key === 'ArrowDown' ? 1 : -1);
+      return;
+    }
+    if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey && !event.repeat)) {
+      event.preventDefault(); event.stopPropagation();
+      chooseMention(mentionHits.value[mentionIndex.value] ?? mentionHits.value[0]);
+      return;
+    }
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); mentionsDismissed.value = true; return; }
+  }
   if (event.key !== 'Enter') return;
   // Shift+Enter keeps the native newline behavior; plain Enter and Ctrl/⌘
   // Enter submit. Repeated keydown is suppressed to avoid duplicate turns.
@@ -512,6 +561,7 @@ function keydown(event: KeyboardEvent) {
     <button v-if="!followBottom" class="chat-latest" @click="scrollToLatest(true)">↓ {{ t('Latest message') }}</button>
     <form class="chat-composer" @submit.prevent="send">
       <div v-if="launchFallback" class="chat-endpoint-confirm"><strong>{{ t('{model} could not be switched to mid-conversation', { model: launchFallbackName }) }}</strong><p>{{ t('This endpoint refuses the availability check the client makes when switching models live. Starting the session on this model works instead, but begins a new native context: earlier messages stay visible here and are not sent to it.') }}</p><div><button type="button" :disabled="!canConfigure" @click="applyModelAtLaunch">{{ t('Start a new context on this model') }}</button><button type="button" @click="launchFallback=''">{{ t('Cancel') }}</button></div></div><div v-if="endpointConfirm" class="chat-endpoint-confirm"><strong>{{ t('Apply this configuration change?') }}</strong><p>{{ t('Only an idle session can switch. Its current bridge will close; the next message starts a new native context. Old messages stay visible but are never sent to the new endpoint.') }}</p><div><button type="button" :disabled="!canConfigure" @click="configure">{{ t('Confirm endpoint change') }}</button><button type="button" @click="endpointConfirm=false;selectedProfile=session.endpoint_profile_id??'';selectedEffort=''">{{ t('Cancel') }}</button></div></div>
+      <div v-if="mentionsOpen" class="chat-commands chat-mentions" role="listbox" :aria-label="t('Workspace files')"><button v-for="(hit,index) in mentionHits" :key="hit.path" type="button" role="option" :aria-selected="index===mentionIndex" :class="{highlighted:index===mentionIndex}" @mousedown.prevent="chooseMention(hit)" @mouseenter="mentionIndex=index"><strong>{{ hit.name }}</strong><small>{{ hit.path }}</small></button><small>{{ t('Files in this workspace · Enter or Tab to insert') }}</small></div>
       <div v-if="commandsOpen" class="chat-commands" role="listbox" :aria-label="t('Native client commands')"><button v-for="(command,index) in commandMatches" :key="command" type="button" role="option" :aria-selected="index===commandIndex" :class="{highlighted:index===commandIndex}" @mousedown.prevent="chooseCommand(command)" @mouseenter="commandIndex=index">/{{ command }}</button><small>{{ t('From this client · Enter or Tab to complete') }}</small></div>
       <textarea ref="composerInput" v-model="draft.text" :aria-label="t('Message your agent')" :placeholder="t('Ask your agent to build, explore, or fix something…')" rows="2" :disabled="!supported||mode!=='structured'||!!draft.pending" @focus="wake" @paste="pasteFiles" @dragover.prevent @drop="dropFiles" @compositionstart="composing=true" @compositionend="composing=false" @keydown="keydown" @keyup="syncCaret" @click="syncCaret" @input="syncCaret" />
       <ul v-if="attachments.length" class="chat-attachments" :aria-label="t('Attached files')"><li v-for="file in attachments" :key="file.path"><Icon name="file" :size="13"/><span class="chat-attachment-name" :title="file.path">{{ file.name }}</span><small>{{ formatBytes(file.bytes) }}</small><button type="button" :aria-label="t('Remove {name}',{name:file.name})" @click="removeAttachment(file.path)"><Icon name="close" :size="12"/></button></li></ul>
@@ -592,6 +642,10 @@ function keydown(event: KeyboardEvent) {
    and result, so it reads as a distinct block rather than more of the same. */
 .tool-activity{background:#f7f5fc;color:#655a80;border-bottom:1px solid var(--border)}
 .chat-tool small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:45%}
+/* A mention row shows the file and where it is, since names repeat across a repo. */
+.chat-mentions button{display:flex;align-items:baseline;gap:8px}
+.chat-mentions strong{font-weight:550;flex-shrink:0}
+.chat-mentions small{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:right;color:var(--muted)}
 .chat-tool-chevron{transform:rotate(90deg)}.chat-tool[open] .chat-tool-chevron{transform:rotate(270deg)}
 .chat-end-confirm{flex-shrink:0;background:#fff3f5;color:var(--danger-ink);border-bottom:1px solid #f1dfe4;padding:11px 16px;font-size:12px;line-height:1.7}.chat-end-confirm p{margin:0 0 8px}.chat-end-confirm>div{display:flex;gap:8px;flex-wrap:wrap}.chat-end-confirm button{min-height:44px;padding:8px 13px;border:1px solid #f1dadd;border-radius:8px;background:var(--surface);color:#ae4055}.chat-end-confirm button:first-child{background:var(--danger);color:white;border-color:var(--danger)}.chat-menu .chat-end-button{color:var(--danger)}
 .chat-multi-options{display:flex;flex-direction:column;gap:7px}.chat-multi-options>label{display:flex;align-items:center;gap:10px;min-height:44px;border:1px solid #eee3c6;background:var(--surface);border-radius:9px;padding:9px 11px}.chat-multi-options input[type=checkbox]{min-height:0;width:18px;height:18px;accent-color:var(--teal);flex-shrink:0}.chat-multi-options strong{font-weight:500;font-size:13px}.chat-multi-options small{display:block;font-size:11px;color:var(--ink-soft);margin-top:4px;line-height:1.6}.chat-multi-options>.chat-other-answer{display:flex;align-items:stretch;flex-direction:column;font-size:12px}.chat-other-answer input{font-size:16px}

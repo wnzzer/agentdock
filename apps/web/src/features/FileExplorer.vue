@@ -6,6 +6,8 @@ import { errorMessage, formatBytes, request, workspacePath } from "./api";
 import { flattenTree, isTreeChild, sortTreeEntries, treeAncestors, treeParent } from "./tree-model";
 import type { TreeDirectory, TreeRow } from "./tree-model";
 import { readTreeViewState, saveTreeViewState } from "./tree-state";
+import { createFileSearch, highlight } from "./file-search";
+import type { SearchResults } from "./file-search";
 import Icon from "./Icon.vue";
 import { filePane } from "./pane-context";
 import { useI18n } from "../i18n";
@@ -64,6 +66,32 @@ const rowElements = new Map<string, HTMLElement>();
 let generation = 0, revealRevision = 0;
 let pending = new Map<string, Promise<boolean>>();
 let restorePaths: string[] = [];
+
+/**
+ * Workspace-wide results, when the host can provide them.
+ *
+ * The tree filter only ever saw directories already loaded, so a file two
+ * unopened folders down simply did not exist to it. The index covers the whole
+ * workspace and honours .gitignore, so build output and dependencies stay out.
+ *
+ * `undefined` means there is nothing workspace-wide to show — no query, the
+ * host cannot search, or the query failed — and the tree filter stands in.
+ */
+const workspaceResults = ref<SearchResults | undefined>();
+const fileSearch = createFileSearch();
+watch([query, () => props.workspaceId], ([term, workspace]) => {
+  fileSearch.search(workspace, term, results => { workspaceResults.value = results; });
+});
+onBeforeUnmount(() => fileSearch.cancel());
+const searchingWorkspace = computed(() => !!workspaceResults.value?.available && !!query.value.trim());
+const searchHits = computed(() => workspaceResults.value?.files ?? []);
+function hitParts(hit: { path: string; name: string; indices: number[] }) { return highlight(hit.path, hit.name, hit.indices); }
+function hitDirectory(path: string) { const cut = path.lastIndexOf("/"); return cut === -1 ? "" : path.slice(0, cut); }
+function openHit(hit: { path: string; name: string; kind: "file" | "directory" }) {
+  if (hit.kind === "directory") { void reveal(hit.path); query.value = ""; return; }
+  selected.value = hit.path;
+  emit("open", { path: hit.path, name: hit.name, kind: "file" } as FileEntry);
+}
 
 const rows = computed(() => flattenTree(directories.value, expanded.value, query.value));
 const root = computed(() => directories.value.get(""));
@@ -263,7 +291,16 @@ defineExpose({ reveal });
     <p v-if="revealFailure" class="inline-error" role="alert">{{ t('Could not locate {path} in the workspace.', { path: revealFailure }) }}</p>
     <p v-if="error" class="inline-error" role="alert">{{ error }}<button class="text-button" @click="error = ''">{{ t('Dismiss') }}</button></p>
     <div v-if="root?.error" class="inline-error tree-error" role="alert"><span>{{ root.error }}</span><button class="text-button" @click="loadDirectory('', true)">{{ t('Retry') }}</button></div>
-    <div ref="treeElement" class="file-list file-tree" role="tree" :aria-label="t('Workspace files')" :aria-busy="refreshing || root?.loading" :tabindex="rows.length ? -1 : 0">
+    <div v-if="searchingWorkspace" class="file-list search-results" role="listbox" :aria-label="t('Workspace search results')">
+      <button v-for="hit in searchHits" :key="hit.path" class="file-row search-hit" role="option" :aria-selected="selected === hit.path" @click="openHit(hit)">
+        <Icon :name="hit.kind === 'directory' ? 'folder' : 'file'" :size="15" />
+        <span class="search-hit-name"><template v-for="(part, index) in hitParts(hit)" :key="index"><mark v-if="part.match">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
+        <small class="search-hit-dir">{{ hitDirectory(hit.path) }}</small>
+      </button>
+      <p v-if="!searchHits.length" class="group-empty">{{ t('No files match this search.') }}</p>
+      <p v-else-if="workspaceResults?.truncated" class="group-empty">{{ workspaceResults?.timed_out ? t('The workspace is large; showing the matches found so far.') : t('More matches exist; refine the search to narrow them.') }}</p>
+    </div>
+    <div v-show="!searchingWorkspace" ref="treeElement" class="file-list file-tree" role="tree" :aria-label="t('Workspace files')" :aria-busy="refreshing || root?.loading" :tabindex="rows.length ? -1 : 0">
       <template v-for="row in rows" :key="row.entry.path">
         <button :ref="element => setRowRef(row.entry.path, element)" class="file-row tree-row" :class="{ 'is-selected': selected === row.entry.path, 'is-directory': row.entry.kind === 'directory' }" role="treeitem" :aria-level="row.depth + 1" :aria-posinset="row.position" :aria-setsize="row.siblings" :aria-expanded="row.entry.kind === 'directory' ? row.expanded : undefined" :aria-selected="selected === row.entry.path" :aria-label="row.entry.name" :aria-description="row.entry.path" :aria-busy="row.entry.kind === 'directory' ? directories.get(row.entry.path)?.loading : undefined" :tabindex="tabPath === row.entry.path ? 0 : -1" :style="{ '--tree-depth': row.depth }" :title="row.entry.path" :draggable="row.entry.kind === 'file'" @contextmenu="openRowMenu($event, row.entry)" @dragstart="drag($event, row.entry)" @click="open(row.entry)" @focus="focusedPath = row.entry.path" @keydown="navigate($event, row)">
           <i class="tree-disclosure" :class="{ expanded: row.expanded }"><Icon v-if="row.entry.kind === 'directory'" name="chevron" :size="11" /></i><Icon :name="row.entry.kind === 'directory' ? 'folder' : 'file'" :size="15" /><span>{{ row.entry.name }}</span><small v-if="row.entry.kind === 'symlink'" :title="t('Symbolic link')">↗</small><small v-else-if="row.entry.kind !== 'directory'">{{ formatBytes(row.entry.size) }}</small>
@@ -282,6 +319,13 @@ defineExpose({ reveal });
   </section>
 </template>
 <style scoped>
+.search-results{overflow:auto;flex:1;padding:0 7px 12px;min-height:0}
+.search-hit{align-items:center;gap:8px;padding:8px 7px;min-height:34px}
+.search-hit-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.search-hit-name mark{background:#d9efe6;color:#146d5e;border-radius:2px;padding:0 1px}
+/* The folder is context, not the answer, so it yields space to the name. */
+.search-hit-dir{flex-shrink:1;min-width:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:right;font-size:8px;color:#b0bac2}
+
 /* Teleported so the tree's own scrolling and clipping cannot cut it off. */
 .tree-menu-backdrop{position:fixed;inset:0;z-index:60}
 .tree-menu{position:fixed;min-width:198px;padding:5px;background:var(--surface);border:1px solid var(--border);border-radius:11px;box-shadow:0 14px 38px #243b4c2b}

@@ -93,7 +93,7 @@ mod tests {
     fn the_bridge_carries_the_modules_the_server_spawns_and_not_its_tests() {
         let names: Vec<_> = Bridge::iter().map(|name| name.to_string()).collect();
         // These are the entry points the server launches as child processes.
-        for required in ["history.mjs", "chat.mjs", "account.mjs"] {
+        for required in ["history.mjs", "chat.mjs", "account.mjs", "file-search.mjs"] {
             assert!(
                 names.iter().any(|name| name == required),
                 "{required} missing from {names:?}"

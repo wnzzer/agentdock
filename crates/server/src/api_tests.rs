@@ -2068,7 +2068,8 @@ async fn shared_canvas_uses_existing_authentication_and_health_capabilities() {
             "account_import_native",
             "agent_clients",
             "ephemeral_sessions",
-            "session_model"
+            "session_model",
+            "workspace_file_search"
         ])
     );
     let allowed = Request::builder()

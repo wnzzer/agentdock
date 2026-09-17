@@ -7,6 +7,7 @@ mod conversations;
 mod directories;
 mod embedded;
 mod environment;
+mod file_search;
 mod installation;
 mod model_catalog;
 mod native_config;
@@ -351,6 +352,7 @@ fn router(state: AppState) -> Router {
             get(get_layout).put(save_layout),
         )
         .route("/api/workspaces/{id}/files", get(list_files))
+        .route("/api/workspaces/{id}/files/search", get(search_files))
         .route(
             "/api/workspaces/{id}/file",
             get(read_file).put(write_file).delete(delete_file),
@@ -465,7 +467,7 @@ fn optional(value: Option<String>) -> Option<String> {
 }
 async fn health() -> Json<Value> {
     Json(
-        json!({"ok":true,"service":"agentdock-server","platform":env::consts::OS,"mode":"trusted-single-user","api_version":2,"capabilities":["shared_canvas","native_configurations","native_history","host_directories","endpoint_models","session_environment","structured_chat","official_accounts","session_configuration","session_archive","account_import_native","agent_clients","ephemeral_sessions","session_model"],"instance_label":env::var("AGENTDOCK_INSTANCE_LABEL").ok()}),
+        json!({"ok":true,"service":"agentdock-server","platform":env::consts::OS,"mode":"trusted-single-user","api_version":2,"capabilities":["shared_canvas","native_configurations","native_history","host_directories","endpoint_models","session_environment","structured_chat","official_accounts","session_configuration","session_archive","account_import_native","agent_clients","ephemeral_sessions","session_model","workspace_file_search"],"instance_label":env::var("AGENTDOCK_INSTANCE_LABEL").ok()}),
     )
 }
 
@@ -1229,6 +1231,21 @@ async fn delete_profile(State(state): State<AppState>, Path(id): Path<Uuid>) -> 
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn search_files(
+    State(state): State<AppState>,
+    Path(id): Path<WorkspaceId>,
+    Query(q): Query<file_search::SearchQuery>,
+) -> Result<Json<file_search::SearchResults>> {
+    Ok(Json(
+        file_search::search(
+            &state,
+            id,
+            q.q.as_deref().unwrap_or(""),
+            q.limit.unwrap_or(20),
+        )
+        .await?,
+    ))
+}
 async fn list_files(
     State(state): State<AppState>,
     Path(id): Path<WorkspaceId>,

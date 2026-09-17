@@ -115,7 +115,7 @@ pub fn valid_id(id: &str) -> bool {
 /// Node.js is the bundled bridge's default runtime. Retain the earlier Node
 /// override for existing deployments, with the runtime-neutral setting taking
 /// precedence. An empty setting is treated as absent, not as an executable.
-fn js_runtime(primary: Option<OsString>, legacy: Option<OsString>) -> OsString {
+pub(crate) fn js_runtime(primary: Option<OsString>, legacy: Option<OsString>) -> OsString {
     primary
         .filter(|value| !value.is_empty())
         .or_else(|| legacy.filter(|value| !value.is_empty()))
