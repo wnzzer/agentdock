@@ -91,7 +91,10 @@ jobs:
   npm:
     name: npm
     needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    # Runs on workflow_dispatch too, publishing nothing. Putting a package on
+    # the registry cannot be undone — unpublishing is allowed only briefly and
+    # burns the version number for good — so the job that does it should have
+    # been run before the run that matters.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -114,10 +117,16 @@ jobs:
         run: |
           set -euo pipefail
           version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-          tag="${GITHUB_REF_NAME#v}"
-          if [ "$version" != "$tag" ]; then
-            echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $version" >&2
-            exit 1
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME#v}"
+            if [ "$version" != "$tag" ]; then
+              echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $version" >&2
+              exit 1
+            fi
+            echo "dry_run=" >> "$GITHUB_OUTPUT"
+          else
+            echo "not a tag: building the packages and publishing nothing"
+            echo "dry_run=--dry-run" >> "$GITHUB_OUTPUT"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -131,6 +140,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
+          DRY_RUN: ${{ steps.version.outputs.dry_run }}
         run: |
           set -euo pipefail
           # Read the list up front rather than piping it into the loop: npm
@@ -146,9 +156,9 @@ jobs:
               continue
             fi
             echo "+ publishing ${name}@${VERSION}"
-            npm publish "dist-npm/${pkg}" --access public </dev/null
+            npm publish "dist-npm/${pkg}" --access public $DRY_RUN </dev/null
           done
-          echo "published $(echo "$packages" | wc -l | tr -d " ") packages at ${VERSION}"
+          echo "processed $(echo "$packages" | wc -l | tr -d " ") packages at ${VERSION} ${DRY_RUN}"
 
   publish:
     needs: build

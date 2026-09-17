@@ -127,5 +127,10 @@ test('the published version always matches the workspace it was built from', asy
   // The job derives the version from Cargo.toml and refuses a tag that disagrees,
   // so a mistyped tag cannot put a wrong version on the registry permanently.
   assert.match(workflow, /does not match Cargo\.toml version/);
+  // Publishing cannot be undone, so the job must be exercisable without doing
+  // it: anything that is not a tag builds the packages and passes --dry-run.
+  assert.match(workflow, /GITHUB_REF_TYPE.*=.*"tag"|\$\{GITHUB_REF_TYPE\}" = "tag"/);
+  assert.match(workflow, /dry_run=--dry-run/);
+  assert.match(workflow, /npm publish "dist-npm\/\$\{pkg\}" --access public \$DRY_RUN/);
   assert.ok(/^\d+\.\d+\.\d+/.test(version), `Cargo version ${version} is not publishable as-is`);
 });
