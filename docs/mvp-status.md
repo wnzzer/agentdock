@@ -2,6 +2,20 @@
 
 2026-09-09，macOS / Rust + Vue。
 
+## 2026-09-17 更新：npm 分发（已验证，尚未发布）
+
+- 发布形态为「主包 + 四个平台包」：`@wnzzer/agentdock` 只含一个 CommonJS shim，`@wnzzer/agentdock-{darwin-arm64,darwin-x64,linux-x64,linux-arm64}` 各含一个二进制，由 npm 依据 `os`/`cpu` 只下载匹配本机的那一个。无 postinstall，`--ignore-scripts` 环境可安装。
+- 二进制已内嵌 web 产物与 Node 桥接，单文件 5.4–6.3 MB。以真实 release 产物验证：四个包的架构与包名一一对应、可执行位经 `npm pack` 保留、安装后 shim 能解析并启动二进制、启动时释放 9 个桥接文件（含打包的 Claude Agent SDK）、内嵌前端资源返回 200。
+- shim 的失败路径同样验证：缺平台包时说明是 optional dependency 被跳过及补救命令；不支持的平台列出已支持平台；退出码透传；SIGTERM 发给 shim 时服务器随之退出，不留孤儿进程。
+- `release.yml` 新增 `npm` job，并且在 `workflow_dispatch` 下也运行、只做 `--dry-run`。理由是 npm 版本号不可撤回，不应让首次执行就是不可重来的那一次。
+- 该决定当场生效：**第一次干跑即失败**。`npm publish dist-npm/<pkg>` 的参数符合 npm 的 `owner/repo` GitHub 简写，被当作远程仓库经 ssh 拉取并以公钥错误告终；本地两种写法均复现，`./` 前缀修复。若无干跑，这会在 tag 已存在、GitHub Release 已创建之后以同样方式失败。
+- 同批修掉另一处静默失败：发布循环原用 `done < publish-order.txt`，npm 继承该 stdin 会吞掉其余包名。以会读 stdin 的桩 npm 验证，五个包只发出一个且退出码为 0。改为先读入再循环，并给每个 npm 调用接 `/dev/null`；列表读取使用 `$(cat ...)` 而非 `mapfile`，以兼容 macOS 的 bash 3.2（已在 3.2 下验证五个按序处理）。
+- 因 `--dry-run` 不进行认证，增加 `npm whoami` 前置检查。以 `actions/setup-node` 实际写出的 `.npmrc` 在本地验证：带 token 返回 `wnzzer`，无 token 以 `ENEEDAUTH` 失败。当前 token 为 granular access token，`package: write` 全量作用域，**2026-12-15 过期**。
+- 补入仓库根 `LICENSE`（`Cargo.toml` 一直声明 MIT 而无正文），并将 `docs/third-party-notices.md` 以 `THIRD-PARTY-NOTICES.md` 随包发布——二进制内嵌 web 产物，后者内嵌 MIT 许可的品牌矢量，发布到 registry 即再分发。
+- 干跑结果：四目标交叉编译成功，npm job 对 `registry.npmjs.org` 按序处理 5 个包（四个平台包在前、主包最后），`public access`、`(dry-run)`，未发布任何内容。
+- **未验证**：真实上传本身（不发布即无法覆盖）；`publish` job（GitHub Release）仅在 tag 上运行，其唯一非平凡步骤 `sha256sum * > SHA256SUMS` 已在本地确认不会把输出文件计入自身。该 job 失败可重跑，且 Release 可删除，与 npm 版本号不可逆的性质不同，故未同样做成可干跑。
+- 当前验证：Node **400 项**、Rust **130 项**，Vue typecheck、Vite build、Rust fmt、Clippy `-D warnings` 全部通过。8787 后端未重启，其 3 个运行中用户会话保持不变。
+
 ## 2026-09-15 更新：会话标题与 Claude 原生命名
 
 - 会话已有持久化 `title` 字段，现在从侧边栏或会话页菜单可直接重命名；桌面使用小弹窗，侧边栏使用行内编辑。保存只 PATCH 标题，不启动/停止进程，不改变 Session ID、工作区、原生恢复 ID、历史或已打开的窗口。
