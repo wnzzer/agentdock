@@ -2,7 +2,20 @@
 
 A host-native workspace for official Claude Code / Codex clients, built with Rust + Vue 3 + TypeScript. Light UI, recursive split/tab docking, first-class Git review, files and optional terminals. No Docker requirement.
 
-## Run locally (macOS / Linux)
+## Install
+
+```sh
+npm i -g @wnzzer/agentdock   # or: npx @wnzzer/agentdock
+agentdock
+```
+
+One prebuilt binary per platform, carrying the Web client and the native bridge inside it. npm fetches only the one matching this machine, through `os`/`cpu` on its optional dependencies; there is no postinstall step, so `--ignore-scripts` installs work. Prebuilt for macOS (arm64, x64) and Linux (x64, arm64, static musl). Other platforms build from source below.
+
+Node is a requirement rather than an extra: the native-history and conversation bridges run as Node subprocesses, and Claude Code and Codex are themselves installed from npm.
+
+Tarballs with a `SHA256SUMS` are attached to each [release](https://github.com/wnzzer/agentdock/releases) for installing without npm.
+
+## Build from source (macOS / Linux)
 
 Requires Rust stable (1.89+), **Node.js 24+** and **pnpm 10.30.3**. `.nvmrc` / `.node-version` and CI use Node 24; an installed newer Node is also supported by the project engine range. Install Claude Code and/or Codex separately.
 

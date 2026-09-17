@@ -88,6 +88,61 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  npm:
+    name: npm
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          # Writes the .npmrc that reads NODE_AUTH_TOKEN, so the token never
+          # has to be echoed into a file of our own.
+          registry-url: 'https://registry.npmjs.org'
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      # The packages carry a version that must be the one being tagged. Deriving
+      # it from the manifest and checking the tag agrees stops a tag typo from
+      # publishing a version nobody asked for.
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$tag" ]; then
+            echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - run: node npm/build-packages.mjs "${{ steps.version.outputs.version }}" artifacts
+
+      # Ordered by the build script: every platform package before the one that
+      # depends on them, so an install can never resolve to a shim with no
+      # binary behind it. Already-published versions are skipped rather than
+      # failing, which is what makes a half-finished publish re-runnable.
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          while read -r pkg; do
+            name="@wnzzer/${pkg}"
+            if npm view "${name}@${VERSION}" version >/dev/null 2>&1; then
+              echo "= ${name}@${VERSION} already published"
+              continue
+            fi
+            echo "+ publishing ${name}@${VERSION}"
+            npm publish "dist-npm/${pkg}" --access public
+          done < dist-npm/publish-order.txt
+
   publish:
     needs: build
     if: startsWith(github.ref, 'refs/tags/')

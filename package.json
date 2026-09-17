@@ -2,7 +2,10 @@
   "name": "agentdock",
   "private": true,
   "packageManager": "pnpm@10.30.3",
-  "engines": { "node": ">=24", "pnpm": ">=10 <11" },
+  "engines": {
+    "node": ">=24",
+    "pnpm": ">=10 <11"
+  },
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -13,9 +16,11 @@
     "dev:web": "pnpm --dir apps/web dev",
     "build:web": "pnpm --dir apps/web build",
     "typecheck:web": "pnpm --dir apps/web typecheck",
-    "test": "node --no-experimental-webstorage --import tsx --test --test-timeout=30000 \"apps/web/src/**/*.test.mjs\" \"packages/native-bridge/**/*.test.mjs\"",
+    "test": "node --no-experimental-webstorage --import tsx --test --test-timeout=30000 \"apps/web/src/**/*.test.mjs\" \"packages/native-bridge/**/*.test.mjs\" \"npm/**/*.test.mjs\"",
     "check": "pnpm typecheck:web && pnpm test",
     "init": "cargo run -p agentdock-server -- init"
   },
-  "devDependencies": { "tsx": "4.23.13" }
+  "devDependencies": {
+    "tsx": "4.23.13"
+  }
 }
