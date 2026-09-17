@@ -43,6 +43,18 @@ function codexModels(result) {
 const requestKey=id=>typeof id+':'+String(id);
 const itemStatus=item=>['failed','declined','cancelled'].includes(item.status)||item.success===false?'failed':item.status==='inProgress'?'running':'completed';
 
+/**
+ * How AgentDock's modes reach Codex. It approves per command rather than by
+ * switching review modes, so only the two ends of the range translate: ask, and
+ * the policy that stops asking. `danger` also drops the sandbox, because an
+ * unattended run blocked by the sandbox instead of by a prompt is the same
+ * interruption under a different name.
+ */
+const CODEX_APPROVAL={
+  ask:{approvalPolicy:'on-request'},
+  danger:{approvalPolicy:'never',sandboxPolicy:{type:'dangerFullAccess'}},
+};
+
 export class CodexChat extends ChatBase {
   async initialize() {
     this.launch=codexLaunch(this.job);this.tools=new Map();
@@ -67,6 +79,18 @@ export class CodexChat extends ChatBase {
    * Codex takes the model per turn, so the next `turn/start` carries the new
    * one and the thread — with all of its context — stays exactly as it is.
    */
+  // Codex approves per command rather than per mode, so it has no plan or
+  // accept-edits equivalent to offer. `danger` is the policy that stops asking.
+  get permissionModes(){return ['ask','danger'];}
+  setPermissionMode(message) {
+    if(this.active)throw Error('Wait for the current turn to finish before changing permissions.');
+    const policy=CODEX_APPROVAL[message.mode];
+    if(!policy)throw Error('Codex approves each command rather than switching between review modes.');
+    this.approvalPolicy=policy.approvalPolicy;
+    this.sandboxPolicy=policy.sandboxPolicy;
+    this.permissionMode=message.mode;
+    this.settings(this.models,this.launch.thread.model??this.defaultModel,this.effort);
+  }
   selectModel(message) {
     if(this.active)throw Error('Wait for the current turn to finish before changing the model.');
     if(message.model)this.launch.thread.model=message.model;
@@ -85,7 +109,7 @@ export class CodexChat extends ChatBase {
       if(active.interrupted){this.finish('interrupted');return;}
       // Codex takes both per turn, so a change applies to the next one without
       // touching the thread or its context.
-      const result=await this.port.rpc('turn/start',{threadId:this.nativeSessionId,input:[{type:'text',text:message.content}],...(this.launch.thread.model?{model:this.launch.thread.model}:{}),...(this.effort?{effort:this.effort}:{})});
+      const result=await this.port.rpc('turn/start',{threadId:this.nativeSessionId,input:[{type:'text',text:message.content}],...(this.launch.thread.model?{model:this.launch.thread.model}:{}),...(this.effort?{effort:this.effort}:{}),...(this.approvalPolicy?{approvalPolicy:this.approvalPolicy}:{}),...(this.sandboxPolicy?{sandboxPolicy:this.sandboxPolicy}:{})});
       if(this.active===active){active.nativeTurn=result?.turn?.id;if(active.interrupted)await this.sendInterrupt(active);}
     }catch(error){if(this.active===active){this.error(error.message);this.finish(active.interrupted?'interrupted':'failed');}}
   }

@@ -1,6 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import { ChatBase, NativeProcess, clip, nativeId, MAX_TEXT } from './chat-common.mjs';
 
+/**
+ * AgentDock's names for how tools get approved, and Claude Code's.
+ *
+ * Two vocabularies because two clients: the names sent over this pipe have to
+ * mean the same thing for Codex, whose approval model is not Claude's. Mapping
+ * here keeps the translation next to the client it translates for.
+ */
+const CLAUDE_PERMISSION={ask:'default',plan:'plan',accept_edits:'acceptEdits',danger:'bypassPermissions'};
+const AGENTDOCK_PERMISSION=Object.fromEntries(Object.entries(CLAUDE_PERMISSION).map(([ours,theirs])=>[theirs,ours]));
+// The client calls the ask-every-time mode `default` on current builds and
+// `manual` on older ones. Both mean the same thing to a person.
+AGENTDOCK_PERMISSION.manual='ask';
+
 export function claudeLaunch(job) {
   const args=[];let resume=job.resume_id,settingSources=false,sessionId,model;
   const values=new Set(['--model','--permission-mode','--permission-prompts','--settings','--setting-sources','--append-system-prompt','--system-prompt','--agent','--agents','--effort','--max-budget-usd','--fallback-model','--allowedTools','--allowed-tools','--disallowedTools','--disallowed-tools','--tools','--add-dir','--plugin-dir','--mcp-config','--name','-n']);
@@ -21,6 +34,12 @@ export function claudeLaunch(job) {
   }
   if(resume&&sessionId&&resume!==sessionId)throw Error('Conflicting Claude Code session identifiers.');
   if(resume)args.push('--resume',resume);
+  // Permit switching into the unattended mode later without permitting it now:
+  // the client refuses `set_permission_mode` to bypassPermissions unless it was
+  // launched this way, and this flag is the one that allows rather than the one
+  // that enables. The mode in force is stated explicitly once the session is
+  // running, so it is never inherited from whatever this flag implies.
+  args.push('--allow-dangerously-skip-permissions');
   if(!settingSources)args.push('--setting-sources','user,project,local');
   args.push('--print','--verbose','--input-format','stream-json','--output-format','stream-json','--include-partial-messages','--permission-prompt-tool','stdio');
   return {args,resume,sessionId,model};
@@ -88,6 +107,27 @@ export class ClaudeChat extends ChatBase {
     this.model=model;this.effort=effort??this.effort;
     this.settings(this.models,this.model,this.effort);
   }
+  /**
+   * Change how tools are approved, on the session already running.
+   *
+   * The client owns this: it accepts the change, applies it, and announces the
+   * mode it ended up in through a status message. What comes back is what is
+   * reported, so the interface shows the client's own state rather than the one
+   * that was asked for -- they differ when the client declines.
+   */
+  get permissionModes(){return ['ask','plan','accept_edits','danger'];}
+  async setPermissionMode(message) {
+    if(this.active)throw Error('Wait for the current turn to finish before changing permissions.');
+    const mode=CLAUDE_PERMISSION[message.mode];
+    if(!mode)throw Error('Unsupported permission mode.');
+    const result=await this.port.rpc('set_permission_mode',{mode},true);
+    // The answer comes back in the client's own vocabulary, so it is translated
+    // before it is reported. An answer this bridge cannot name is left to the
+    // status message to settle rather than guessed at here.
+    const applied=AGENTDOCK_PERMISSION[typeof result?.mode==='string'?result.mode:mode];
+    if(applied)this.permissionMode=applied;
+    this.settings(this.models,this.model,this.effort);
+  }
   message(message) {
     const active=this.begin(message);if(!active)return;
     this.assistantId=undefined;this.finalAssistant=false;
@@ -102,6 +142,13 @@ export class ClaudeChat extends ChatBase {
     if(!message||typeof message!=='object')return;
     if(message.type==='control_request'){this.request(message);return;}
     if(message.type==='control_cancel_request'){this.resolveNative(String(message.request_id));return;}
+    // The client reports the mode it is actually in, including after a change
+    // it made itself. Following its word rather than the last request is what
+    // keeps the interface from claiming a mode the client is not in.
+    if(message.type==='system'&&typeof message.permissionMode==='string'){
+      const mode=AGENTDOCK_PERMISSION[message.permissionMode];
+      if(mode&&mode!==this.permissionMode){this.permissionMode=mode;this.settings(this.models,this.model,this.effort);}
+    }
     if(message.type==='system'&&message.subtype==='init'){
       this.announce(message.session_id,commandNames(message.slash_commands));
       // The init message names the model actually in use. Knowing it is what

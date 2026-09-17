@@ -151,6 +151,10 @@ pub fn routes() -> Router<AppState> {
         .route("/api/sessions/{id}/conversation/interrupt", post(interrupt))
         .route("/api/sessions/{id}/conversation/approval", post(approval))
         .route("/api/sessions/{id}/conversation/model", post(select_model))
+        .route(
+            "/api/sessions/{id}/conversation/permission",
+            post(select_permission),
+        )
         .route("/api/sessions/{id}/configuration", patch(configuration))
         .route("/api/sessions/{id}/chat/ws", get(socket))
 }
@@ -453,6 +457,11 @@ async fn interrupt(State(state): State<AppState>, Path(id): Path<SessionId>) -> 
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct PermissionInput {
+    mode: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ModelInput {
     #[serde(default)]
     model: Option<String>,
@@ -499,6 +508,39 @@ async fn select_model(
         .await?;
     Ok(accepted(None, false))
 }
+/// How tools get approved, for a session that is already running.
+///
+/// The names are AgentDock's and each bridge translates them, because the two
+/// clients do not model this the same way: Claude Code switches a session-wide
+/// mode, Codex decides per command. `danger` is the one that stops asking, and
+/// it is named for what it costs rather than for what it saves.
+///
+/// Which modes a session actually offers comes from the client, in the same
+/// settings event as its model list — Codex has no plan or accept-edits, and a
+/// control that errors when used would be worse than one that is not there.
+const PERMISSION_MODES: [&str; 4] = ["ask", "plan", "accept_edits", "danger"];
+
+async fn select_permission(
+    State(state): State<AppState>,
+    Path(id): Path<SessionId>,
+    Json(input): Json<PermissionInput>,
+) -> Result<CommandAck> {
+    let _guard = state.operations.lock().await;
+    session_record(&state, id).await?;
+    if !PERMISSION_MODES.contains(&input.mode.as_str()) {
+        return Err(ApiError::bad("Unsupported permission mode."));
+    }
+    let runtime = state
+        .chats
+        .get(id)
+        .filter(|r| r.running())
+        .ok_or_else(|| ApiError::conflict("Start the session before changing permissions"))?;
+    runtime
+        .send(json!({"type": "permission", "mode": input.mode}))
+        .await?;
+    Ok(accepted(None, false))
+}
+
 /// Absent means "leave the depth as it is". A `null` would reach the bridge as a
 /// present-but-unusable value and be rejected, so the field is omitted entirely.
 fn model_command(model: Option<&str>, effort: Option<&str>) -> Value {
@@ -890,7 +932,14 @@ fn normalize_event(mut value: Value) -> Option<Value> {
     let object = value.as_object_mut()?;
     let allowed: &[&str] = match object.get("type")?.as_str()? {
         "ready" => &["type", "native_session_id", "commands"],
-        "settings" => &["type", "model", "effort", "models"],
+        "settings" => &[
+            "type",
+            "model",
+            "effort",
+            "models",
+            "permission_mode",
+            "permission_modes",
+        ],
         "cleared" => &["type"],
         "message" => &["type", "id", "role", "text", "delta"],
         "tool" => &["type", "id", "name", "status", "text", "activity"],

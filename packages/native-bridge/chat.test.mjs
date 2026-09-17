@@ -300,3 +300,53 @@ test('a model announcement keeps the marker naming the configuration default',()
   chat.settings([{id:'x',name:'X',isDefault:'yes'}],undefined,undefined);
   assert.equal(events.at(-1).models[0].isDefault,undefined);
 });
+
+test('permission mode is the client\'s answer, and the unsupported ones are refused', async () => {
+  // Claude switches a session-wide mode; Codex decides per command and has no
+  // plan or accept-edits. The offered list therefore comes from the client, so
+  // the composer never shows a control that errors when used.
+  const { ClaudeChat } = await import('./chat-claude.mjs');
+  const { CodexChat } = await import('./chat-codex.mjs');
+  assert.deepEqual(ClaudeChat.prototype.permissionModes, ['ask', 'plan', 'accept_edits', 'danger']);
+  assert.deepEqual(CodexChat.prototype.permissionModes, ['ask', 'danger']);
+});
+
+test('the launch permits switching into the unattended mode without starting in it', async () => {
+  const { claudeLaunch } = await import('./chat-claude.mjs');
+  const { args } = claudeLaunch({ args: [], cwd: '/tmp', program: 'claude' });
+  // The client refuses set_permission_mode to bypassPermissions unless launched
+  // this way; this is the flag that allows rather than the one that enables.
+  assert.ok(args.includes('--allow-dangerously-skip-permissions'), args.join(' '));
+  assert.ok(!args.includes('--dangerously-skip-permissions'), 'that flag would start the session already bypassed');
+  // And a launch option asking for bypass directly is still refused.
+  assert.throws(() => claudeLaunch({ args: ['--permission-mode', 'bypassPermissions'], cwd: '/tmp', program: 'claude' }), /bypass/i);
+});
+
+test('an invented permission mode never reaches a client', async () => {
+  const { validateChatInput } = await import('./chat.mjs');
+  for (const mode of ['bypassPermissions', 'danger-full-access', '', 'DANGER', 'ask ', undefined])
+    assert.throws(() => validateChatInput({ type: 'permission', mode }), /permission mode/i, String(mode));
+  for (const mode of ['ask', 'plan', 'accept_edits', 'danger'])
+    assert.equal(validateChatInput({ type: 'permission', mode }).mode, mode);
+});
+
+test('the client answers in its own vocabulary, and never in the interface\'s', async () => {
+  const { ClaudeChat } = await import('./chat-claude.mjs');
+  const settingsFor = async (reply, requested) => {
+    const events = [];
+    const chat = new ClaudeChat({ args: [] }, event => events.push(event), {});
+    chat.port = { rpc: async () => reply };
+    await chat.setPermissionMode({ mode: requested });
+    return events.filter(event => event.type === 'settings').pop();
+  };
+  // `default` is what Claude calls asking every time. Reporting that word would
+  // put a mode on screen that no control offers and no label names.
+  assert.equal((await settingsFor({ mode: 'default' }, 'ask')).permission_mode, 'ask');
+  assert.equal((await settingsFor({ mode: 'bypassPermissions' }, 'danger')).permission_mode, 'danger');
+  assert.equal((await settingsFor({ mode: 'acceptEdits' }, 'accept_edits')).permission_mode, 'accept_edits');
+  // A client that answers with silence still applied what was asked of it.
+  assert.equal((await settingsFor({}, 'plan')).permission_mode, 'plan');
+  // An answer this bridge cannot name is left for the status message to settle,
+  // rather than reported as the mode that happened to be requested.
+  assert.equal((await settingsFor({ mode: 'someFutureMode' }, 'ask')), undefined);
+});

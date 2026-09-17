@@ -354,3 +354,40 @@ test('an event without activity leaves existing progress alone', () => {
   assert.equal(card.activity, 'searching');
   assert.equal(card.text, 'done');
 });
+
+test('how tools are approved is the client\'s own reported state, and a new endpoint knows none of it', () => {
+  const history = [
+    { seq: 1, type: 'ready', commands: ['model'] },
+    { seq: 2, type: 'settings', models: [{ id: 'opus', name: 'Opus' }], permission_mode: 'ask', permission_modes: ['ask', 'plan', 'accept_edits', 'danger'] },
+    { seq: 3, type: 'message', id: 'u1', role: 'user', text: 'keep me' },
+    { seq: 4, type: 'settings', models: [{ id: 'opus', name: 'Opus' }], permission_mode: 'danger', permission_modes: ['ask', 'plan', 'accept_edits', 'danger'] },
+  ];
+  const view = conversationView(history);
+  // Switching how tools are approved is not a context boundary either: the
+  // transcript stands and the client stays ready.
+  assert.equal(view.items.length, 1);
+  assert.equal(view.ready, true);
+  assert.equal(view.permissionMode, 'danger');
+  assert.deepEqual(view.permissionModes, ['ask', 'plan', 'accept_edits', 'danger']);
+  // The set is the client's answer, so a client offering fewer modes offers
+  // fewer: Codex has no plan or accept-edits to switch into.
+  const codex = conversationView([{ seq: 1, type: 'settings', permission_mode: 'ask', permission_modes: ['ask', 'danger'] }]);
+  assert.deepEqual(codex.permissionModes, ['ask', 'danger']);
+  // A different endpoint is a different client, so its modes are unknown until
+  // it says, exactly as its models are.
+  const switched = conversationView([...history, { seq: 5, type: 'configuration', id: 'c', profile_name: 'Other', text: 'New context' }]);
+  assert.equal(switched.permissionMode, undefined);
+  assert.deepEqual(switched.permissionModes, []);
+});
+
+test('an unattended mode survives pruning, and an invented one never reaches the view', () => {
+  const pruned = pruneChatEvents([
+    { seq: 1, type: 'settings', models: [{ id: 'opus', name: 'Opus' }], permission_mode: 'danger', permission_modes: ['ask', 'danger'] },
+    ...Array.from({ length: 30 }, (_, index) => ({ seq: index + 2, type: 'message', id: 'm' + index, role: 'user', text: 'x' })),
+  ], 5);
+  assert.equal(conversationView(pruned.events).permissionMode, 'danger');
+  assert.equal(isChatEvent({ type: 'settings', permission_mode: 'danger' }), true);
+  assert.equal(isChatEvent({ type: 'settings', permission_mode: 7 }), false);
+  assert.equal(isChatEvent({ type: 'settings', permission_modes: ['ask', 'Danger Mode'] }), false);
+  assert.equal(isChatEvent({ type: 'settings', permission_modes: Array.from({ length: 9 }, () => 'ask') }), false);
+});

@@ -172,8 +172,15 @@ export class ChatBase {
       : undefined;
     const selected=typeof model==='string'&&model&&model.length<=128?model:undefined;
     const depth=typeof effort==='string'&&/^[a-z]{1,16}$/.test(effort)?effort:undefined;
-    if(!list?.length&&!selected&&!depth)return;
-    this.emit({type:'settings',...(selected?{model:selected}:{}),...(depth?{effort:depth}:{}),...(list?.length?{models:list}:{})});
+    // How tools are approved is the client's own state, reported alongside the
+    // rest of what this session is currently set to.
+    const permission=typeof this.permissionMode==='string'&&/^[a-z_]{1,24}$/.test(this.permissionMode)?this.permissionMode:undefined;
+    // Which modes exist is the client's answer, not this bridge's: Codex has no
+    // equivalent of plan or accept-edits, and offering a control that errors on
+    // use would be worse than not offering it.
+    const available=Array.isArray(this.permissionModes)&&this.permissionModes.length?this.permissionModes.filter(mode=>/^[a-z_]{1,24}$/.test(mode)).slice(0,8):undefined;
+    if(!list?.length&&!selected&&!depth&&!permission)return;
+    this.emit({type:'settings',...(selected?{model:selected}:{}),...(depth?{effort:depth}:{}),...(permission?{permission_mode:permission}:{}),...(available?.length?{permission_modes:available}:{}),...(list?.length?{models:list}:{})});
   }
   approval(key, description, answer) {
     if(this.approvals.has(key))return;

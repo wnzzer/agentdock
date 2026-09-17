@@ -9,7 +9,7 @@ export interface NativeModel { id: string; name: string; description?: string; e
 export interface ApprovalQuestion { id: string; header?: string; question: string; options: Array<{ label: string; description?: string }>; isSecret?: boolean; isOther?: boolean; multiSelect?: boolean }
 export type ChatEvent = ({ seq?: number } & (
   | { type: 'ready'; native_session_id?: string; commands?: string[] }
-  | { type: 'settings'; model?: string; effort?: string; models?: NativeModel[] }
+  | { type: 'settings'; model?: string; effort?: string; models?: NativeModel[]; permission_mode?: string; permission_modes?: string[] }
   | { type: 'message'; id: string; role: 'user' | 'assistant'; text: string; delta?: boolean }
   | { type: 'tool'; id: string; name: string; status: 'running' | 'completed' | 'failed'; text?: string; activity?: string }
   | { type: 'approval'; id: string; title: string; text: string; choices: string[]; questions?: ApprovalQuestion[] }
@@ -38,7 +38,7 @@ function clipTail(value: string, limit: number) {
 export function conversationView(events: readonly ChatEvent[], running?: boolean) {
   const items: ChatItem[] = [], indexes = new Map<string, number>(), seen = new Set<number>();
   let turn: 'idle' | 'running' | 'completed' | 'failed' | 'interrupted' = 'idle';
-  let ready = false, exited = false, commands: string[] = [], announced = false, models: NativeModel[] = [], model: string | undefined, effort: string | undefined, usage: { input_tokens?: number; output_tokens?: number; context_tokens?: number; context_window?: number } = {};
+  let ready = false, exited = false, commands: string[] = [], announced = false, models: NativeModel[] = [], model: string | undefined, effort: string | undefined, permissionMode: string | undefined, permissionModes: string[] = [], usage: { input_tokens?: number; output_tokens?: number; context_tokens?: number; context_window?: number } = {};
   for (const event of events) {
     if (event.seq !== undefined) { if (seen.has(event.seq)) continue; seen.add(event.seq); }
     if (event.type === 'message') {
@@ -64,11 +64,11 @@ export function conversationView(events: readonly ChatEvent[], running?: boolean
       if (previous?.type === 'approval') previous.resolved = true;
     } else if (event.type === 'turn') turn = event.status;
     else if (event.type === 'ready') { ready = true; exited = false; commands = event.commands ?? []; announced = true; }
-    else if (event.type === 'settings') { if (event.models?.length) models = event.models; if (event.model) model = event.model; if (event.effort) effort = event.effort; }
+    else if (event.type === 'settings') { if (event.models?.length) models = event.models; if (event.model) model = event.model; if (event.effort) effort = event.effort; if (event.permission_mode) permissionMode = event.permission_mode; if (event.permission_modes?.length) permissionModes = event.permission_modes; }
     else if (event.type === 'usage') { const { seq: _seq, type: _type, ...values } = event; usage = { ...usage, ...values }; }
     // A new endpoint means a new native client: its command list is whatever it
     // announces next, never the previous client's.
-    else if (event.type === 'configuration') { for (const item of items) if (item.type === 'approval') item.resolved = true; indexes.clear(); items.push(event); ready = false; turn = 'idle'; commands = []; announced = false; models = []; model = undefined; effort = undefined; }
+    else if (event.type === 'configuration') { for (const item of items) if (item.type === 'approval') item.resolved = true; indexes.clear(); items.push(event); ready = false; turn = 'idle'; commands = []; announced = false; models = []; model = undefined; effort = undefined; permissionMode = undefined; permissionModes = []; }
     // The client cleared its own context. Keeping the transcript would show a
     // conversation the client can no longer refer to, which is what made
     // /clear look like it had done nothing.
@@ -79,7 +79,7 @@ export function conversationView(events: readonly ChatEvent[], running?: boolean
   // Runtime state outranks stale display history after server restart. Old
   // approvals refer to lost native RPCs and cannot be answered as live ones.
   if (running === false) { ready = false; if (turn === 'running') turn = 'interrupted'; for (const item of items) if (item.type === 'approval') item.resolved = true; }
-  return { items, turn, ready, exited, usage, commands, commandsAnnounced: announced, models, model, effort, awaitingApproval: items.some(item => item.type === 'approval' && !item.resolved) };
+  return { items, turn, ready, exited, usage, commands, commandsAnnounced: announced, models, model, effort, permissionMode, permissionModes, awaitingApproval: items.some(item => item.type === 'approval' && !item.resolved) };
 }
 
 /** WS events are already ordered. A replayed sequence must not append deltas twice. */
@@ -123,6 +123,8 @@ export function isChatEvent(value: unknown): value is ChatEvent {
     case 'ready': return (v.native_session_id === undefined || text('native_session_id'))
       && (v.commands === undefined || Array.isArray(v.commands) && v.commands.length <= 400 && v.commands.every(name => typeof name === 'string' && /^[A-Za-z0-9][\w:-]{0,63}$/.test(name)));
     case 'settings': return (v.model === undefined || text('model')) && (v.effort === undefined || text('effort'))
+      && (v.permission_mode === undefined || text('permission_mode'))
+      && (v.permission_modes === undefined || Array.isArray(v.permission_modes) && v.permission_modes.length <= 8 && v.permission_modes.every(mode => typeof mode === 'string' && /^[a-z_]{1,24}$/.test(mode)))
       && (v.models === undefined || Array.isArray(v.models) && v.models.length <= 64 && v.models.every(entry => {
         if (!entry || typeof entry !== 'object') return false;
         const m = entry as Record<string, unknown>;

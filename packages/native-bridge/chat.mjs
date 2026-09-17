@@ -24,6 +24,11 @@ export function validateChatInput(message, first=false) {
     if(message.model!==undefined&&(typeof message.model!=='string'||!message.model.trim()||message.model.length>128||/[\u0000-\u001f]/.test(message.model)))throw Error('Invalid model selection.');
     if(message.effort!==undefined&&(typeof message.effort!=='string'||!/^[a-z]{1,16}$/.test(message.effort)))throw Error('Invalid reasoning effort.');
     if(message.model===undefined&&message.effort===undefined)throw Error('Choose a model or a thinking depth.');
+  }else if(message.type==='permission'){
+    // AgentDock's own vocabulary, translated per client. `danger` is the one
+    // that stops asking; it is named for what it costs rather than for what it
+    // saves, so nobody selects it by mistake.
+    if(!['ask','plan','accept_edits','danger'].includes(message.mode))throw Error('Unsupported permission mode.');
   }else if(!['interrupt','shutdown'].includes(message.type))throw Error('Unsupported chat control message.');
   return message;
 }
@@ -62,6 +67,7 @@ export function runChatBridge(input=process.stdin,output=process.stdout,options=
           else if(message.type==='approval')runtime.answer(message);
           else if(message.type==='interrupt')await runtime.interrupt();
           else if(message.type==='model')await runtime.selectModel(message);
+          else if(message.type==='permission')await runtime.setPermissionMode(message);
           else await shutdown();
         }
       }catch(error){emit({type:'error',message:error instanceof Error?error.message:'Native chat operation failed.'});if(!initialized){void shutdown();}}
