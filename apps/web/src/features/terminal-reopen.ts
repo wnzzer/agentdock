@@ -15,8 +15,13 @@ import { json, request } from "./api";
  * conversation pane is left untouched and its history survives closing the
  * terminal.
  */
-export const terminalReopen = (session: Pick<Session, "id">) =>
-  request<Session>(`/sessions/${encodeURIComponent(session.id)}/terminal`, json("POST"));
+export async function terminalReopen(session: Pick<Session, "id">): Promise<Session> {
+  const opened = await request<Session>(`/sessions/${encodeURIComponent(session.id)}/terminal`, json("POST"));
+  // Creating a session launches nothing, here as everywhere else. Starting it
+  // is a separate step through the ordinary route, which already reports a
+  // client that will not run; the terminal is then live when its pane opens.
+  return await request<Session>(`/sessions/${encodeURIComponent(opened.id)}/start`, json("POST"));
+}
 
 /**
  * Whether the escape hatch is worth offering.

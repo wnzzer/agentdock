@@ -1071,6 +1071,10 @@ async fn opening_a_structured_session_in_a_terminal_resumes_its_own_configuratio
         "closing the escape hatch leaves nothing behind; its conversation lives in the session it reopened"
     );
     assert_eq!(
+        terminal["status"], "stopped",
+        "creating a session launches nothing; the caller starts it through the ordinary route"
+    );
+    assert_eq!(
         terminal["provider_session_id"],
         "11111111-2222-3333-4444-555555555555"
     );

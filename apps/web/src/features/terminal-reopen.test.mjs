@@ -39,6 +39,13 @@ test('the request targets the session it reopens, and encodes its id', () => {
   assert.match(source, /json\("POST"\)/);
 });
 
+test('the new session is started explicitly, because creating one never launches anything', () => {
+  const source = readFileSync(new URL('./terminal-reopen.ts', import.meta.url), 'utf8');
+  // The create route deliberately launches nothing, as every other session
+  // route does not. Without this the pane would open on a stopped terminal.
+  assert.match(source, /\/sessions\/\$\{encodeURIComponent\(opened\.id\)\}\/start/);
+});
+
 test('the capability is read from the health response, defaulting to absent', () => {
   const source = readFileSync(new URL('./backend-capabilities.ts', import.meta.url), 'utf8');
   // A capability that defaulted to `true` for a modern api_version would turn

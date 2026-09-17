@@ -802,54 +802,17 @@ async fn open_session_in_terminal(
         )
     })
     .await?;
+    // Creating a session does not launch anything here, as everywhere else: the
+    // caller starts it through the ordinary route, which already knows how to
+    // report a client that will not run. Resolving the launch now is only a
+    // check that this session *can* be built, so an impossible reopen fails
+    // before a record for it exists.
     let config_state = state.clone();
     let config_session = record.clone();
-    let spec =
-        tokio::task::spawn_blocking(move || providers::build(&config_state, &config_session, cwd))
-            .await
-            .map_err(ApiError::internal)??;
-    db(&state, move |s| {
-        s.set_session_status(record.id, SessionStatus::Starting)
-    })
-    .await?;
-    let runtime = match state.runtime.start(record.id.to_string(), spec).await {
-        Ok(runtime) => runtime,
-        Err(_) => {
-            db(&state, move |s| {
-                s.set_session_result(
-                    record.id,
-                    SessionStatus::Failed,
-                    Some("CLI could not start. Check executable path and native configuration."),
-                )
-            })
-            .await?;
-            return Err(ApiError::conflict(
-                "CLI could not start. Check executable installation or AGENTDOCK_*_BIN.",
-            ));
-        }
-    };
-    db(&state, move |s| {
-        s.set_session_status(record.id, SessionStatus::Running)
-    })
-    .await?;
-    watch_terminal_exit(&state, record.id, runtime).await;
-    Ok((
-        StatusCode::CREATED,
-        Json(session_record(&state, record.id).await?),
-    ))
-}
-
-/// Spawn the exit watcher for an escape-hatch terminal; its process is already
-/// running, so this only needs to observe it.
-async fn watch_terminal_exit(
-    state: &AppState,
-    id: SessionId,
-    runtime: Arc<agentdock_runtime::RuntimeSession>,
-) {
-    let watcher = state.clone();
-    tokio::spawn(async move {
-        watch_exit(watcher, id, runtime).await;
-    });
+    tokio::task::spawn_blocking(move || providers::build(&config_state, &config_session, cwd))
+        .await
+        .map_err(ApiError::internal)??;
+    Ok((StatusCode::CREATED, Json(record)))
 }
 
 /// A reopen is named after the conversation it reopens, so the sidebar shows it
@@ -909,44 +872,33 @@ async fn start_session(
     .await?;
     let watcher = state.clone();
     tokio::spawn(async move {
-        watch_exit(watcher, id, runtime).await;
+        let code = runtime.wait().await;
+        let _lock = watcher.operations.lock().await;
+        if watcher
+            .runtime
+            .get(&id.to_string())
+            .is_some_and(|current| Arc::ptr_eq(&runtime, &current))
+        {
+            let _ = db(&watcher, move |s| {
+                if s.get_session(id)?
+                    .is_some_and(|record| matches!(record.status, SessionStatus::Stopped))
+                {
+                    return Ok(true); // Preserve an explicit stop's clean status.
+                }
+                if code == Some(0) {
+                    s.set_session_result(id, SessionStatus::Stopped, None)
+                } else {
+                    s.set_session_result(
+                        id,
+                        SessionStatus::Stopped,
+                        Some("Native process exited; restart explicitly or use native resume."),
+                    )
+                }
+            })
+            .await;
+        }
     });
     Ok(Json(session_record(&state, id).await?))
-}
-
-/// Record a native process's exit against its session, unless a replacement has
-/// already taken the slot and an explicit stop already set the status.
-async fn watch_exit(
-    watcher: AppState,
-    id: SessionId,
-    runtime: Arc<agentdock_runtime::RuntimeSession>,
-) {
-    let code = runtime.wait().await;
-    let _lock = watcher.operations.lock().await;
-    if !watcher
-        .runtime
-        .get(&id.to_string())
-        .is_some_and(|current| Arc::ptr_eq(&runtime, &current))
-    {
-        return;
-    }
-    let _ = db(&watcher, move |s| {
-        if s.get_session(id)?
-            .is_some_and(|record| matches!(record.status, SessionStatus::Stopped))
-        {
-            return Ok(true); // Preserve an explicit stop's clean status.
-        }
-        if code == Some(0) {
-            s.set_session_result(id, SessionStatus::Stopped, None)
-        } else {
-            s.set_session_result(
-                id,
-                SessionStatus::Stopped,
-                Some("Native process exited; restart explicitly or use native resume."),
-            )
-        }
-    })
-    .await;
 }
 async fn stop_session(
     State(state): State<AppState>,
