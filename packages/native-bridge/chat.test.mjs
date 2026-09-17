@@ -281,3 +281,22 @@ test('subagent output for an unknown parent is dropped rather than inventing a c
   chat.notification({type:'assistant',parent_tool_use_id:'never-announced',message:{content:[{type:'text',text:'orphan'}]}});
   assert.deepEqual(events,[]);
 });
+
+test('a model announcement keeps the marker naming the configuration default',()=>{
+  const events=[];
+  const chat=Object.create(ChatBase.prototype);
+  chat.emit=event=>events.push(event);
+  chat.settings([
+    {id:'gpt-5.5',name:'GPT-5.5',efforts:['low','high']},
+    {id:'gpt-6-astra',name:'GPT-6-Astra',isDefault:true,efforts:['low','max']},
+  ],undefined,undefined);
+  const rows=events.at(-1).models;
+  // Dropping this here is what left a not-yet-started Codex session unable to
+  // offer a thinking depth: with no model named, there was nothing to read
+  // levels from, and inventing a list would have been a guess.
+  assert.deepEqual(rows.filter(row=>row.isDefault).map(row=>row.id),['gpt-6-astra']);
+  assert.deepEqual(rows.find(row=>row.id==='gpt-6-astra').efforts,['low','max']);
+  // Only a literal true marks a default; anything else leaves the row unmarked.
+  chat.settings([{id:'x',name:'X',isDefault:'yes'}],undefined,undefined);
+  assert.equal(events.at(-1).models[0].isDefault,undefined);
+});

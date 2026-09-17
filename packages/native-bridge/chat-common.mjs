@@ -163,6 +163,10 @@ export class ChatBase {
           const efforts=Array.isArray(entry.efforts)?entry.efforts.filter(value=>EFFORTS.includes(value)).slice(0,16):undefined;
           return [{id:entry.id,name:clip(typeof entry.name==='string'&&entry.name?entry.name:entry.id,128),
             ...(typeof entry.description==='string'&&entry.description?{description:clip(entry.description,256)}:{}),
+            // The row the configuration resolves to. A session that has not
+            // started yet has no model of its own, and this is what it shows
+            // instead of electing the first row or offering no depth at all.
+            ...(entry.isDefault===true?{isDefault:true}:{}),
             ...(efforts?.length?{efforts}:{})}];
         }).slice(0,64)
       : undefined;

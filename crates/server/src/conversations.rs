@@ -963,6 +963,7 @@ fn normalize_event(mut value: Value) -> Option<Value> {
                                 v.as_str().is_some_and(|v| !v.is_empty()) && chars(v, 128)
                             }) && row.get("name").is_some_and(|v| chars(v, 128))
                                 && row.get("description").is_none_or(|v| chars(v, 256))
+                                && row.get("isDefault").is_none_or(Value::is_boolean)
                                 && row.get("efforts").is_none_or(|v| {
                                     v.as_array().is_some_and(|levels| {
                                         levels.len() <= 16

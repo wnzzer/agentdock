@@ -15,6 +15,11 @@ pub struct ModelEntry {
     /// nothing, so no effort choice is offered rather than a guessed one.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub efforts: Vec<String>,
+    /// The model this configuration resolves to when none is named. Reported so
+    /// a session that has not started can offer that model's levels rather than
+    /// guessing from the first row, or offering none at all.
+    #[serde(rename = "isDefault", skip_serializing_if = "std::ops::Not::not")]
+    pub is_default: bool,
 }
 #[derive(Debug, Serialize)]
 pub struct ModelCatalog {
@@ -105,6 +110,13 @@ fn parse_models(value: Value, source_url: String) -> Result<ModelCatalog, ApiErr
             id: id.into(),
             name: name.into(),
             efforts,
+            // Codex marks the row its configuration resolves to; a catalog that
+            // marks none leaves the field false rather than electing one.
+            is_default: row
+                .get("isDefault")
+                .or_else(|| row.get("is_default"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         });
     }
     if models.is_empty() {
@@ -461,6 +473,13 @@ fn parse_claude_models(value: Value) -> Result<ModelCatalog, ApiError> {
             id: id.into(),
             name: name.into(),
             efforts,
+            // Codex marks the row its configuration resolves to; a catalog that
+            // marks none leaves the field false rather than electing one.
+            is_default: row
+                .get("isDefault")
+                .or_else(|| row.get("is_default"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         });
     }
     if models.is_empty() {
@@ -475,6 +494,33 @@ fn parse_claude_models(value: Value) -> Result<ModelCatalog, ApiError> {
 
 #[cfg(test)]
 mod tests {
+    // A session that has not started has no model of its own. Losing this flag
+    // left the composer with nothing to offer a Codex user before their first
+    // message, while Claude showed a control from a hardcoded list of levels.
+    #[test]
+    fn the_catalog_reports_which_model_the_configuration_resolves_to() {
+        let catalog = super::parse_models(
+            serde_json::json!({"data":[
+                {"id":"gpt-5.5","supportedReasoningEfforts":["low","high"]},
+                {"id":"gpt-6-astra","isDefault":true,"supportedReasoningEfforts":["low","max"]}
+            ]}),
+            "codex://model/list".into(),
+        )
+        .expect("catalog");
+        let default: Vec<_> = catalog.models.iter().filter(|m| m.is_default).collect();
+        assert_eq!(default.len(), 1);
+        assert_eq!(default[0].id, "gpt-6-astra");
+        assert_eq!(default[0].efforts, ["low", "max"]);
+        // A catalog that elects none must leave every row false rather than
+        // promoting the first, which would point at another model's levels.
+        let none = super::parse_models(
+            serde_json::json!({"data":[{"id":"a"},{"id":"b"}]}),
+            "x".into(),
+        )
+        .expect("catalog");
+        assert!(none.models.iter().all(|m| !m.is_default));
+    }
+
     use super::*;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},

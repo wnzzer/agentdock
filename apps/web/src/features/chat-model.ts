@@ -3,7 +3,9 @@ import type { EndpointProfile, Session } from '@agentdock/protocol';
 /** A model exactly as the native client described it. `efforts` lists the
  * thinking depths that model supports; a model that states none supports none,
  * and no default ladder is substituted. */
-export interface NativeModel { id: string; name: string; description?: string; efforts?: string[] }
+/** `isDefault` marks the model a configuration resolves to when none is named,
+ * which is what a not-yet-started session shows instead of guessing. */
+export interface NativeModel { id: string; name: string; description?: string; efforts?: string[]; isDefault?: boolean }
 export interface ApprovalQuestion { id: string; header?: string; question: string; options: Array<{ label: string; description?: string }>; isSecret?: boolean; isOther?: boolean; multiSelect?: boolean }
 export type ChatEvent = ({ seq?: number } & (
   | { type: 'ready'; native_session_id?: string; commands?: string[] }

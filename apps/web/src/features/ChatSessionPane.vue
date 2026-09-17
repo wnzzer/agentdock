@@ -5,7 +5,7 @@ import { ApiConnectionError, errorMessage, json, providerLabel, request } from '
 import { backendCapabilities } from './backend-capabilities';
 import { sessionConnections } from './session-connection';
 import { createSessionStream, type SessionStreamState } from './session-stream';
-import { acknowledgeDraft, appendChatEvent, approvalPayloadAnswers, canClearContext, chatDrafts, createChatDraftStore, conversationView, isChatEvent, markdownBlocks, markdownInline, parseConversationSnapshot, pendingMessageRetry, pruneChatEvents, sessionConfigurationPayload, type ChatDraft, type ChatEvent, type ChatItem, type ConversationSnapshot, type MarkdownInline } from './chat-model';
+import { acknowledgeDraft, appendChatEvent, approvalPayloadAnswers, canClearContext, chatDrafts, createChatDraftStore, conversationView, isChatEvent, markdownBlocks, markdownInline, parseConversationSnapshot, pendingMessageRetry, pruneChatEvents, sessionConfigurationPayload, type ChatDraft, type ChatEvent, type ChatItem, type ConversationSnapshot, type MarkdownInline, type NativeModel } from './chat-model';
 import ProviderIcon from './ProviderIcon.vue';
 import Icon from './Icon.vue';
 import ChipMenu from './ChipMenu.vue';
@@ -93,8 +93,35 @@ const selectedEffort = ref('');
 /** A launch flag for this session only; it never rewrites a shared host configuration. */
 const canTuneModel = computed(() => props.session.provider !== 'terminal');
 /** The client's own model list for this session, empty until it announces one. */
-const models = computed(() => view.value.models);
-const currentModel = computed(() => view.value.model ?? activeProfile.value?.model ?? undefined);
+/**
+ * The model catalog, from the live client when it has spoken and from its
+ * endpoint profile before that.
+ *
+ * A client only publishes its models once it is running, so a session that has
+ * not started had nothing to offer. Claude papered over this with a hardcoded
+ * list of levels; Codex publishes them per model, so the same guess would have
+ * been an invention — and the control simply did not appear, which is the
+ * asymmetry this removes. The profile endpoint asks the same client for the
+ * same catalog without a session, so the answer is observed either way.
+ */
+const profileCatalog = ref<NativeModel[]>([]);
+let catalogFetched = '';
+watch([() => view.value.ready, () => activeProfile.value?.id, () => props.session.endpoint_profile_id], async () => {
+  const id = props.session.endpoint_profile_id;
+  // The live catalog supersedes this, so there is nothing to ask for once ready.
+  if (view.value.ready || !id || catalogFetched === id) return;
+  catalogFetched = id;
+  try { profileCatalog.value = (await request<{ models?: NativeModel[] }>(`/endpoint-profiles/${id}/models`)).models ?? []; }
+  // Staying silent is right: this only ever adds a control, and failing to add
+  // one is the behaviour that already existed.
+  catch { profileCatalog.value = []; }
+}, { immediate: true });
+
+const models = computed(() => view.value.models.length ? view.value.models : profileCatalog.value);
+// Before the client speaks, the model in use is the profile's, or the one the
+// catalog marks as its default — the same answer the client would give.
+const currentModel = computed(() => view.value.model ?? activeProfile.value?.model
+  ?? (view.value.ready ? undefined : models.value.find(entry => entry.isDefault)?.id) ?? undefined);
 const currentModelEntry = computed(() => models.value.find(entry => entry.id === currentModel.value));
 const modelName = computed(() => currentModelEntry.value?.name ?? currentModel.value ?? t('Client default'));
 const canPickModel = computed(() => canTuneModel.value && models.value.length > 0 && !isPreview.value && !actionBusy.value && !turnBusy.value && view.value.ready && running.value);
