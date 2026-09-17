@@ -11,7 +11,7 @@ use std::{path::Path, sync::Mutex};
 use uuid::Uuid;
 pub type DbError = rusqlite::Error;
 
-const SESSION_COLUMNS: &str = "id, workspace_id, provider, title, status, created_at, updated_at, endpoint_profile_id, provider_session_id, error, endpoint_snapshot, native_source_id, native_config_dir, environment, interaction_mode, configuration_revision, archived_at, ephemeral";
+const SESSION_COLUMNS: &str = "id, workspace_id, provider, title, status, created_at, updated_at, endpoint_profile_id, provider_session_id, error, endpoint_snapshot, native_source_id, native_config_dir, environment, interaction_mode, configuration_revision, archived_at, ephemeral, resume_source_id";
 const PROFILE_COLUMNS: &str = "id, name, provider, endpoint_url, model, permission_mode, secret_ref, created_at, proxy_url, model_aliases, native_source_id, native_config_dir, native_config_env, environment, effort";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,7 +31,7 @@ impl Store {
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 11 {
+        if version > 12 {
             return Err(rusqlite::Error::InvalidQuery);
         }
         let tx = connection.transaction()?;
@@ -98,6 +98,11 @@ impl Store {
                 "../../../migrations/0011_session_title_source.sql"
             ))?;
         }
+        if version < 12 {
+            tx.execute_batch(include_str!(
+                "../../../migrations/0012_session_resume_source.sql"
+            ))?;
+        }
         // Capture the endpoint settings for legacy M0 sessions once, before templates change.
         let legacy = {
             let mut stmt = tx.prepare("SELECT s.id,p.id FROM sessions s JOIN endpoint_profiles p ON p.id=s.endpoint_profile_id WHERE s.endpoint_snapshot IS NULL")?;
@@ -116,7 +121,7 @@ impl Store {
                 params![snapshot, id],
             )?;
         }
-        tx.pragma_update(None, "user_version", 11)?;
+        tx.pragma_update(None, "user_version", 12)?;
         tx.commit()?;
         Ok(Self {
             connection: Mutex::new(connection),
@@ -294,6 +299,34 @@ impl Store {
         overrides: EnvironmentOverrides,
         ephemeral: bool,
     ) -> Result<Session> {
+        self.create_session_with_options(
+            workspace_id,
+            provider,
+            title,
+            endpoint_profile_id,
+            model,
+            effort,
+            overrides,
+            ephemeral,
+            None,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_session_with_options(
+        &self,
+        workspace_id: WorkspaceId,
+        provider: ProviderKind,
+        title: &str,
+        endpoint_profile_id: Option<Uuid>,
+        model: Option<String>,
+        effort: Option<String>,
+        overrides: EnvironmentOverrides,
+        ephemeral: bool,
+        resume_source_id: Option<SessionId>,
+        provider_session_id: Option<String>,
+    ) -> Result<Session> {
         agentdock_domain::validate_environment(&overrides)
             .map_err(|_| rusqlite::Error::InvalidQuery)?;
         let mut conn = self.connection.lock().expect("sqlite lock");
@@ -359,11 +392,12 @@ impl Store {
             updated_at: now,
             archived_at: None,
             endpoint_profile_id,
-            provider_session_id: None,
+            provider_session_id: provider_session_id.clone(),
             error: None,
             endpoint_snapshot: snapshot,
             native_source_id: None,
             native_config_dir: None,
+            resume_source_id,
             ephemeral,
         };
         let snapshot_json = session
@@ -375,8 +409,8 @@ impl Store {
         // A created session starts with a placeholder name, so the first message
         // may replace it. An imported native session keeps the default 'manual':
         // its name came from the client's own history, not from this column.
-        tx.execute("INSERT INTO sessions (id,workspace_id,provider,title,status,created_at,updated_at,endpoint_profile_id,endpoint_snapshot,environment,ephemeral,title_source) VALUES (?1,?2,?3,?4,?5,?6,?6,?7,?8,?9,?10,'auto')",
-            params![session.id.to_string(),workspace_id.to_string(),provider_name(&session.provider),session.title,"stopped",now.to_rfc3339(),endpoint_profile_id.map(|v|v.to_string()),snapshot_json,environment_json,ephemeral])?;
+        tx.execute("INSERT INTO sessions (id,workspace_id,provider,title,status,created_at,updated_at,endpoint_profile_id,endpoint_snapshot,environment,ephemeral,title_source,resume_source_id,provider_session_id) VALUES (?1,?2,?3,?4,?5,?6,?6,?7,?8,?9,?10,'auto',?11,?12)",
+            params![session.id.to_string(),workspace_id.to_string(),provider_name(&session.provider),session.title,"stopped",now.to_rfc3339(),endpoint_profile_id.map(|v|v.to_string()),snapshot_json,environment_json,ephemeral,resume_source_id.map(|v|v.to_string()),provider_session_id])?;
         tx.commit()?;
         Ok(session)
     }
@@ -831,6 +865,10 @@ fn session_row(r: &rusqlite::Row<'_>) -> Result<Session> {
             .map(parse_time)
             .transpose()?,
         ephemeral: r.get(17)?,
+        resume_source_id: r
+            .get::<_, Option<String>>(18)?
+            .map(parse_uuid)
+            .transpose()?,
         endpoint_profile_id: r.get::<_, Option<String>>(7)?.map(parse_uuid).transpose()?,
         provider_session_id: r.get(8)?,
         error: r.get(9)?,
@@ -1699,7 +1737,7 @@ mod tests {
                     .unwrap()
                     .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                     .unwrap(),
-                11
+                12
             );
             let current = store.get_endpoint_profile(profile.id).unwrap().unwrap();
             assert!(current.native_config.is_none());
@@ -2089,7 +2127,7 @@ mod tests {
                     .unwrap()
                     .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                     .unwrap(),
-                11
+                12
             );
             assert!(matches!(
                 store.get_session(session_id).unwrap().unwrap().status,

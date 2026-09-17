@@ -4,15 +4,20 @@ import type { Session } from "@agentdock/protocol";
 export type SessionView = "chat" | "native";
 const preferences = new Map<string, SessionView>();
 
-export function defaultSessionView(session: Pick<Session, "provider">): SessionView {
-  return session.provider === "terminal" ? "native" : "chat";
+export function defaultSessionView(session: Pick<Session, "provider" | "resume_source_id">): SessionView {
+  if (session.provider === "terminal") return "native";
+  // An escape-hatch session exists only to be a terminal: it was opened so an
+  // interactive command could run somewhere the structured pipe cannot reach.
+  // Its conversation is already on screen in the session it reopened.
+  return session.resume_source_id ? "native" : "chat";
 }
 
-export function sessionView(session: Pick<Session, "id" | "provider" | "interaction_mode">): SessionView {
+export function sessionView(session: Pick<Session, "id" | "provider" | "interaction_mode" | "resume_source_id">): SessionView {
   if (session.provider === "terminal") return "native";
   // Structured mode is owned by the conversation surface. A stale native
   // preference must not disguise it as a PTY.
   if (session.interaction_mode === "structured") return "chat";
+  if (session.resume_source_id) return "native";
   return preferences.get(session.id) ?? defaultSessionView(session);
 }
 

@@ -1025,6 +1025,137 @@ fn native_history_resume_preserves_original_configuration_and_rejects_source_cha
     }
 }
 
+#[tokio::test]
+async fn opening_a_structured_session_in_a_terminal_resumes_its_own_configuration_home() {
+    let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
+    let cwd = fs::canonicalize(f.path.join("repo")).unwrap();
+    let workspace = f
+        .state
+        .store
+        .create_workspace("fixture", cwd.to_str().unwrap())
+        .unwrap();
+    // A structured session that has already reported the conversation it owns.
+    let source = f
+        .state
+        .store
+        .create_session_with_configuration(
+            workspace.id,
+            ProviderKind::ClaudeCode,
+            "Chat session",
+            None,
+            None,
+            None,
+            Default::default(),
+            false,
+        )
+        .unwrap();
+    f.state
+        .store
+        .set_interaction_mode(source.id, InteractionMode::Structured)
+        .unwrap();
+    f.state
+        .store
+        .set_native_conversation_id(source.id, "11111111-2222-3333-4444-555555555555")
+        .unwrap();
+    let (status, terminal) = call(
+        f.app(),
+        "POST",
+        &format!("/api/sessions/{}/terminal", source.id),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(terminal["resume_source_id"], source.id.to_string());
+    assert_eq!(
+        terminal["ephemeral"], true,
+        "closing the escape hatch leaves nothing behind; its conversation lives in the session it reopened"
+    );
+    assert_eq!(
+        terminal["provider_session_id"],
+        "11111111-2222-3333-4444-555555555555"
+    );
+    assert_eq!(terminal["provider"], "claude_code");
+    assert_eq!(terminal["interaction_mode"], "pty");
+    assert!(
+        terminal["title"]
+            .as_str()
+            .unwrap()
+            .starts_with("Chat session"),
+        "the reopen is named after the conversation it reopens"
+    );
+    let record: Session = serde_json::from_value(terminal).unwrap();
+    let spec = providers::build(&f.state, &record, cwd).unwrap();
+    assert_eq!(
+        spec.args,
+        vec!["--resume", "11111111-2222-3333-4444-555555555555"]
+    );
+    // The whole point of the escape hatch: the resume points at the home the
+    // structured run wrote into, not one this new session would have created.
+    assert_eq!(
+        spec.env.get("CLAUDE_CONFIG_DIR").map(String::as_str),
+        Some(
+            f.state
+                .state_dir
+                .join("sessions")
+                .join(source.id.to_string())
+                .canonicalize()
+                .unwrap()
+                .to_str()
+                .unwrap()
+        )
+    );
+    assert_ne!(
+        spec.env.get("CLAUDE_CONFIG_DIR").map(String::as_str),
+        Some(
+            f.state
+                .state_dir
+                .join("sessions")
+                .join(record.id.to_string())
+                .to_str()
+                .unwrap()
+        ),
+        "resuming in the new session's own home would find no conversation"
+    );
+}
+
+#[tokio::test]
+async fn opening_a_terminal_before_a_conversation_exists_is_refused() {
+    let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
+    let cwd = fs::canonicalize(f.path.join("repo")).unwrap();
+    let workspace = f
+        .state
+        .store
+        .create_workspace("fixture", cwd.to_str().unwrap())
+        .unwrap();
+    let source = f
+        .state
+        .store
+        .create_session_with_configuration(
+            workspace.id,
+            ProviderKind::Codex,
+            "Not started",
+            None,
+            None,
+            None,
+            Default::default(),
+            false,
+        )
+        .unwrap();
+    f.state
+        .store
+        .set_interaction_mode(source.id, InteractionMode::Structured)
+        .unwrap();
+    let (status, body) = call(
+        f.app(),
+        "POST",
+        &format!("/api/sessions/{}/terminal", source.id),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(body["error"].as_str().unwrap().contains("no conversation"));
+}
+
 #[cfg(unix)]
 #[test]
 fn native_history_resume_rejects_original_source_retargeted_by_symlink() {
@@ -2069,7 +2200,8 @@ async fn shared_canvas_uses_existing_authentication_and_health_capabilities() {
             "agent_clients",
             "ephemeral_sessions",
             "session_model",
-            "workspace_file_search"
+            "workspace_file_search",
+            "session_terminal_escape"
         ])
     );
     let allowed = Request::builder()

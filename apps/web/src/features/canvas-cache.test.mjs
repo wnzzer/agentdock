@@ -31,7 +31,7 @@ test('unavailable or corrupt local storage is not reported as durable saving',()
   assert.equal(writeCanvasCache(storage,'a',{version:1,root:{type:'bad'}},false),false);
 });
 test('legacy servers do not get shared-canvas, native history or native configuration calls',()=>{
-  assert.deepEqual(capabilitiesFor({ok:true}),{sharedCanvas:false,nativeConfig:false,nativeHistory:false,directories:false,models:false,environment:false,structuredChat:false,accounts:false,sessionConfiguration:false,sessionArchive:false,accountImportNative:false,clients:false,ephemeralSessions:false});
+  assert.deepEqual(capabilitiesFor({ok:true}),{sharedCanvas:false,nativeConfig:false,nativeHistory:false,directories:false,models:false,environment:false,structuredChat:false,accounts:false,sessionConfiguration:false,sessionArchive:false,accountImportNative:false,clients:false,ephemeralSessions:false,sessionTerminalEscape:false});
   const explicit=capabilitiesFor({ok:true,api_version:2,capabilities:['shared_canvas']});
   assert.equal(explicit.sharedCanvas,true);assert.equal(explicit.nativeConfig,false);
   const earlier=capabilitiesFor({ok:true,api_version:2});assert.equal(earlier.sharedCanvas,false);assert.equal(earlier.nativeHistory,true);

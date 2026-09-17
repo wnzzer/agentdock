@@ -198,10 +198,13 @@ fn encode(value: &str) -> String {
 pub fn build(state: &AppState, session: &Session, cwd: PathBuf) -> Result<SpawnSpec, ApiError> {
     crate::environment::validate(&session.environment)?;
     let mut spec = build_base(state, session, cwd)?;
+    if let Some(args) = resume_args(session)? {
+        spec.args = args;
+    }
     // Claude Code owns the native session title. Pass the AgentDock title on
     // every new/reopened Claude process; renaming a live process remains a
     // display-only change until its next explicit reopen.
-    if session.provider == ProviderKind::ClaudeCode
+    else if session.provider == ProviderKind::ClaudeCode
         && session.native_source_id.is_none()
         && session
             .endpoint_snapshot
@@ -213,6 +216,52 @@ pub fn build(state: &AppState, session: &Session, cwd: PathBuf) -> Result<SpawnS
     }
     crate::environment::apply(&mut spec, &session.environment)?;
     Ok(spec)
+}
+
+/// The flags that reopen an already-existing conversation, for a session that
+/// is an escape hatch out of structured mode.
+///
+/// Structured mode drives the client over a JSON pipe, which cannot serve a
+/// genuinely interactive command such as `/config`. The escape hatch is a real
+/// terminal process on the *same* native conversation, so nothing is duplicated
+/// and the structured pane keeps its history.
+///
+/// Like an imported history resume, this passes only the resume flags: which
+/// model and depth the conversation runs under belong to the conversation the
+/// client is reopening, not to this launch.
+fn resume_args(session: &Session) -> Result<Option<Vec<String>>, ApiError> {
+    if session.resume_source_id.is_none() {
+        return Ok(None);
+    }
+    let native_id = session
+        .provider_session_id
+        .as_deref()
+        .filter(|id| crate::native_history::valid_id(id))
+        .ok_or_else(|| {
+            ApiError::bad("The conversation this terminal reopens has no native session ID yet")
+        })?;
+    Ok(Some(match session.provider {
+        ProviderKind::Codex => vec!["resume".into(), native_id.to_owned()],
+        ProviderKind::ClaudeCode => vec!["--resume".into(), native_id.to_owned()],
+        ProviderKind::Terminal => {
+            return Err(ApiError::bad("Terminal has no structured conversation"));
+        }
+    }))
+}
+
+/// The structured session an escape-hatch terminal reopens.
+///
+/// A launch is built on a blocking thread, so this reads the store directly
+/// rather than going through the async helper.
+fn resume_source(
+    state: &AppState,
+    id: agentdock_domain::SessionId,
+) -> Result<agentdock_domain::Session, ApiError> {
+    state
+        .store
+        .get_session(id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::bad("The conversation this terminal reopens no longer exists"))
 }
 
 fn build_base(state: &AppState, session: &Session, cwd: PathBuf) -> Result<SpawnSpec, ApiError> {
@@ -282,15 +331,20 @@ fn build_base(state: &AppState, session: &Session, cwd: PathBuf) -> Result<Spawn
         args.push("-i".into());
     }
     if let Some(config_key) = config_key {
-        let base = state
-            .state_dir
-            .join("sessions")
-            .join(session.id.to_string());
-        let path = if session.configuration_revision == 0 {
+        // An escape-hatch terminal reopens a structured session's conversation,
+        // whose transcript lives under that session's own home. Resolving this
+        // one's id instead would point `--resume` at an empty directory.
+        let owner = session.resume_source_id.unwrap_or(session.id);
+        let revision = if owner == session.id {
+            session.configuration_revision
+        } else {
+            resume_source(state, owner)?.configuration_revision
+        };
+        let base = state.state_dir.join("sessions").join(owner.to_string());
+        let path = if revision == 0 {
             base
         } else {
-            base.join("configurations")
-                .join(session.configuration_revision.to_string())
+            base.join("configurations").join(revision.to_string())
         };
         let dir = private_dir(&path)?;
         environment.insert(config_key.into(), dir.to_string_lossy().into_owned());

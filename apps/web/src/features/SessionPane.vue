@@ -32,7 +32,11 @@ const view = ref<SessionView>(sessionView(props.session));
 const showInfo = ref(false);
 const isTerminal = computed(() => props.session.provider === "terminal");
 const isChat = computed(() => !isTerminal.value && view.value === "chat");
-const canSwitch = computed(() => !isTerminal.value && props.session.interaction_mode !== "structured");
+// An escape hatch has no chat view of its own: it reopens a conversation that
+// is already on screen in the structured session it came from, so offering one
+// here would show the same transcript twice under two different session ids.
+const isReopen = computed(() => !!props.session.resume_source_id);
+const canSwitch = computed(() => !isTerminal.value && !isReopen.value && props.session.interaction_mode !== "structured");
 const isEphemeral = computed(() => isEphemeralSession(props.session));
 
 watch(
@@ -77,6 +81,7 @@ function renameSession(id: string): void { emit("renameRequest", id); }
         @environment="emit('environment', $event)"
         @profiles="emit('profiles')"
         @legacy="openNative"
+        @open-session="emit('select', $event)"
       >
         <template #session-actions="{ closeMenu }">
           <button type="button" class="session-shell-action" @click="closeMenu(); renameSession(session.id)"><Icon name="edit" :size="14" />{{ t('Rename session') }}</button>

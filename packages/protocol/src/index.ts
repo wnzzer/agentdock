@@ -31,6 +31,11 @@ export interface Session {
   endpoint_snapshot?: EndpointProfile | null;
   provider_session_id: string | null;
   native_source_id?: string | null;
+  /** Set on a terminal opened as an escape hatch out of a structured session:
+   * the id of the session whose conversation it reopens. Such a session runs
+   * the client interactively on the same conversation, for commands the
+   * structured pipe cannot carry. */
+  resume_source_id?: string | null;
   error: string | null;
 }
 

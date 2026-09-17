@@ -394,6 +394,10 @@ fn router(state: AppState) -> Router {
             axum::routing::patch(update_session_archive),
         )
         .route("/api/sessions/{id}/start", post(start_session))
+        .route(
+            "/api/sessions/{id}/terminal",
+            post(open_session_in_terminal),
+        )
         .route("/api/sessions/{id}/stop", post(stop_session))
         .route(
             "/api/sessions/{id}/environment",
@@ -467,7 +471,7 @@ fn optional(value: Option<String>) -> Option<String> {
 }
 async fn health() -> Json<Value> {
     Json(
-        json!({"ok":true,"service":"agentdock-server","platform":env::consts::OS,"mode":"trusted-single-user","api_version":2,"capabilities":["shared_canvas","native_configurations","native_history","host_directories","endpoint_models","session_environment","structured_chat","official_accounts","session_configuration","session_archive","account_import_native","agent_clients","ephemeral_sessions","session_model","workspace_file_search"],"instance_label":env::var("AGENTDOCK_INSTANCE_LABEL").ok()}),
+        json!({"ok":true,"service":"agentdock-server","platform":env::consts::OS,"mode":"trusted-single-user","api_version":2,"capabilities":["shared_canvas","native_configurations","native_history","host_directories","endpoint_models","session_environment","structured_chat","official_accounts","session_configuration","session_archive","account_import_native","agent_clients","ephemeral_sessions","session_model","workspace_file_search","session_terminal_escape"],"instance_label":env::var("AGENTDOCK_INSTANCE_LABEL").ok()}),
     )
 }
 
@@ -736,6 +740,125 @@ async fn create_session(
     ))
 }
 
+/// Open the conversation a structured session owns in a real terminal client.
+///
+/// Structured mode drives the same client over a JSON pipe, which is precisely
+/// what makes an interactive command such as `/config` unusable there. Rather
+/// than approximating a TUI over that pipe, this creates a genuine terminal
+/// session on the same native conversation: same client, same account, same
+/// configuration home, same session id, but a real PTY the client can run any
+/// interactive command in.
+///
+/// It is a separate session on purpose. The structured pane is left untouched,
+/// so the escape hatch is an addition rather than a conversion, and closing the
+/// terminal returns to structured mode with its history intact.
+async fn open_session_in_terminal(
+    State(state): State<AppState>,
+    Path(id): Path<SessionId>,
+) -> Result<(StatusCode, Json<Session>)> {
+    let _guard = state.operations.lock().await;
+    let source = session_record(&state, id).await?;
+    if source.provider == ProviderKind::Terminal {
+        return Err(ApiError::bad("This session is already a terminal"));
+    }
+    // An interactive reopen is only meaningful once the client has reported the
+    // conversation it created; before that there is nothing to resume.
+    let native_id = source
+        .provider_session_id
+        .as_deref()
+        .filter(|value| native_history::valid_id(value))
+        .ok_or_else(|| {
+            ApiError::conflict("Send a message first; there is no conversation to reopen yet")
+        })?
+        .to_owned();
+    let cwd = root(&state, source.workspace_id).await?;
+    let title = terminal_title(&source.title);
+    // The reopen shares the structured session's account and endpoint: it is the
+    // same conversation, so it must reach the same place under the same terms.
+    let (provider, profile_id, environment) = (
+        source.provider.clone(),
+        source.endpoint_profile_id,
+        source.environment.clone(),
+    );
+    let record = db(&state, move |s| {
+        // The reopen targets a conversation that already exists, so its native
+        // id is known now -- unlike a fresh session, which learns it from the
+        // client's first announcement.
+        s.create_session_with_options(
+            source.workspace_id,
+            provider,
+            &title,
+            profile_id,
+            None,
+            None,
+            environment,
+            // Temporary: an escape hatch is opened to run one interactive
+            // command and then closed. The conversation it carries is owned by
+            // the structured session and survives there, so closing this window
+            // should leave nothing behind. Keeping it is still one click away.
+            true,
+            Some(source.id),
+            Some(native_id),
+        )
+    })
+    .await?;
+    let config_state = state.clone();
+    let config_session = record.clone();
+    let spec =
+        tokio::task::spawn_blocking(move || providers::build(&config_state, &config_session, cwd))
+            .await
+            .map_err(ApiError::internal)??;
+    db(&state, move |s| {
+        s.set_session_status(record.id, SessionStatus::Starting)
+    })
+    .await?;
+    let runtime = match state.runtime.start(record.id.to_string(), spec).await {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            db(&state, move |s| {
+                s.set_session_result(
+                    record.id,
+                    SessionStatus::Failed,
+                    Some("CLI could not start. Check executable path and native configuration."),
+                )
+            })
+            .await?;
+            return Err(ApiError::conflict(
+                "CLI could not start. Check executable installation or AGENTDOCK_*_BIN.",
+            ));
+        }
+    };
+    db(&state, move |s| {
+        s.set_session_status(record.id, SessionStatus::Running)
+    })
+    .await?;
+    watch_terminal_exit(&state, record.id, runtime).await;
+    Ok((
+        StatusCode::CREATED,
+        Json(session_record(&state, record.id).await?),
+    ))
+}
+
+/// Spawn the exit watcher for an escape-hatch terminal; its process is already
+/// running, so this only needs to observe it.
+async fn watch_terminal_exit(
+    state: &AppState,
+    id: SessionId,
+    runtime: Arc<agentdock_runtime::RuntimeSession>,
+) {
+    let watcher = state.clone();
+    tokio::spawn(async move {
+        watch_exit(watcher, id, runtime).await;
+    });
+}
+
+/// A reopen is named after the conversation it reopens, so the sidebar shows it
+/// beside the structured session rather than as an unrelated terminal.
+fn terminal_title(title: &str) -> String {
+    let base = format!("{} (terminal)", title.trim());
+    base.chars().take(120).collect()
+}
+
 async fn start_session(
     State(state): State<AppState>,
     Path(id): Path<SessionId>,
@@ -786,33 +909,44 @@ async fn start_session(
     .await?;
     let watcher = state.clone();
     tokio::spawn(async move {
-        let code = runtime.wait().await;
-        let _lock = watcher.operations.lock().await;
-        if watcher
-            .runtime
-            .get(&id.to_string())
-            .is_some_and(|current| Arc::ptr_eq(&runtime, &current))
-        {
-            let _ = db(&watcher, move |s| {
-                if s.get_session(id)?
-                    .is_some_and(|record| matches!(record.status, SessionStatus::Stopped))
-                {
-                    return Ok(true); // Preserve an explicit stop's clean status.
-                }
-                if code == Some(0) {
-                    s.set_session_result(id, SessionStatus::Stopped, None)
-                } else {
-                    s.set_session_result(
-                        id,
-                        SessionStatus::Stopped,
-                        Some("Native process exited; restart explicitly or use native resume."),
-                    )
-                }
-            })
-            .await;
-        }
+        watch_exit(watcher, id, runtime).await;
     });
     Ok(Json(session_record(&state, id).await?))
+}
+
+/// Record a native process's exit against its session, unless a replacement has
+/// already taken the slot and an explicit stop already set the status.
+async fn watch_exit(
+    watcher: AppState,
+    id: SessionId,
+    runtime: Arc<agentdock_runtime::RuntimeSession>,
+) {
+    let code = runtime.wait().await;
+    let _lock = watcher.operations.lock().await;
+    if !watcher
+        .runtime
+        .get(&id.to_string())
+        .is_some_and(|current| Arc::ptr_eq(&runtime, &current))
+    {
+        return;
+    }
+    let _ = db(&watcher, move |s| {
+        if s.get_session(id)?
+            .is_some_and(|record| matches!(record.status, SessionStatus::Stopped))
+        {
+            return Ok(true); // Preserve an explicit stop's clean status.
+        }
+        if code == Some(0) {
+            s.set_session_result(id, SessionStatus::Stopped, None)
+        } else {
+            s.set_session_result(
+                id,
+                SessionStatus::Stopped,
+                Some("Native process exited; restart explicitly or use native resume."),
+            )
+        }
+    })
+    .await;
 }
 async fn stop_session(
     State(state): State<AppState>,

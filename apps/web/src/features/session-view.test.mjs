@@ -51,6 +51,27 @@ test('terminal sessions remain native and cannot be switched to a chat view', ()
   assert.equal(model.sessionView(terminal), 'native');
 });
 
+test('an escape-hatch session opens as a terminal, not as a second copy of its conversation', () => {
+  // It runs the client interactively on a conversation that is already on
+  // screen in the structured session it came from. Routing it to the chat view
+  // would defeat the entire point of opening it.
+  const reopen = fixture({ id: 'reopen', provider: 'claude_code', interaction_mode: 'pty', resume_source_id: 'source-session', provider_session_id: 'thread_01' });
+  assert.equal(model.defaultSessionView(reopen), 'native');
+  assert.equal(model.sessionView(reopen), 'native');
+  // Not even a stale preference from an earlier session may send it to chat.
+  model.setSessionView(reopen, 'chat');
+  assert.equal(model.sessionView(reopen), 'native');
+  model.resetSessionViewsForTests();
+});
+
+test('an escape-hatch session offers no chat view of its own', async () => {
+  const reopen = fixture({ id: 'reopen-shell', provider: 'claude_code', interaction_mode: 'pty', resume_source_id: 'source-session', provider_session_id: 'thread_01' });
+  const html = await render({ session: reopen, sessions: [reopen], profiles: [] });
+  assert.match(html, /data-view="native"/);
+  assert.ok(html.includes('class="agent-session-pane"'));
+  assert.doesNotMatch(html, />Chat</, 'its conversation already has a pane under the session it reopened');
+});
+
 test('SSR shell binds both surfaces to the same session id without duplicate headings or a permanent information row', async () => {
   model.resetSessionViewsForTests();
   const html = await render({ session: fixture(), sessions: [fixture()], profiles: [] });

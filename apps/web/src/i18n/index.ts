@@ -63,6 +63,8 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Choose an endpoint for the same client.": "请选择同一客户端的端点。",
   "Refresh conversation": "刷新对话",
   "Open native client view": "打开原生客户端视图",
+  "Open this session in a terminal": "在终端中打开此会话",
+  "For interactive commands such as /config, which the conversation view cannot display": "用于 /config 这类全交互命令，对话视图无法显示它们",
   "Structured conversation requires an updated backend. Your native session is unchanged.": "结构化对话需要更新后端，原生会话不会因此改变。",
   "Conversation messages": "对话消息",
   "Earlier display history was trimmed. Native history remains managed by the official client.": "较早的展示记录已裁剪，完整原生历史仍由官方客户端管理。",

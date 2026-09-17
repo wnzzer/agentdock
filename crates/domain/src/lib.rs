@@ -180,6 +180,11 @@ pub struct Session {
     pub native_source_id: Option<String>,
     #[serde(skip_serializing)]
     pub native_config_dir: Option<String>,
+    /// The structured session whose conversation this terminal reopens. Present
+    /// only on an escape-hatch session opened from structured mode; it names the
+    /// config home `--resume` must read, which belongs to that source session.
+    #[serde(default)]
+    pub resume_source_id: Option<SessionId>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

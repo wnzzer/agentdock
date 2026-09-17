@@ -1,0 +1,12 @@
+-- A PTY session opened against a conversation a structured session already owns.
+--
+-- Structured mode drives the client over a JSON pipe, which cannot serve an
+-- interactive command such as /config. Opening the same conversation in a real
+-- terminal means launching a second process on the same native session id, and
+-- that process must read the configuration home the structured run wrote into
+-- -- not a fresh one, which would find no transcript at all.
+--
+-- The source session's own config home is derived from its id and revision, so
+-- storing the source id is enough to rebuild it. A plain terminal session that
+-- was never an escape hatch leaves this NULL.
+ALTER TABLE sessions ADD COLUMN resume_source_id TEXT;

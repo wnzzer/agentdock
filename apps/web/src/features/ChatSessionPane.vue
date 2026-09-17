@@ -20,15 +20,19 @@ import type { SearchHit } from './file-search';
 import { useI18n } from '../i18n';
 import { acknowledgeReceipt } from './chat-model';
 import { useSessionMenuPosition } from './session-menu-position';
+import { canReopenInTerminal, terminalReopen } from './terminal-reopen';
 
 const props = defineProps<{ paneId?: string; session: Session; profiles: EndpointProfile[]; previewSnapshot?: ConversationSnapshot; consumeOpenIntent?: boolean }>();
-const emit = defineEmits<{ changed: []; environment: [id: string]; renameRequest: [id: string]; legacy: []; profiles: [] }>();
+const emit = defineEmits<{ changed: []; environment: [id: string]; renameRequest: [id: string]; legacy: []; profiles: []; openSession: [session: Session] }>();
 const { t } = useI18n();
 const isPreview = computed(() => props.previewSnapshot !== undefined);
-const capabilities = backendCapabilities as typeof backendCapabilities & { structuredChat?: boolean; sessionConfiguration?: boolean };
+const capabilities = backendCapabilities as typeof backendCapabilities & { structuredChat?: boolean; sessionConfiguration?: boolean; sessionTerminalEscape?: boolean };
 const supported = computed(() => isPreview.value || capabilities.structuredChat === true);
 const mode = ref<'structured' | 'pty' | undefined>(props.previewSnapshot?.mode), running = ref(props.previewSnapshot?.running ?? false), truncated = ref(!!props.previewSnapshot?.truncated), events = ref<ChatEvent[]>(props.previewSnapshot?.events ?? []);
 const legacyAvailable = computed(() => !isPreview.value && (mode.value === 'pty' || mode.value === undefined && (props.session as Session & { interaction_mode?: string }).interaction_mode !== 'structured'));
+// An escape hatch is only meaningful while structured mode is actually the
+// surface in use, and only once the client has a conversation to reopen.
+const terminalReopenAvailable = computed(() => !isPreview.value && mode.value === 'structured' && canReopenInTerminal(props.session, capabilities));
 const mounted = ref(false), loading = ref(false), actionBusy = ref(false), error = ref(''), notice = ref('');
 const streamState = ref<SessionStreamState>(isPreview.value ? 'connected' : 'disconnected'), streamNotice = ref('');
 const viewport = ref<HTMLElement>(), followBottom = ref(true), endpointConfirm = ref(false), selectedProfile = ref(props.session.endpoint_profile_id ?? '');
@@ -423,6 +427,21 @@ async function explicitOpen() {
   catch (cause) { if (props.session.id === id && mounted.value) error.value = errorMessage(cause); }
   finally { if (props.session.id === id) actionBusy.value = false; }
 }
+/**
+ * Open this conversation in a real terminal, for the interactive commands the
+ * structured pipe cannot carry. The new session is a sibling, not a
+ * replacement: this pane keeps its history and stays exactly where it is.
+ */
+async function openInTerminal() {
+  if (isPreview.value || actionBusy.value || !terminalReopenAvailable.value) return;
+  const id = props.session.id; actionBusy.value = true; error.value = '';
+  try {
+    const opened = await terminalReopen(props.session);
+    if (props.session.id === id && mounted.value) { emit('changed'); emit('openSession', opened); }
+  }
+  catch (cause) { if (props.session.id === id && mounted.value) error.value = errorMessage(cause); }
+  finally { if (props.session.id === id) actionBusy.value = false; }
+}
 async function interrupt() {
   if (isPreview.value || actionBusy.value || view.value.turn !== 'running') return;
   const id = props.session.id; actionBusy.value = true; error.value = '';
@@ -551,7 +570,7 @@ function keydown(event: KeyboardEvent) {
 <template>
   <section :class="['chat-pane', { 'has-tab-menu': !!paneId }]" :aria-label="t('Conversation with {provider}', {provider:providerLabel(session.provider)})" @keydown="paneKeydown">
     <Teleport to="body"><div v-if="timelineMenu" class="chat-timeline-backdrop" @pointerdown="closeTimelineMenu" @contextmenu.prevent="closeTimelineMenu"><nav class="chat-timeline-menu" :style="timelineMenuStyle" role="menu" :aria-label="t('Conversation actions')" @pointerdown.stop @keydown.esc.stop.prevent="closeTimelineMenu"><button v-if="timelineMenu.text" type="button" role="menuitem" @click="copyFromTimeline(timelineMenu!.text)">{{ t('Copy selection') }}</button><button type="button" role="menuitem" @click="closeTimelineMenu(); scrollToLatest(true)">{{ t('Latest message') }}</button><button type="button" role="menuitem" :disabled="loading" @click="closeTimelineMenu(); load()">{{ t('Refresh conversation') }}</button><template v-if="clearAvailable"><hr/><button type="button" role="menuitem" :disabled="actionBusy" :title="t('Runs this client\'s own /clear: the transcript and its context are dropped together.')" @click="clearContext">{{ t('Clear context') }}</button></template></nav></div></Teleport>
-    <Teleport v-if="!isPreview" to="body" :disabled="!paneId"><details ref="sessionMenu" :style="tabMenuStyle" :class="['chat-menu','chat-floating-menu', { 'chat-tab-menu': !!paneId }]" @toggle="positionMenu" @keydown.esc.stop.prevent="closeSessionMenu(true)"><summary :aria-label="t('Session actions')" :title="t('Session actions')"><Icon name="more" :size="17" /></summary><nav :style="tabMenuPanelStyle"><div class="chat-menu-status"><span class="chat-status-dot" :class="{working:turnBusy}" />{{ t(statusLabel) }}</div><button @click="closeSessionMenu(); load()"><Icon name="refresh" :size="14" />{{ t('Refresh conversation') }}</button><button @click="closeSessionMenu(); emit('environment',session.id)"><Icon name="settings" :size="14" />{{ t('Session environment') }}</button><button @click="closeSessionMenu(); emit('profiles')"><Icon name="account" :size="14" />{{ t('Manage endpoint profiles') }}</button><button v-if="legacyAvailable" @click="closeSessionMenu(); emit('legacy')"><Icon name="terminal" :size="14" />{{ t('Open native client view') }}</button><slot name="session-actions" :close-menu="closeSessionMenu" /><button v-if="running" class="chat-end-button" :disabled="actionBusy" @click="requestEnd"><Icon name="stop" :size="14" />{{ t('End session…') }}</button></nav></details></Teleport>
+    <Teleport v-if="!isPreview" to="body" :disabled="!paneId"><details ref="sessionMenu" :style="tabMenuStyle" :class="['chat-menu','chat-floating-menu', { 'chat-tab-menu': !!paneId }]" @toggle="positionMenu" @keydown.esc.stop.prevent="closeSessionMenu(true)"><summary :aria-label="t('Session actions')" :title="t('Session actions')"><Icon name="more" :size="17" /></summary><nav :style="tabMenuPanelStyle"><div class="chat-menu-status"><span class="chat-status-dot" :class="{working:turnBusy}" />{{ t(statusLabel) }}</div><button @click="closeSessionMenu(); load()"><Icon name="refresh" :size="14" />{{ t('Refresh conversation') }}</button><button @click="closeSessionMenu(); emit('environment',session.id)"><Icon name="settings" :size="14" />{{ t('Session environment') }}</button><button @click="closeSessionMenu(); emit('profiles')"><Icon name="account" :size="14" />{{ t('Manage endpoint profiles') }}</button><button v-if="legacyAvailable" @click="closeSessionMenu(); emit('legacy')"><Icon name="terminal" :size="14" />{{ t('Open native client view') }}</button><button v-if="terminalReopenAvailable" :disabled="actionBusy" :title="t('For interactive commands such as /config, which the conversation view cannot display')" @click="closeSessionMenu(); openInTerminal()"><Icon name="terminal" :size="14" />{{ t('Open this session in a terminal') }}</button><slot name="session-actions" :close-menu="closeSessionMenu" /><button v-if="running" class="chat-end-button" :disabled="actionBusy" @click="requestEnd"><Icon name="stop" :size="14" />{{ t('End session…') }}</button></nav></details></Teleport>
     <div v-if="!supported" class="chat-notice">{{ t('Structured conversation requires an updated backend. Your native session is unchanged.') }}<button v-if="legacyAvailable" class="chat-link" @click="emit('legacy')">{{ t('Open native client view') }}</button></div>
     <div v-if="error" class="chat-alert" role="alert">{{ error }}<button @click="load()">{{ t('Refresh conversation') }}</button></div>
     <div v-if="streamNotice&&!loading" class="chat-notice" role="status">{{ t(streamNotice) }}<button class="chat-link" @click="load()">{{ t('Reconnect view') }}</button></div>
