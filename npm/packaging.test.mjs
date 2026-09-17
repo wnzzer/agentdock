@@ -106,6 +106,20 @@ test('a built release installs as one coherent set', async (t) => {
   assert.equal(main.bin.agentdock, 'bin/agentdock.js');
 });
 
+// npm inherits stdin. A loop fed by `done < list` hands it the remaining
+// package names, so one npm subcommand that reads stdin ends the loop early and
+// publishes a subset — with a zero exit status, since every command in it
+// succeeded. Verified against a stub npm: the piped form published 1 of 5.
+test('the publish loop does not feed the package list to npm on stdin', async () => {
+  const workflow = await readFile(path.join(root, '.github/workflows/release.yml'), 'utf8');
+  const step = workflow.slice(workflow.indexOf('name: Publish'));
+  assert.doesNotMatch(step, /done\s*<\s*dist-npm\/publish-order\.txt/, 'list is piped into the loop');
+  assert.match(step, /packages=\$\(cat dist-npm\/publish-order\.txt\)/, 'list must be read before looping');
+  for (const call of step.match(/npm (view|publish)[^\n]*/g) ?? []) {
+    assert.match(call, /<\/dev\/null/, `npm call must not inherit stdin: ${call.trim()}`);
+  }
+});
+
 test('the published version always matches the workspace it was built from', async () => {
   const cargo = await readFile(path.join(root, 'Cargo.toml'), 'utf8');
   const version = cargo.match(/^version = "([^"]+)"/m)[1];

@@ -133,15 +133,22 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          while read -r pkg; do
+          # Read the list up front rather than piping it into the loop: npm
+          # inherits stdin, and a command that reads any of it swallows the
+          # packages still to come, publishing a partial release quietly. The
+          # names are a fixed [a-z0-9-] set, so word splitting is exact here,
+          # and unlike mapfile this runs on the bash 3.2 a macOS check would use.
+          packages=$(cat dist-npm/publish-order.txt)
+          for pkg in $packages; do
             name="@wnzzer/${pkg}"
-            if npm view "${name}@${VERSION}" version >/dev/null 2>&1; then
+            if npm view "${name}@${VERSION}" version >/dev/null 2>&1 </dev/null; then
               echo "= ${name}@${VERSION} already published"
               continue
             fi
             echo "+ publishing ${name}@${VERSION}"
-            npm publish "dist-npm/${pkg}" --access public
-          done < dist-npm/publish-order.txt
+            npm publish "dist-npm/${pkg}" --access public </dev/null
+          done
+          echo "published $(echo "$packages" | wc -l | tr -d " ") packages at ${VERSION}"
 
   publish:
     needs: build
