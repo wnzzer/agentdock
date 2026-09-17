@@ -10,7 +10,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 license = "MIT"
-version = "0.1.1"
+version = "0.1.2"
 
 [workspace.dependencies]
 agentdock-domain = { path = "crates/domain" }
