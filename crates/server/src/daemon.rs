@@ -113,10 +113,26 @@ pub fn stop(
     Err(format!("AgentDock (pid {pid}) did not stop within {timeout:?}").into())
 }
 
+/// An address the health check can actually connect to.
+///
+/// A wildcard bind is a statement about which interfaces to accept on, not a
+/// destination: connecting to `0.0.0.0` is not the same as connecting to the
+/// server, and a probe sent there reported a healthy gateway as a failed start.
+/// Loopback is the interface a wildcard bind is certain to include.
+fn probe_target(address: SocketAddr) -> SocketAddr {
+    if address.ip().is_unspecified() {
+        return match address {
+            SocketAddr::V4(_) => ([127, 0, 0, 1], address.port()).into(),
+            SocketAddr::V6(_) => (std::net::Ipv6Addr::LOCALHOST, address.port()).into(),
+        };
+    }
+    address
+}
+
 /// Whether the gateway answers, not merely whether its process exists. A server
 /// that is still opening its database is not yet somewhere to point a browser.
 pub async fn healthy(address: SocketAddr) -> bool {
-    let url = format!("http://{address}/api/health");
+    let url = format!("http://{}/api/health", probe_target(address));
     let Ok(client) = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()

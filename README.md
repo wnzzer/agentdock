@@ -155,9 +155,26 @@ AGENTDOCK_INSTANCE_LABEL      # optional UI label for isolated preview deploymen
 
 ## Private remote access
 
-Simplest: keep loopback binding and use SSH port forwarding, `ssh -L 28789:127.0.0.1:28789 user@server`.
+```sh
+agentdock --lan
+```
 
-For a network bind, configure `AGENTDOCK_TOKEN` (24+ random characters), `AGENTDOCK_ALLOWED_ORIGINS=https://your-host`, and an HTTPS reverse proxy that preserves Host and WebSocket upgrades. Then sign in using the token in the Web UI. Do not expose this trusted-host workspace to untrusted users.
+Binds every interface, generates an access token if `AGENTDOCK_TOKEN` does not
+provide one, and prints it; `agentdock status` prints it again. The token is
+kept in the state directory, readable only by its owner — a background gateway
+cannot show it to you any other way, and deleting the file issues a new one.
+
+Reaching the machine at its own address needs nothing further: a `Host` that is
+an IP literal on the bound port is answered for, because DNS rebinding requires
+a *name* and cannot produce one. `AGENTDOCK_ALLOWED_ORIGINS` remains for the
+hostnames a reverse proxy serves under. Cross-site requests stay blocked by the
+Origin and `sec-fetch-site` checks either way.
+
+Traffic is plain HTTP, so on a network you do not control, prefer SSH port
+forwarding — `ssh -L 28789:127.0.0.1:28789 user@server` — or put an HTTPS
+reverse proxy in front that preserves Host and WebSocket upgrades. Do not expose
+this trusted-host workspace to untrusted users: whoever holds the token can run
+agents, read and write files, and open terminals on that machine.
 
 ## Boundaries
 

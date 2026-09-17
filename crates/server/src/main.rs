@@ -223,14 +223,28 @@ async fn gateway_start(
         .into());
     }
     println!("AgentDock {} (pid {pid})\n", env!("CARGO_PKG_VERSION"));
-    for (label, url) in banner_urls(address) {
-        println!("  {label}  {url}");
-    }
+    print_access(state_dir, address);
     println!(
         "\n  logs    agentdock logs\n  stop    agentdock stop\n\nState: {}",
         state_dir.display()
     );
     Ok(())
+}
+
+/// Where to point a browser, and what it will ask for.
+///
+/// The token belongs here rather than only in the log: the gateway is detached,
+/// so whatever it printed on its own stdout is somewhere nobody looks, and a URL
+/// without the token it demands is only half an answer.
+fn print_access(state_dir: &std::path::Path, address: SocketAddr) {
+    for (label, url) in banner_urls(address) {
+        println!("  {label}  {url}");
+    }
+    if !address.ip().is_loopback()
+        && let Some(token) = security::stored_token(state_dir)
+    {
+        println!("  Token    {token}");
+    }
 }
 
 fn gateway_stop(
@@ -252,9 +266,7 @@ async fn gateway_status(
     match (pid, answering) {
         (Some(pid), true) => {
             println!("Running (pid {pid})\n");
-            for (label, url) in banner_urls(address) {
-                println!("  {label}  {url}");
-            }
+            print_access(state_dir, address);
         }
         // A process that is up but silent is the shape a hung or still-starting
         // server takes, and saying "running" would hide it.
@@ -293,6 +305,7 @@ const DEFAULT_ADDRESS: &str = "127.0.0.1:28789";
 const HELP: &str = "AgentDock — a host workspace for Claude Code and Codex
 
   agentdock                 Start the gateway in the background
+  agentdock --lan           Same, reachable from other machines on the network
   agentdock stop            Stop it
   agentdock restart         Stop it, then start it again
   agentdock status          Whether it is running, and where
@@ -303,9 +316,11 @@ const HELP: &str = "AgentDock — a host workspace for Claude Code and Codex
   --version                 Print the version
   --help                    This text
 
-Listens on 127.0.0.1:28789 unless AGENTDOCK_ADDR says otherwise. State lives in
-~/.agentdock; AGENTDOCK_HOME or AGENTDOCK_STATE_DIR override it, and existing
-project-local .agentdock databases are preserved.";
+Listens on 127.0.0.1:28789 unless AGENTDOCK_ADDR says otherwise. A binding that
+reaches other machines needs an access token; one is generated and kept in the
+state directory unless AGENTDOCK_TOKEN provides it, and `status` prints it
+again. State lives in ~/.agentdock; AGENTDOCK_HOME or AGENTDOCK_STATE_DIR
+override it, and existing project-local .agentdock databases are preserved.";
 
 /// Print failures as text and exit non-zero.
 ///
@@ -322,7 +337,21 @@ async fn main() {
 }
 
 async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let action = env::args().nth(1).unwrap_or_else(|| "start".into());
+    // Flags may precede or follow the command, so the command is the first
+    // argument that is not one. `agentdock --lan` is a start with a flag, not a
+    // request to run something called `--lan`.
+    let action = env::args()
+        .skip(1)
+        .find(|argument| !argument.starts_with('-'))
+        .unwrap_or_else(|| {
+            if env::args().any(|argument| matches!(argument.as_str(), "--help" | "-h")) {
+                "--help".into()
+            } else if env::args().any(|argument| matches!(argument.as_str(), "--version" | "-V")) {
+                "--version".into()
+            } else {
+                "start".into()
+            }
+        });
     if matches!(action.as_str(), "--help" | "-h" | "help") {
         println!("{HELP}");
         return Ok(());
@@ -356,9 +385,18 @@ async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         );
         return Ok(());
     }
-    let address: SocketAddr = env::var("AGENTDOCK_ADDR")
-        .unwrap_or_else(|_| DEFAULT_ADDRESS.into())
-        .parse()?;
+    // `--lan` is the whole configuration for reaching this from another machine:
+    // the bind, the token and the addresses to answer for all follow from it.
+    let lan = env::args().any(|argument| argument == "--lan");
+    let address: SocketAddr = match env::var("AGENTDOCK_ADDR") {
+        Ok(value) => value.parse()?,
+        Err(_) if lan => format!(
+            "0.0.0.0:{}",
+            DEFAULT_ADDRESS.rsplit(':').next().unwrap_or("")
+        )
+        .parse()?,
+        Err(_) => DEFAULT_ADDRESS.parse()?,
+    };
     match action.as_str() {
         "stop" => return gateway_stop(&state_dir),
         "status" => return gateway_status(&state_dir, address).await,
@@ -373,7 +411,8 @@ async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
     // Validate configuration and reserve both the port and database ownership
     // before any startup reconciliation can change existing session records.
-    let security = security::Security::new(address)?;
+    let token = security::resolve_token(&state_dir, !address.ip().is_loopback())?;
+    let security = security::Security::new(address, token)?;
     let browse_roots = directories::roots()?;
     let workspace_roots = directories::workspace_roots(&browse_roots)?;
     let installation::PreparedServer {
