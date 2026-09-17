@@ -4,6 +4,7 @@ mod api_tests;
 mod canvas;
 mod clients;
 mod conversations;
+mod daemon;
 mod directories;
 mod embedded;
 mod environment;
@@ -196,21 +197,151 @@ enum PtyCommand {
     Resize { cols: u16, rows: u16 },
 }
 
-#[tokio::main]
-async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let action = env::args().nth(1).unwrap_or_else(|| "serve".into());
-    if matches!(action.as_str(), "--help" | "-h") {
-        println!(
-            "AgentDock\n  agentdock-server [serve]   Start the host workspace\n  agentdock-server init      Initialize user state without starting a server\n\nNew installs use ~/.agentdock. AGENTDOCK_HOME or AGENTDOCK_STATE_DIR override it.\nExisting project-local .agentdock databases are preserved."
-        );
+/// Start the background gateway and report an address that actually answers.
+///
+/// A start that returned as soon as the process existed would print a URL that
+/// is not listening yet, and would call a configuration error a success: the
+/// detached process writes its failure to the log and exits, where nobody sees
+/// it. So this waits for the health endpoint, and on timeout shows the log tail
+/// that explains why rather than a URL that will not load.
+async fn gateway_start(
+    state_dir: &std::path::Path,
+    address: SocketAddr,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    if daemon::healthy(address).await {
+        println!("AgentDock is already running at http://{address}/");
         return Ok(());
     }
-    if action != "serve" && action != "init" {
-        return Err("Unknown command; use --help".into());
+    let pid = daemon::start(state_dir, address)?;
+    if !daemon::wait_until_ready(address, Duration::from_secs(30)).await {
+        let log = daemon::tail(state_dir, 20);
+        let _ = daemon::stop(state_dir, Duration::from_secs(5));
+        return Err(format!(
+            "AgentDock did not become ready on {address}.\n\n{log}\n\nFull log: {}",
+            daemon::log_file(state_dir).display()
+        )
+        .into());
     }
-    tracing_subscriber::fmt()
-        .with_env_filter(env::var("RUST_LOG").unwrap_or_else(|_| "agentdock=info".into()))
-        .init();
+    println!("AgentDock {} (pid {pid})\n", env!("CARGO_PKG_VERSION"));
+    for (label, url) in banner_urls(address) {
+        println!("  {label}  {url}");
+    }
+    println!(
+        "\n  logs    agentdock logs\n  stop    agentdock stop\n\nState: {}",
+        state_dir.display()
+    );
+    Ok(())
+}
+
+fn gateway_stop(
+    state_dir: &std::path::Path,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    match daemon::stop(state_dir, Duration::from_secs(20))? {
+        Some(pid) => println!("Stopped AgentDock (pid {pid})"),
+        None => println!("AgentDock is not running"),
+    }
+    Ok(())
+}
+
+async fn gateway_status(
+    state_dir: &std::path::Path,
+    address: SocketAddr,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let pid = daemon::running(state_dir);
+    let answering = daemon::healthy(address).await;
+    match (pid, answering) {
+        (Some(pid), true) => {
+            println!("Running (pid {pid})\n");
+            for (label, url) in banner_urls(address) {
+                println!("  {label}  {url}");
+            }
+        }
+        // A process that is up but silent is the shape a hung or still-starting
+        // server takes, and saying "running" would hide it.
+        (Some(pid), false) => println!("Process {pid} is up but {address} is not answering"),
+        // Something else owns the port: reporting "not running" alone would be
+        // true and useless when a start is about to fail on the bind.
+        (None, true) => println!("Not started from this state directory, but {address} answers"),
+        (None, false) => println!("Not running"),
+    }
+    Ok(())
+}
+
+/// The addresses worth printing for a given bind. A wildcard bind is reachable
+/// at every interface, and the loopback name alone would not be the one someone
+/// on the network needs.
+fn banner_urls(address: SocketAddr) -> Vec<(&'static str, String)> {
+    let mut urls = vec![("Local  ", format!("http://127.0.0.1:{}/", address.port()))];
+    if address.ip().is_unspecified() {
+        urls.push((
+            "Network",
+            format!("http://<this machine>:{}/", address.port()),
+        ));
+    } else if !address.ip().is_loopback() {
+        urls[0] = ("Address", format!("http://{address}/"));
+    }
+    urls
+}
+
+/// Where the gateway listens unless told otherwise.
+///
+/// Deliberately not a common development port: 8787 collides with several
+/// things a developer machine already runs, and a workspace that quietly failed
+/// to bind is worse than one on a number nobody else claims.
+const DEFAULT_ADDRESS: &str = "127.0.0.1:28789";
+
+const HELP: &str = "AgentDock — a host workspace for Claude Code and Codex
+
+  agentdock                 Start the gateway in the background
+  agentdock stop            Stop it
+  agentdock restart         Stop it, then start it again
+  agentdock status          Whether it is running, and where
+  agentdock logs            What the background gateway has said
+  agentdock serve           Run in the foreground instead (no background process)
+  agentdock init            Create user state without starting anything
+
+  --version                 Print the version
+  --help                    This text
+
+Listens on 127.0.0.1:28789 unless AGENTDOCK_ADDR says otherwise. State lives in
+~/.agentdock; AGENTDOCK_HOME or AGENTDOCK_STATE_DIR override it, and existing
+project-local .agentdock databases are preserved.";
+
+/// Print failures as text and exit non-zero.
+///
+/// Returning the error from `main` formats it with `Debug`, which quotes the
+/// whole message and prints its newlines as `\n` — so a startup failure that
+/// carries a log tail arrived as one unreadable line. A supervisor also needs
+/// the non-zero status to tell a failed start from a successful one.
+#[tokio::main]
+async fn main() {
+    if let Err(error) = run().await {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let action = env::args().nth(1).unwrap_or_else(|| "start".into());
+    if matches!(action.as_str(), "--help" | "-h" | "help") {
+        println!("{HELP}");
+        return Ok(());
+    }
+    if matches!(action.as_str(), "--version" | "-V" | "version") {
+        println!("agentdock {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if !matches!(
+        action.as_str(),
+        "serve" | "init" | "start" | "stop" | "restart" | "status" | "logs"
+    ) {
+        return Err(format!("Unknown command {action:?}; use --help").into());
+    }
+    if action == "serve" {
+        tracing_subscriber::fmt()
+            .with_env_filter(env::var("RUST_LOG").unwrap_or_else(|_| "agentdock=info".into()))
+            .init();
+    }
     let state_dir =
         providers::private_dir(&installation::state_directory()?).map_err(|e| e.message)?;
     let database = env::var("AGENTDOCK_DB")
@@ -226,8 +357,20 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     let address: SocketAddr = env::var("AGENTDOCK_ADDR")
-        .unwrap_or_else(|_| "127.0.0.1:8787".into())
+        .unwrap_or_else(|_| DEFAULT_ADDRESS.into())
         .parse()?;
+    match action.as_str() {
+        "stop" => return gateway_stop(&state_dir),
+        "status" => return gateway_status(&state_dir, address).await,
+        "logs" => return Ok(daemon::print_log(&state_dir, 80)?),
+        "start" | "restart" => {
+            if action == "restart" {
+                gateway_stop(&state_dir)?;
+            }
+            return gateway_start(&state_dir, address).await;
+        }
+        _ => {}
+    }
     // Validate configuration and reserve both the port and database ownership
     // before any startup reconciliation can change existing session records.
     let security = security::Security::new(address)?;

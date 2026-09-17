@@ -6,8 +6,14 @@ A host-native workspace for official Claude Code / Codex clients, built with Rus
 
 ```sh
 npm i -g @wnzzer/agentdock   # or: npx @wnzzer/agentdock
-agentdock
+agentdock                    # starts in the background and prints its URL
 ```
+
+`agentdock` runs as a gateway: it starts a detached server, waits until that
+server actually answers, and returns to the shell. `agentdock stop`, `restart`,
+`status` and `logs` manage it; `agentdock serve` runs in the foreground instead,
+which is what a supervisor such as systemd should use. A failed start prints the
+reason from the log and exits non-zero rather than leaving a silent process.
 
 One prebuilt binary per platform, carrying the Web client and the native bridge inside it. npm fetches only the one matching this machine, through `os`/`cpu` on its optional dependencies; there is no postinstall step, so `--ignore-scripts` installs work. Prebuilt for macOS (arm64, x64) and Linux (x64, arm64, static musl). Other platforms build from source below.
 
@@ -25,7 +31,7 @@ pnpm run build:web
 cargo run -p agentdock-server
 ```
 
-Open **http://127.0.0.1:8787/**. The Rust server serves the built Web client and API on the same origin.
+Open **http://127.0.0.1:28789/**. The Rust server serves the built Web client and API on the same origin.
 
 For development, run `pnpm run dev` to start Cargo + Vite, then open **http://127.0.0.1:5173/**. If Rust is already running, use only `pnpm run dev:web`. Vite proxies `/api` and WebSockets to Rust. pnpm manages the workspace and dependencies; Vite, Vue SFC typechecking, tests and the native-history bridge run under Node. Rust builds still use Cargo.
 
@@ -130,7 +136,7 @@ SQLite schema 6 adds explicit environment maps with empty defaults, preserving o
 AGENTDOCK_DB                  # optional database path
 AGENTDOCK_HOME                # installation/state home; default ~/.agentdock for new installs
 AGENTDOCK_STATE_DIR           # optional persistent state directory
-AGENTDOCK_ADDR                # default 127.0.0.1:8787
+AGENTDOCK_ADDR                # default 127.0.0.1:28789
 AGENTDOCK_WEB_DIR             # state-dir/web if installed, else source apps/web/dist
 AGENTDOCK_NATIVE_BRIDGE       # optional path to packages/native-bridge/history.mjs
 AGENTDOCK_JS_RUNTIME          # native helper/chat/account runtime; default node (absolute path supported)
@@ -149,7 +155,7 @@ AGENTDOCK_INSTANCE_LABEL      # optional UI label for isolated preview deploymen
 
 ## Private remote access
 
-Simplest: keep loopback binding and use SSH port forwarding, `ssh -L 8787:127.0.0.1:8787 user@server`.
+Simplest: keep loopback binding and use SSH port forwarding, `ssh -L 28789:127.0.0.1:28789 user@server`.
 
 For a network bind, configure `AGENTDOCK_TOKEN` (24+ random characters), `AGENTDOCK_ALLOWED_ORIGINS=https://your-host`, and an HTTPS reverse proxy that preserves Host and WebSocket upgrades. Then sign in using the token in the Web UI. Do not expose this trusted-host workspace to untrusted users.
 
