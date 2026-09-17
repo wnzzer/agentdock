@@ -16,6 +16,9 @@ const SCOPE = '@wnzzer';
 const NAME = 'agentdock';
 const BINARY = 'agentdock-server';
 const REPOSITORY = 'https://github.com/wnzzer/agentdock';
+// One source in docs/, published under the name a registry reader expects.
+const NOTICES_SOURCE = 'docs/third-party-notices.md';
+const NOTICES = 'THIRD-PARTY-NOTICES.md';
 
 // A rust target names a triple; npm matches `${process.platform}-${process.arch}`.
 // Publishing under the npm spelling is what lets the shim resolve a package
@@ -67,6 +70,10 @@ try {
     // installed file runnable.
     chmodSync(path.join(dir, 'bin', BINARY), 0o755);
     cpSync(path.join(root, 'LICENSE'), path.join(dir, 'LICENSE'));
+    // The binary embeds the web bundle, which embeds MIT-licensed brand
+    // vectors. Their licence requires the notice to travel with any copy, and
+    // an npm package is a copy.
+    cpSync(path.join(root, NOTICES_SOURCE), path.join(dir, NOTICES));
     writeFileSync(
       path.join(dir, 'package.json'),
       `${JSON.stringify(
@@ -79,7 +86,7 @@ try {
           cpu: [target.cpu],
           // No `exports`: the shim resolves ./package.json, which an exports
           // map would otherwise have to re-declare.
-          files: ['bin/', 'LICENSE'],
+          files: ['bin/', 'LICENSE', NOTICES],
         },
         null,
         2,
@@ -95,6 +102,7 @@ mkdirSync(path.join(main, 'bin'), { recursive: true });
 cpSync(path.join(here, 'shim.cjs'), path.join(main, 'bin', `${NAME}.js`));
 cpSync(path.join(root, 'LICENSE'), path.join(main, 'LICENSE'));
 cpSync(path.join(root, 'README.md'), path.join(main, 'README.md'));
+cpSync(path.join(root, NOTICES_SOURCE), path.join(main, NOTICES));
 writeFileSync(
   path.join(main, 'package.json'),
   `${JSON.stringify(
@@ -108,7 +116,7 @@ writeFileSync(
       optionalDependencies: Object.fromEntries(
         TARGETS.map((target) => [`${SCOPE}/${NAME}-${target.key}`, version]),
       ),
-      files: ['bin/', 'LICENSE', 'README.md'],
+      files: ['bin/', 'LICENSE', NOTICES, 'README.md'],
     },
     null,
     2,

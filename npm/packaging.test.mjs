@@ -97,6 +97,20 @@ test('a built release installs as one coherent set', async (t) => {
   assert.equal(new Set(order).size, order.length, 'no package is published twice');
   assert.equal(order.length, built.length + 1);
 
+  // The binary embeds the web bundle, which embeds MIT-licensed brand vectors.
+  // Publishing is redistribution, and that licence requires the notice to come
+  // along; shipping only our own LICENSE would leave the obligation unmet.
+  for (const pkg of ['agentdock', 'agentdock-darwin-arm64']) {
+    const files = await readdir(path.join(out, pkg));
+    assert.ok(files.includes('THIRD-PARTY-NOTICES.md'), `${pkg} omits the third-party notice`);
+    assert.ok(files.includes('LICENSE'));
+    assert.deepEqual(
+      (await manifest(pkg)).files.filter((entry) => entry.endsWith('.md') || entry === 'LICENSE').sort(),
+      pkg === 'agentdock' ? ['LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.md'] : ['LICENSE', 'THIRD-PARTY-NOTICES.md'],
+      `${pkg} would not actually publish the files on disk`,
+    );
+  }
+
   // An un-executable binary installs fine and fails at first use.
   const mode = await stat(path.join(out, 'agentdock-darwin-arm64', 'bin', 'agentdock-server'));
   assert.equal(mode.mode & 0o111, 0o111, 'the binary must be executable for all');
