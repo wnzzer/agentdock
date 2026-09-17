@@ -156,7 +156,11 @@ jobs:
               continue
             fi
             echo "+ publishing ${name}@${VERSION}"
-            npm publish "dist-npm/${pkg}" --access public $DRY_RUN </dev/null
+            # ./ is load-bearing: "dist-npm/agentdock-darwin-arm64" matches npm's
+            # owner/repo GitHub shorthand, so a bare path is fetched over ssh
+            # instead of published, failing with a public-key error about a
+            # repository nobody named.
+            npm publish "./dist-npm/${pkg}" --access public $DRY_RUN </dev/null
           done
           echo "processed $(echo "$packages" | wc -l | tr -d " ") packages at ${VERSION} ${DRY_RUN}"
 

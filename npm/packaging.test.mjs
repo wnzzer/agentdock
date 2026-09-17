@@ -129,6 +129,10 @@ test('the publish loop does not feed the package list to npm on stdin', async ()
   const step = workflow.slice(workflow.indexOf('name: Publish'));
   assert.doesNotMatch(step, /done\s*<\s*dist-npm\/publish-order\.txt/, 'list is piped into the loop');
   assert.match(step, /packages=\$\(cat dist-npm\/publish-order\.txt\)/, 'list must be read before looping');
+  // npm reads an argument shaped like owner/repo as a GitHub shorthand, so
+  // `npm publish dist-npm/agentdock-darwin-arm64` fetches over ssh and dies on
+  // a public key rather than publishing the directory sitting right there.
+  assert.match(step, /npm publish "\.\/dist-npm\//, 'the publish path needs a ./ prefix to stay a path');
   for (const call of step.match(/npm (view|publish)[^\n]*/g) ?? []) {
     assert.match(call, /<\/dev\/null/, `npm call must not inherit stdin: ${call.trim()}`);
   }
@@ -145,6 +149,6 @@ test('the published version always matches the workspace it was built from', asy
   // it: anything that is not a tag builds the packages and passes --dry-run.
   assert.match(workflow, /GITHUB_REF_TYPE.*=.*"tag"|\$\{GITHUB_REF_TYPE\}" = "tag"/);
   assert.match(workflow, /dry_run=--dry-run/);
-  assert.match(workflow, /npm publish "dist-npm\/\$\{pkg\}" --access public \$DRY_RUN/);
+  assert.match(workflow, /npm publish "\.\/dist-npm\/\$\{pkg\}" --access public \$DRY_RUN/);
   assert.ok(/^\d+\.\d+\.\d+/.test(version), `Cargo version ${version} is not publishable as-is`);
 });
