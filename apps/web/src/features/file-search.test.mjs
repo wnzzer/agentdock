@@ -64,3 +64,21 @@ test('indices outside the name are ignored rather than trusted', () => {
   assert.equal(parts.filter(p => p.match).length, 0);
   assert.equal(parts.map(p => p.text).join(''), 'app.ts');
 });
+
+test('scrollable panes get a scrollbar that reserves space, not an overlay', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const css = await readFile(new URL('../styles.css', import.meta.url), 'utf8');
+  // Chrome ignores ::-webkit-scrollbar entirely once `scrollbar-width` is set,
+  // and macOS still overlays at `thin` — so the standard property must stay
+  // scoped to engines without the pseudo-elements, or every scrollbar goes back
+  // to having no width to press on.
+  assert.match(css, /::-webkit-scrollbar \{[^}]*width: 11px/);
+  const standalone = css.replace(/@supports[^{]*\{[\s\S]*?\n\}/g, '');
+  assert.doesNotMatch(standalone, /^\s*\*\s*\{[^}]*scrollbar-width/m,
+    'scrollbar-width outside the @supports guard disables the pseudo-elements in Chrome');
+  assert.match(css, /@supports \(scrollbar-width: thin\) and \(not selector\(::-webkit-scrollbar\)\)/);
+
+  // The thumb's padding is drawn as a transparent border so the hit area stays
+  // the full track width; a real margin would shrink what can be grabbed.
+  assert.match(css, /::-webkit-scrollbar-thumb \{[\s\S]*?border: 3px solid transparent;[\s\S]*?background-clip: content-box/);
+});

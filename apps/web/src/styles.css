@@ -194,3 +194,31 @@ svg { flex-shrink: 0; vertical-align: middle; }
   .welcome-screen { padding: 24px 16px; }.welcome-screen h1 { font-size: 37px; }.welcome-screen>p { font-size: 12px; }.app-error { font-size: 10px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *:before, *:after { transition: none !important; animation: none !important; } }
+
+/*
+ * Scrollbars that can actually be grabbed.
+ *
+ * macOS hides overlay scrollbars until something scrolls and gives them no
+ * layout width, so there was no stable target to press on and drag — every
+ * scrollable pane measured a zero-width gutter. Styling them opts into real,
+ * always-present scrollbars, which reserve space and stay put for the whole
+ * drag. Wide enough to hit without hunting, quiet enough not to draw the eye.
+ */
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #c3ccd3;
+  /* The border is padding drawn in the track's colour: it keeps the thumb
+     clear of the edge while the hit area stays the full 11px. */
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover { background: #a7b3bc; background-clip: content-box; }
+::-webkit-scrollbar-thumb:active { background: #8b99a4; background-clip: content-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+/* Firefox has no scrollbar pseudo-elements; it also never overlays, so the
+   standard properties are enough there and safe to scope to it. */
+@supports (scrollbar-width: thin) and (not selector(::-webkit-scrollbar)) {
+  * { scrollbar-width: thin; scrollbar-color: #c3ccd3 transparent; }
+}

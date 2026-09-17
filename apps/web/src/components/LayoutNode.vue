@@ -300,7 +300,11 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
 @keyframes dock-locate { from { box-shadow:inset 0 0 0 3px #70cabb,0 0 0 1px #b6e3dd60; } to { box-shadow:inset 0 0 0 1px #46b29d,0 0 0 1px #b6e3dd60; } }
 @media(prefers-reduced-motion:reduce) { .dock-pane.is-located { animation:none; } }
 .dock-header { display:flex;align-items:center;gap:3px;min-width:0;height:39px;min-height:39px;padding:0 5px 0 0;background:#fafbfc;border-bottom:1px solid #e8ecef; }
-.dock-tabs { display:flex;align-items:stretch;flex:1;min-width:0;height:100%;overflow-x:auto;scrollbar-width:thin; }
+.dock-tabs { display:flex;align-items:stretch;flex:1;min-width:0;height:100%;overflow-x:auto; }
+/* Tabs are reached by clicking, not by dragging a bar, so this one only has to
+   show that more exist. A full-width scrollbar would take a quarter of the strip. */
+.dock-tabs::-webkit-scrollbar { height: 5px; }
+.dock-tabs::-webkit-scrollbar-thumb { border-width: 1px; }
 .dock-tab { display:flex;align-items:center;gap:7px;max-width:210px;min-width:85px;flex-shrink:0;padding:0 8px 0 11px;color:#78838e;font-size:11px;cursor:grab;border-bottom:2px solid transparent;outline:none;user-select:none; }
 .dock-tab.is-active { max-width:260px;color:#243746;background:#fff;border-bottom-color:#16a398; }
 .dock-tab:focus-visible { box-shadow:inset 0 0 0 2px #53b9b0; }
