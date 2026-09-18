@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { languageFor, escapeHtml, MAX_HIGHLIGHT_BYTES } from './highlighting.ts';
+import { languageFor, escapeHtml, MAX_HIGHLIGHT_BYTES, wrapsProse } from './highlighting.ts';
 
 test('a language is chosen from the file name, never guessed', () => {
   assert.equal(languageFor('apps/web/src/features/chat-model.ts'), 'typescript');
@@ -54,4 +54,17 @@ test('a file pane and a message render markdown through one component', async ()
     assert.match(source, /import \{ MarkdownContent \} from ["']\.\/MarkdownContent["']/,
       `${file} uses the component but does not import it — Vue resolves it to nothing at runtime`);
   }
+});
+
+test('prose wraps and code does not, because only one of them has a column to keep', () => {
+  // Markdown, plain text and anything unrecognised are read and written as
+  // prose: a Chinese paragraph is one long line, and unwrapped it is written
+  // through a horizontal scrollbar.
+  assert.equal(wrapsProse(languageFor('chapters/first.md')), true);
+  assert.equal(wrapsProse(languageFor('notes.txt')), true);
+  assert.equal(wrapsProse(languageFor('LICENSE')), true);
+  // Code keeps its columns, so it scrolls sideways instead.
+  assert.equal(wrapsProse(languageFor('src/main.rs')), false);
+  assert.equal(wrapsProse(languageFor('app.ts')), false);
+  assert.equal(wrapsProse(languageFor('Dockerfile')), false);
 });

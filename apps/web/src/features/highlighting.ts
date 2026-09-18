@@ -33,6 +33,18 @@ export function languageFor(path: string): string | undefined {
 }
 
 /**
+ * Whether this kind of file is prose, and so should wrap.
+ *
+ * A column that has to line up is why a code editor scrolls sideways rather
+ * than wrapping, and prose has no such column. A paragraph of Chinese is one
+ * long line by nature: left unwrapped it runs off the right edge and is written
+ * through a horizontal scrollbar.
+ */
+export function wrapsProse(language: string | undefined): boolean {
+  return !language || language === 'markdown' || language === 'plaintext';
+}
+
+/**
  * Highlighting a very large file costs more than it gives: the pass is
  * synchronous and blocks typing. Past this the pane stays plain and says so,
  * which is better than an editor that stutters on every keystroke.

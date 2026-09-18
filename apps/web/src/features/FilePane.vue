@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type { TextFile } from "@agentdock/protocol";
 import { ApiError, assetUrl, errorMessage, json, request, workspacePath } from "./api";
 import { fileDraft } from "./file-drafts";
-import { escapeHtml, languageFor, loadHighlighter, MAX_HIGHLIGHT_BYTES } from "./highlighting";
+import { escapeHtml, languageFor, loadHighlighter, MAX_HIGHLIGHT_BYTES, wrapsProse } from "./highlighting";
 import { MarkdownContent } from "./MarkdownContent";
 import Icon from "./Icon.vue";
 import { useI18n } from "../i18n";
@@ -39,7 +39,48 @@ const highlighted = computed(() => {
   // so the final row of the overlay lines up with the textarea's.
   return highlighter.value(source, language.value) + (source.endsWith("\n") ? "\n" : "");
 });
+/**
+ * While an input method is composing, the editor shows its own text.
+ *
+ * What you normally read is the highlighted copy underneath; the textarea over
+ * it is transparent apart from its caret. But a composing input method draws
+ * its candidate text in the textarea, and the value behind the overlay does not
+ * receive it until the composition is committed -- so pinyin was being drawn in
+ * transparent ink over a layer that did not yet know about it, and typing
+ * Chinese looked like typing nothing at all.
+ *
+ * For the length of the composition the textarea inks itself and covers the
+ * overlay. Highlighting comes back the moment the text is committed, which is
+ * also the moment there is anything to highlight.
+ */
+const composing = ref(false);
 const highlightLayer = ref<HTMLElement>();
+const editor = ref<HTMLTextAreaElement>();
+/**
+ * The overlay ends where the textarea's text does.
+ *
+ * A vertical scrollbar takes its width from the textarea and not from the layer
+ * behind it. Eleven pixels sounds like nothing, but wrapped text re-breaks at a
+ * different place in a column that narrow, and the highlighted copy drifted a
+ * whole line further out with every paragraph. Measured rather than assumed:
+ * how much a scrollbar takes, or whether it takes anything at all, is the
+ * platform's business.
+ */
+const gutter = ref(0);
+function measureGutter() {
+  const element = editor.value;
+  gutter.value = element ? Math.max(0, element.offsetWidth - element.clientWidth) : 0;
+}
+let watcher: ResizeObserver | undefined;
+watch(editor, element => {
+  watcher?.disconnect(); watcher = undefined;
+  if (!element) return;
+  // A scrollbar appears when the content grows, which changes the content box
+  // without changing the border box -- so the content box is what is watched.
+  watcher = new ResizeObserver(measureGutter);
+  watcher.observe(element);
+  measureGutter();
+});
 /**
  * The overlay follows the textarea by moving its content, not by scrolling.
  *
@@ -54,6 +95,18 @@ function syncScroll(event: Event) {
   if (content) content.style.transform = `translate(${-source.scrollLeft}px, ${-source.scrollTop}px)`;
 }
 
+/**
+ * Prose wraps; code does not.
+ *
+ * A column that has to line up is the reason a code editor scrolls sideways
+ * instead of wrapping, and markdown has no such column. A paragraph of Chinese
+ * is one long line by nature, so left unwrapped it ran off the right edge and
+ * was written through a horizontal scrollbar.
+ *
+ * Both layers wrap together or not at all: they share every metric so that the
+ * highlighted copy stays registered with the text on top of it.
+ */
+const wrapped = computed(() => wrapsProse(language.value));
 /** Markdown is shown rendered by default, with the source one click away. */
 const isMarkdown = computed(() => language.value === "markdown");
 const showSource = ref(false);
@@ -86,7 +139,7 @@ async function save() {
 }
 function reload() { if (dirty.value) confirmReload.value = true; else void read(); }
 watch([() => props.workspaceId, () => props.path], () => { revision++; saving.value = false; error.value = ""; success.value = ""; mediaFailed.value = false; loading.value = false; conflict.value = false; confirmReload.value = false; if (!draft.value.loaded) void read(); }, { immediate: true, flush: "sync" });
-onBeforeUnmount(() => { revision++; });
+onBeforeUnmount(() => { revision++; watcher?.disconnect(); });
 </script>
 <template>
   <div v-if="!path" class="pane-empty"><span class="empty-icon"><Icon name="file" :size="28" /></span><h3>{{ t('Your files, right here') }}</h3><p>{{ t('Open a file from Explorer, or drag it into this pane.') }}</p><button class="secondary-button" @click="emit('browse')">{{ t('Browse files') }}</button></div>
@@ -97,9 +150,9 @@ onBeforeUnmount(() => { revision++; });
     <div v-if="confirmReload" class="confirmation-bar">{{ t('Reloading discards this unsaved draft.') }}<button class="small-button danger" @click="read">{{ t('Discard draft & reload') }}</button><button class="small-button" @click="confirmReload = false">{{ t('Keep draft') }}</button></div>
     <div v-if="loading" class="pane-empty"><p>{{ t('Reading file from host…') }}</p></div>
     <div v-else-if="kind === 'text' && draft.loaded && isMarkdown && !showSource" class="markdown-preview"><MarkdownContent :text="draft.content" /></div>
-    <div v-else-if="kind === 'text' && draft.loaded" class="code-surface">
-      <pre v-if="highlighted !== undefined" ref="highlightLayer" class="code-highlight" aria-hidden="true"><code v-html="highlighted" /></pre>
-      <textarea v-model="draft.content" :class="['code-editor', { 'is-overlaid': highlighted !== undefined }]" :aria-label="t('Edit {path}', { path })" spellcheck="false" autocapitalize="off" autocomplete="off" @input="success = ''" @scroll="syncScroll" />
+    <div v-else-if="kind === 'text' && draft.loaded" class="code-surface" :class="{ 'is-wrapped': wrapped }">
+      <pre v-if="highlighted !== undefined" ref="highlightLayer" class="code-highlight" :style="{ right: gutter + 'px' }" aria-hidden="true"><code v-html="highlighted" /></pre>
+      <textarea ref="editor" v-model="draft.content" :class="['code-editor', { 'is-overlaid': highlighted !== undefined, 'is-composing': composing }]" :aria-label="t('Edit {path}', { path })" spellcheck="false" autocapitalize="off" autocomplete="off" @input="success = ''" @scroll="syncScroll" @compositionstart="composing = true" @compositionend="composing = false" />
     </div>
     <div v-else-if="kind === 'image'" class="media-preview image-preview"><img v-if="!mediaFailed" :src="url" :alt="path" @error="mediaFailed = true" /><p v-else>{{ t('Unable to preview this image. It may be unavailable or unsupported.') }}</p></div>
     <div v-else-if="kind === 'video'" class="media-preview"><video :src="url" controls preload="metadata" @error="mediaFailed = true" /><p v-if="mediaFailed">{{ t('This browser cannot play this file. Use Download to open it locally.') }}</p></div>

@@ -24,20 +24,49 @@ const focusedPath = ref("");
 const revealFailure = ref("");
 const error = ref("");
 /**
- * Row context menu.
+ * Tree context menu.
  *
  * Copying a path is the thing people came to the tree for most often and had
  * to do by hand; deleting was not possible here at all.
+ *
+ * The empty space below the rows opens it too, with no entry to act on: asking
+ * a folder's blank area for a new file is how file managers have always worked,
+ * and a tree with nothing in it yet has no row to ask instead.
  */
-const rowMenu = ref<{ entry: FileEntry; x: number; y: number } | null>(null);
+const rowMenu = ref<{ entry: FileEntry | null; x: number; y: number } | null>(null);
 const copied = ref("");
 const deleting = ref(false);
 const confirmDelete = ref(false);
-function openRowMenu(event: MouseEvent, entry: FileEntry) {
-  event.preventDefault();
+function openRowMenu(event: MouseEvent, entry: FileEntry | null = null) {
+  event.preventDefault(); event.stopPropagation();
   confirmDelete.value = false; copied.value = "";
   rowMenu.value = { entry, x: event.clientX, y: event.clientY };
 }
+/**
+ * The same menu, from a finger.
+ *
+ * A phone has no right button, and a long press is what it has instead. Chrome
+ * on Android raises `contextmenu` for one; Safari does not, so the press is
+ * timed here rather than waited for.
+ */
+let pressTimer: ReturnType<typeof setTimeout> | undefined;
+let pressOrigin: { x: number; y: number } | undefined;
+function pressStart(event: PointerEvent, entry: FileEntry | null = null) {
+  if (event.pointerType !== "touch") return;
+  pressOrigin = { x: event.clientX, y: event.clientY };
+  clearTimeout(pressTimer);
+  pressTimer = setTimeout(() => {
+    pressOrigin = undefined;
+    confirmDelete.value = false; copied.value = "";
+    rowMenu.value = { entry, x: event.clientX, y: event.clientY };
+  }, 500);
+}
+/** A press that travels is a scroll, and a scroll is not a menu. */
+function pressMove(event: PointerEvent) {
+  if (!pressOrigin) return;
+  if (Math.abs(event.clientX - pressOrigin.x) > 10 || Math.abs(event.clientY - pressOrigin.y) > 10) pressEnd();
+}
+function pressEnd() { clearTimeout(pressTimer); pressTimer = undefined; pressOrigin = undefined; }
 function closeRowMenu() { rowMenu.value = null; confirmDelete.value = false; }
 const rowMenuStyle = computed(() => rowMenu.value
   ? { left: Math.min(rowMenu.value.x, window.innerWidth - 210) + "px", top: Math.min(rowMenu.value.y, window.innerHeight - 190) + "px" }
@@ -82,9 +111,9 @@ function baseDirectory() {
   const entry = directories.value.get(treeParent(path) ?? "")?.entries.find(file => file.path === path);
   return entry?.kind === "directory" ? entry.path : treeParent(path) ?? "";
 }
-async function startCreate() {
-  error.value = ""; renaming.value = null;
-  creating.value = { base: baseDirectory(), name: "", busy: false };
+async function startCreate(base?: string) {
+  error.value = ""; renaming.value = null; closeRowMenu();
+  creating.value = { base: base ?? baseDirectory(), name: "", busy: false };
   await nextTick();
   createInput.value?.focus();
 }
@@ -354,12 +383,12 @@ watch(() => props.workspaceId, (workspaceId, previousId) => {
 }, { immediate: true });
 watch(() => props.refreshToken, () => void refresh());
 watch(() => props.selectedPath, path => { selected.value = path ?? ""; });
-onBeforeUnmount(() => { rememberView(props.workspaceId); generation++; revealRevision++; });
+onBeforeUnmount(() => { rememberView(props.workspaceId); generation++; revealRevision++; pressEnd(); });
 defineExpose({ reveal });
 </script>
 <template>
   <section class="file-explorer">
-    <header class="section-header"><span><Icon name="folder" /><strong>{{ t('Explorer') }}</strong></span><span><button class="icon-button" :aria-label="t('New file')" :title="t('New file')" @click="startCreate"><Icon name="plus" :size="15" /></button><button class="icon-button" :aria-label="t('Refresh files')" :title="t('Refresh files')" :disabled="loading" @click="refresh"><Icon name="refresh" :size="15" /></button><button class="icon-button explorer-close" :aria-label="t('Close explorer')" @click="emit('close')"><Icon name="close" :size="16" /></button></span></header>
+    <header class="section-header"><span><Icon name="folder" /><strong>{{ t('Explorer') }}</strong></span><span><button class="icon-button" :aria-label="t('New file')" :title="t('New file')" @click="startCreate()"><Icon name="plus" :size="15" /></button><button class="icon-button" :aria-label="t('Refresh files')" :title="t('Refresh files')" :disabled="loading" @click="refresh"><Icon name="refresh" :size="15" /></button><button class="icon-button explorer-close" :aria-label="t('Close explorer')" @click="emit('close')"><Icon name="close" :size="16" /></button></span></header>
     <nav class="file-breadcrumb" :aria-label="t('Directory path')"><button @click="focusRoot">{{ t('Root') }}</button><template v-for="crumb in crumbs" :key="crumb.path"><span>/</span><button :title="crumb.path" @click="reveal(crumb.path)">{{ crumb.name }}</button></template></nav>
     <form v-if="creating" class="tree-compose" @submit.prevent="createFile">
       <Icon name="file" :size="14" />
@@ -382,7 +411,7 @@ defineExpose({ reveal });
       <p v-if="!searchHits.length" class="group-empty">{{ t('No files match this search.') }}</p>
       <p v-else-if="workspaceResults?.truncated" class="group-empty">{{ workspaceResults?.timed_out ? t('The workspace is large; showing the matches found so far.') : t('More matches exist; refine the search to narrow them.') }}</p>
     </div>
-    <div v-show="!searchingWorkspace" ref="treeElement" class="file-list file-tree" role="tree" :aria-label="t('Workspace files')" :aria-busy="refreshing || root?.loading" :tabindex="rows.length ? -1 : 0">
+    <div v-show="!searchingWorkspace" ref="treeElement" class="file-list file-tree" role="tree" :aria-label="t('Workspace files')" :aria-busy="refreshing || root?.loading" :tabindex="rows.length ? -1 : 0" @contextmenu="openRowMenu($event)" @pointerdown="pressStart($event)" @pointermove="pressMove" @pointerup="pressEnd" @pointercancel="pressEnd">
       <template v-for="row in rows" :key="row.entry.path">
         <form v-if="renaming?.entry.path === row.entry.path" class="file-row tree-rename" :style="{ '--tree-depth': row.depth }" @submit.prevent="renameEntry">
           <i class="tree-disclosure" /><Icon :name="row.entry.kind === 'directory' ? 'folder' : 'file'" :size="15" />
@@ -390,7 +419,7 @@ defineExpose({ reveal });
           <button type="submit" class="text-button" :disabled="!renaming.name.trim() || renaming.busy">{{ t(renaming.busy ? 'Renaming…' : 'Rename') }}</button>
           <button type="button" class="text-button" @click="renaming = null">{{ t('Cancel') }}</button>
         </form>
-        <button v-else :ref="element => setRowRef(row.entry.path, element)" class="file-row tree-row" :class="{ 'is-selected': selected === row.entry.path, 'is-directory': row.entry.kind === 'directory' }" role="treeitem" :aria-level="row.depth + 1" :aria-posinset="row.position" :aria-setsize="row.siblings" :aria-expanded="row.entry.kind === 'directory' ? row.expanded : undefined" :aria-selected="selected === row.entry.path" :aria-label="row.entry.name" :aria-description="row.entry.path" :aria-busy="row.entry.kind === 'directory' ? directories.get(row.entry.path)?.loading : undefined" :tabindex="tabPath === row.entry.path ? 0 : -1" :style="{ '--tree-depth': row.depth }" :title="row.entry.path" :draggable="row.entry.kind === 'file'" @contextmenu="openRowMenu($event, row.entry)" @dragstart="drag($event, row.entry)" @click="open(row.entry)" @focus="focusedPath = row.entry.path" @keydown="navigate($event, row)">
+        <button v-else :ref="element => setRowRef(row.entry.path, element)" class="file-row tree-row" :class="{ 'is-selected': selected === row.entry.path, 'is-directory': row.entry.kind === 'directory' }" role="treeitem" :aria-level="row.depth + 1" :aria-posinset="row.position" :aria-setsize="row.siblings" :aria-expanded="row.entry.kind === 'directory' ? row.expanded : undefined" :aria-selected="selected === row.entry.path" :aria-label="row.entry.name" :aria-description="row.entry.path" :aria-busy="row.entry.kind === 'directory' ? directories.get(row.entry.path)?.loading : undefined" :tabindex="tabPath === row.entry.path ? 0 : -1" :style="{ '--tree-depth': row.depth }" :title="row.entry.path" :draggable="row.entry.kind === 'file'" @contextmenu="openRowMenu($event, row.entry)" @pointerdown="pressStart($event, row.entry)" @pointermove="pressMove" @pointerup="pressEnd" @pointercancel="pressEnd" @dragstart="drag($event, row.entry)" @click="open(row.entry)" @focus="focusedPath = row.entry.path" @keydown="navigate($event, row)">
           <i class="tree-disclosure" :class="{ expanded: row.expanded }"><Icon v-if="row.entry.kind === 'directory'" name="chevron" :size="11" /></i><Icon :name="row.entry.kind === 'directory' ? 'folder' : 'file'" :size="15" /><span>{{ row.entry.name }}</span><small v-if="row.entry.kind === 'symlink'" :title="t('Symbolic link')">↗</small><small v-else-if="row.entry.kind !== 'directory'">{{ formatBytes(row.entry.size) }}</small>
         </button>
         <div v-if="row.expanded && !query.trim()" role="none" class="tree-folder-state" :style="{ '--tree-depth': row.depth + 1 }">
@@ -402,7 +431,7 @@ defineExpose({ reveal });
       <div v-if="root?.loading" class="small-empty" role="status">{{ t('Loading files…') }}</div>
       <div v-else-if="root?.loaded && !rows.length" class="small-empty">{{ t(query.trim() ? 'No matching loaded files.' : 'This directory is empty.') }}</div>
     </div>
-    <Teleport to="body"><div v-if="rowMenu" class="tree-menu-backdrop" @pointerdown="closeRowMenu" @contextmenu.prevent="closeRowMenu"><nav class="tree-menu" :style="rowMenuStyle" role="menu" :aria-label="t('File actions')" @pointerdown.stop @keydown.esc.stop.prevent="closeRowMenu"><button type="button" role="menuitem" @click="copyText(rowMenu.entry.path, 'path')">{{ t(copied === 'path' ? 'Copied' : 'Copy path') }}</button><button type="button" role="menuitem" @click="copyText(rowMenu.entry.name, 'name')">{{ t(copied === 'name' ? 'Copied' : 'Copy name') }}</button><button v-if="rowMenu.entry.kind === 'file'" type="button" role="menuitem" @click="closeRowMenu(); open(rowMenu!.entry)">{{ t('Open') }}</button><button type="button" role="menuitem" @click="closeRowMenu(); loadDirectory(rowMenu!.entry.kind === 'directory' ? rowMenu!.entry.path : treeParent(rowMenu!.entry.path) ?? '', true)">{{ t('Refresh files') }}</button><button type="button" role="menuitem" @click="startRename(rowMenu!.entry)">{{ t('Rename…') }}</button><hr/><template v-if="confirmDelete"><p class="tree-menu-confirm">{{ t(rowMenu.entry.kind === 'directory' ? 'Delete {name} and everything inside it? This cannot be undone.' : 'Delete {name}? This cannot be undone.', { name: rowMenu.entry.name }) }}</p><button type="button" role="menuitem" class="tree-menu-danger" :disabled="deleting" :aria-busy="deleting" @click="deleteEntry">{{ t(deleting ? 'Deleting…' : 'Delete permanently') }}</button><button type="button" role="menuitem" @click="confirmDelete = false">{{ t('Cancel') }}</button></template><button v-else type="button" role="menuitem" class="tree-menu-danger" @click="confirmDelete = true">{{ t('Delete…') }}</button></nav></div></Teleport>
+    <Teleport to="body"><div v-if="rowMenu" class="tree-menu-backdrop" @pointerdown="closeRowMenu" @contextmenu.prevent="closeRowMenu"><nav class="tree-menu" :style="rowMenuStyle" role="menu" :aria-label="t('File actions')" @pointerdown.stop @keydown.esc.stop.prevent="closeRowMenu"><template v-if="!rowMenu.entry"><button type="button" role="menuitem" @click="startCreate('')">{{ t('New file') }}</button><button type="button" role="menuitem" @click="closeRowMenu(); refresh()">{{ t('Refresh files') }}</button></template><template v-else><button v-if="rowMenu.entry.kind === 'directory'" type="button" role="menuitem" @click="startCreate(rowMenu!.entry!.path)">{{ t('New file here') }}</button><button type="button" role="menuitem" @click="copyText(rowMenu.entry.path, 'path')">{{ t(copied === 'path' ? 'Copied' : 'Copy path') }}</button><button type="button" role="menuitem" @click="copyText(rowMenu.entry.name, 'name')">{{ t(copied === 'name' ? 'Copied' : 'Copy name') }}</button><button v-if="rowMenu.entry.kind === 'file'" type="button" role="menuitem" @click="closeRowMenu(); open(rowMenu!.entry)">{{ t('Open') }}</button><button type="button" role="menuitem" @click="closeRowMenu(); loadDirectory(rowMenu!.entry.kind === 'directory' ? rowMenu!.entry.path : treeParent(rowMenu!.entry.path) ?? '', true)">{{ t('Refresh files') }}</button><button type="button" role="menuitem" @click="startRename(rowMenu!.entry)">{{ t('Rename…') }}</button><hr/><template v-if="confirmDelete"><p class="tree-menu-confirm">{{ t(rowMenu.entry.kind === 'directory' ? 'Delete {name} and everything inside it? This cannot be undone.' : 'Delete {name}? This cannot be undone.', { name: rowMenu.entry.name }) }}</p><button type="button" role="menuitem" class="tree-menu-danger" :disabled="deleting" :aria-busy="deleting" @click="deleteEntry">{{ t(deleting ? 'Deleting…' : 'Delete permanently') }}</button><button type="button" role="menuitem" @click="confirmDelete = false">{{ t('Cancel') }}</button></template><button v-else type="button" role="menuitem" class="tree-menu-danger" @click="confirmDelete = true">{{ t('Delete…') }}</button></template></nav></div></Teleport>
     <footer class="explorer-footer">{{ t('{count} loaded items · host filesystem', { count: loadedCount }) }}<span>{{ t('Click to open · drag into a pane') }}</span></footer>
   </section>
 </template>

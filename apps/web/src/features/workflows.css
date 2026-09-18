@@ -47,12 +47,22 @@
   display: block; font: inherit; background: none; padding: 0;
   width: max-content; min-width: 100%; will-change: transform;
 }
+/* Prose has no column to keep, so it wraps rather than running off the edge.
+   Both layers take the same rule and the same width, or the highlighted copy
+   would break its lines somewhere the text above it does not. */
+.code-surface.is-wrapped > .code-highlight, .code-surface.is-wrapped > .code-editor { white-space: pre-wrap; overflow-wrap: break-word; }
+.code-surface.is-wrapped .code-highlight code { width: 100%; }
 /* Transparent text over the layer, but a caret and selection that still read. */
 .code-editor.is-overlaid {
   position: relative; background: transparent; color: transparent;
   caret-color: #2c4c5e; -webkit-text-fill-color: transparent;
 }
 .code-editor.is-overlaid::selection { background: #cfe6f5; -webkit-text-fill-color: transparent; }
+/* An input method draws its candidate text in the textarea, and the overlay
+   below has not been told about it yet. For that moment the textarea inks
+   itself and covers the overlay, so what is being typed can be seen. */
+.code-editor.is-overlaid.is-composing { background: #fff; color: #496271; -webkit-text-fill-color: currentColor; }
+.code-editor.is-overlaid.is-composing::selection { background: #cfe6f5; -webkit-text-fill-color: currentColor; }
 .markdown-preview { flex: 1; min-height: 0; overflow: auto; padding: 22px clamp(16px, 4cqw, 40px); background: #fff; }
 .markdown-preview .chat-markdown { max-width: 760px; margin: 0 auto; font-size: 13px; line-height: 1.85; color: #3d5361; }
 .markdown-preview .chat-markdown > :first-child { margin-top: 0; }

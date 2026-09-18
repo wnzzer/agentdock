@@ -243,6 +243,7 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Open": "打开",
   "Delete…": "删除…",
   "New file": "新建文件",
+  "New file here": "在此新建文件",
   "{name} already exists in this folder.": "该文件夹中已存在 {name}。",
   "New file name": "新文件名",
   "Create": "创建",
