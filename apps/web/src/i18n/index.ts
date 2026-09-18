@@ -273,6 +273,7 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Best for everyday, complex tasks": "适合日常与复杂任务",
   "Efficient for routine tasks": "处理常规任务更高效",
   "Fastest for quick answers": "回答最快",
+  "Most capable for your hardest and longest-running tasks": "最强，适合最难、最久的任务",
   "Use the default model (currently {model})": "使用默认模型（当前为 {model}）",
   "{price} per Mtok": "{price} / 每百万 token",
   "Asks before it runs anything.": "每次动手前都先问你。",

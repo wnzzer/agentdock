@@ -20,6 +20,8 @@ test("a client's own words are translated phrase by phrase, and its names are le
     describeModel('Use the default model (currently Opus 5 (1M context)) · $5/$25 per Mtok', zh),
     '使用默认模型（当前为 Opus 5 (1M context)） · $5/$25 / 每百万 token');
   assert.equal(describeModel('Haiku 4.5 · Fastest for quick answers', zh), 'Haiku 4.5 · 回答最快');
+  assert.equal(describeModel('Fable 5.1 · Most capable for your hardest and longest-running tasks', zh),
+    'Fable 5.1 · 最强，适合最难、最久的任务');
 });
 
 test('a line this dictionary has never seen is shown as the client wrote it', () => {
