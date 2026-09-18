@@ -257,6 +257,12 @@ fn print_access(state_dir: &std::path::Path, address: SocketAddr) {
         && let Some(token) = security::stored_token(state_dir)
     {
         println!("  Token    {token}");
+        // A deployment that has had its floor lowered says so every time it
+        // starts. Weakening this is allowed; forgetting it is not.
+        let minimum = security::minimum_token();
+        if minimum < security::MINIMUM_TOKEN {
+            println!("  Note     AGENTDOCK_TOKEN_MIN allows tokens of {minimum} characters here");
+        }
     }
 }
 
@@ -330,8 +336,9 @@ const HELP: &str = "AgentDock — a host workspace for Claude Code and Codex
   --help                    This text
 
 Listens on 127.0.0.1:28789 unless AGENTDOCK_ADDR says otherwise. A binding that
-reaches other machines needs an access token; one is generated and kept in the
-state directory unless AGENTDOCK_TOKEN provides it, and `status` prints it
+reaches other machines needs an access token of at least 24 characters, which
+AGENTDOCK_TOKEN_MIN can lower for a network you trust; one is generated and kept
+in the state directory unless AGENTDOCK_TOKEN provides it, and `status` prints it
 again. State lives in ~/.agentdock; AGENTDOCK_HOME or AGENTDOCK_STATE_DIR
 override it, and existing project-local .agentdock databases are preserved.";
 

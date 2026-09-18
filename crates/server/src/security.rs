@@ -14,6 +14,28 @@ use url::Url;
 /// shell on the machine, so a guessable password is the same as none.
 pub const MINIMUM_TOKEN: usize = 24;
 
+/// The length this deployment insists on, which is the above unless the person
+/// running it says otherwise.
+///
+/// Someone typing their own short token on a home network has made a judgement
+/// about their network, and that judgement is theirs to make. What the default
+/// buys is that nobody makes it by accident: it has to be written down, in a
+/// variable that says what it does, and the gateway says so on every start.
+///
+/// Zero means "any token at all" rather than "no token": an empty one is
+/// indistinguishable from none, and that door stays shut.
+pub fn minimum_token() -> usize {
+    minimum_from(env::var("AGENTDOCK_TOKEN_MIN").ok().as_deref())
+}
+fn minimum_from(raw: Option<&str>) -> usize {
+    match raw.map(str::trim).filter(|v| !v.is_empty()) {
+        // An unreadable value is not a licence to drop the floor: it is a typo,
+        // and a typo must not quietly weaken the deployment.
+        Some(value) => value.parse::<usize>().map_or(MINIMUM_TOKEN, |n| n.max(1)),
+        None => MINIMUM_TOKEN,
+    }
+}
+
 fn token_file(state_dir: &std::path::Path) -> std::path::PathBuf {
     state_dir.join("token")
 }
@@ -44,7 +66,7 @@ pub fn resolve_token(
     let path = token_file(state_dir);
     if let Ok(existing) = std::fs::read_to_string(&path) {
         let existing = existing.trim().to_owned();
-        if existing.chars().count() >= MINIMUM_TOKEN {
+        if existing.chars().count() >= minimum_token() {
             return Ok(Some(existing));
         }
     }
@@ -117,20 +139,21 @@ impl Security {
             // Say what was actually wrong. "Requires a token" when one was given
             // sends someone looking for a typo in the variable name rather than
             // at its length, which is what this has cost twice.
+            let minimum = minimum_token();
             match token.as_deref() {
                 None => {
                     return Err(format!(
-                        "Listening on {address} reaches other machines, so it needs an access token of at least {MINIMUM_TOKEN} characters. Set AGENTDOCK_TOKEN, or let AgentDock generate one by not setting it."
+                        "Listening on {address} reaches other machines, so it needs an access token of at least {minimum} characters. Set AGENTDOCK_TOKEN, or let AgentDock generate one by not setting it."
                     )
                     .into());
                 }
-                Some(value) if value.chars().count() < MINIMUM_TOKEN => {
+                Some(value) if value.chars().count() < minimum => {
                     // A token set in the environment wins over the generated
                     // one, so a short one left over from an earlier attempt
                     // blocks the path that would have fixed it. Say how to get
                     // out rather than only what is wrong.
                     return Err(format!(
-                        "AGENTDOCK_TOKEN is {} characters; {MINIMUM_TOKEN} is the minimum for a binding that reaches other machines. Set a longer one, or `unset AGENTDOCK_TOKEN` to have one generated.",
+                        "AGENTDOCK_TOKEN is {} characters; {minimum} is the minimum for a binding that reaches other machines. Set a longer one, `unset AGENTDOCK_TOKEN` to have one generated, or lower the floor deliberately with AGENTDOCK_TOKEN_MIN.",
                         value.chars().count()
                     )
                     .into());
@@ -490,6 +513,24 @@ mod tests {
         let short = rejection(network, Some("qwe41235".into()));
         assert!(short.contains("is 8 characters"), "{short}");
         assert!(rejection(network, Some("x".repeat(24))).is_empty());
+    }
+
+    #[test]
+    fn the_token_floor_holds_unless_it_is_deliberately_written_down() {
+        assert_eq!(minimum_from(None), MINIMUM_TOKEN);
+        assert_eq!(minimum_from(Some("")), MINIMUM_TOKEN);
+        assert_eq!(minimum_from(Some("   ")), MINIMUM_TOKEN);
+        // Written down, it is honoured in either direction.
+        assert_eq!(minimum_from(Some("6")), 6);
+        assert_eq!(minimum_from(Some(" 40 ")), 40);
+        // Zero asks for no floor, and gets the one below which a token stops
+        // being a token at all: an empty one is the same as having none.
+        assert_eq!(minimum_from(Some("0")), 1);
+        // A typo is a typo. Reading it as "no minimum" would weaken a
+        // deployment by accident, which is the one thing this must not do.
+        assert_eq!(minimum_from(Some("six")), MINIMUM_TOKEN);
+        assert_eq!(minimum_from(Some("-4")), MINIMUM_TOKEN);
+        assert_eq!(minimum_from(Some("8 characters")), MINIMUM_TOKEN);
     }
 
     /// Loopback keeps working with no token at all: the single-user host case
