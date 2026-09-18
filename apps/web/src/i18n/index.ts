@@ -269,6 +269,7 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Close tabs to the right": "关闭右侧标签页",
   "Close all tabs": "关闭全部标签页",
   "Model": "模型",
+  "Approval": "工具批准",
   "Client default": "客户端默认",
   "Faster": "更快",
   "Smarter": "更聪明",

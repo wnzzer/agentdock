@@ -25,6 +25,11 @@ const paths: Record<string, string> = {
   download: "M12 3v12 m-5-5 5 5 5-5 M4 16v5h16v-5",
   check: "m5 12 4 4L19 6",
   clock: "M2 12a10 10 0 1 0 20 0a10 10 0 1 0-20 0 M12 6v6l4 2",
+  // A dial with its needle part-way round: how deeply this is being thought
+  // about, which is a level rather than a duration.
+  gauge: "M3 17a9 9 0 1 1 18 0 M12 17l4.5-5.5",
+  // What stands between a tool and the work. The composer's approval chip.
+  shield: "M12 3l7 3v6c0 4.2-2.9 7.4-7 9-4.1-1.6-7-4.8-7-9V6z",
   image: "M3 3h18v18H3z m0 13 5-5 5 6 3-3 5 6 M14 7h.01",
   info: "M2 12a10 10 0 1 0 20 0a10 10 0 1 0-20 0 M12 11v6 M12 7h.01",
   locate: "M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 12a7 7 0 1 0 14 0a7 7 0 1 0-14 0 M9 12a3 3 0 1 0 6 0a3 3 0 1 0-6 0",
