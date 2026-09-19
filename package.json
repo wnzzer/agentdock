@@ -1,6 +1,7 @@
 {
   "name": "agentdock",
   "private": true,
+  "license": "MIT",
   "packageManager": "pnpm@10.30.3",
   "engines": {
     "node": ">=24",
