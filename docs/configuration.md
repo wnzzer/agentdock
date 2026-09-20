@@ -40,6 +40,23 @@ Importing **does not rebind existing sessions**. If a session still asks for log
 
 This is an explicit **shared native configuration reference**, not a copied account or a claim of process-level credential isolation. The separate official-account manager creates its own private account directories; imported host references retain their existing source directory. Each new session gets its own process/conversation; loading a specific old conversation remains **Load existing session**. Managed account/profile ownership must not be broken by deleting its profile independently.
 
+## Settings file
+
+Everything a deployment decides — whether it is reachable from other machines, on which port, with which token — lives in **`<state>/config.toml`**, so it is written once rather than remembered as a handful of variables:
+
+```toml
+lan = true              # reachable from other machines (same as --lan)
+port = 28789            # or addr = "192.168.0.9:28789"
+token = "..."           # AGENTDOCK_TOKEN
+token_min = 24          # shortest token this deployment accepts
+instance_label = "novel box"
+allowed-origins = ["http://box.local:28789"]
+```
+
+Any other key names the `AGENTDOCK_` variable it spells (`shell`, `claude-bin`, `browse-roots`, …); dashes and underscores are the same, a full `AGENTDOCK_*` name is accepted as written, and a list becomes the comma-separated form those variables already take. Keys always land under that prefix, so this file cannot set a variable outside AgentDock's namespace.
+
+Precedence is command line → environment → file → default. `--lan` outranks the file only about the host: a port written down is still the port that was meant. `AGENTDOCK_HOME` and `AGENTDOCK_STATE_DIR` cannot come from the file, which lives inside the directory they choose.
+
 ## Advanced environment configuration
 
 Expand **Advanced environment** in an endpoint profile, new-session form or native-history loader. To inspect an existing session without launching it, use its sidebar settings gear or the pane's session-actions menu. A running session is read-only here; only `stopped` / `failed` sessions can save changes. Saving never starts, stops or restarts a process. Changes apply at its next explicit launch.
@@ -61,6 +78,9 @@ AGENTDOCK_DB                  # optional database path
 AGENTDOCK_HOME                # installation/state home; default ~/.agentdock for new installs
 AGENTDOCK_STATE_DIR           # optional persistent state directory
 AGENTDOCK_ADDR                # default 127.0.0.1:28789
+AGENTDOCK_TOKEN               # access token; required by a binding that reaches other machines
+AGENTDOCK_TOKEN_MIN           # shortest accepted token; default 24
+AGENTDOCK_ALLOWED_ORIGINS     # optional extra browser origins, comma-separated
 AGENTDOCK_WEB_DIR             # state-dir/web if installed, else source apps/web/dist
 AGENTDOCK_NATIVE_BRIDGE       # optional path to packages/native-bridge/history.mjs
 AGENTDOCK_JS_RUNTIME          # native helper/chat/account runtime; default node (absolute path supported)

@@ -15,6 +15,7 @@ mod native_config;
 mod native_history;
 mod providers;
 mod security;
+mod settings;
 mod workspace_io;
 
 use agentdock_domain::{
@@ -321,7 +322,7 @@ fn banner_urls(address: SocketAddr) -> Vec<(&'static str, String)> {
 /// to bind is worse than one on a number nobody else claims.
 const DEFAULT_ADDRESS: &str = "127.0.0.1:28789";
 
-const HELP: &str = "AgentDock — a host workspace for Claude Code and Codex
+const HELP: &str = r#"AgentDock — a host workspace for Claude Code and Codex
 
   agentdock                 Start the gateway in the background
   agentdock --lan           Same, reachable from other machines on the network
@@ -335,12 +336,24 @@ const HELP: &str = "AgentDock — a host workspace for Claude Code and Codex
   --version                 Print the version
   --help                    This text
 
-Listens on 127.0.0.1:28789 unless AGENTDOCK_ADDR says otherwise. A binding that
-reaches other machines needs an access token of at least 24 characters, which
-AGENTDOCK_TOKEN_MIN can lower for a network you trust; one is generated and kept
-in the state directory unless AGENTDOCK_TOKEN provides it, and `status` prints it
-again. State lives in ~/.agentdock; AGENTDOCK_HOME or AGENTDOCK_STATE_DIR
-override it, and existing project-local .agentdock databases are preserved.";
+Settings live in <state>/config.toml, and an environment variable overrides the
+file:
+
+  lan = true              # reachable from other machines (same as --lan)
+  port = 28789            # or addr = "192.168.0.9:28789"
+  token = "..."           # AGENTDOCK_TOKEN
+  token_min = 24          # shortest token this deployment accepts
+
+Any other key names the AGENTDOCK_ variable it spells: shell, claude-bin,
+instance-label, allowed-origins = ["http://..."], and so on.
+
+Listens on 127.0.0.1:28789 otherwise. A binding that reaches other machines
+needs an access token of at least 24 characters, which token_min can lower for
+a network you trust; one is generated and kept in the state directory unless a
+token is given, and `status` prints it again. State lives in ~/.agentdock;
+AGENTDOCK_HOME or AGENTDOCK_STATE_DIR override it (that one cannot come from the
+file, which lives inside it), and existing project-local .agentdock databases
+are preserved."#;
 
 /// Print failures as text and exit non-zero.
 ///
@@ -348,12 +361,47 @@ override it, and existing project-local .agentdock databases are preserved.";
 /// whole message and prints its newlines as `\n` — so a startup failure that
 /// carries a log tail arrived as one unreadable line. A supervisor also needs
 /// the non-zero status to tell a failed start from a successful one.
-#[tokio::main]
-async fn main() {
-    if let Err(error) = run().await {
+fn main() {
+    // The configuration file is read before the runtime is built, because
+    // seeding the environment from it is only sound while this is the only
+    // thread — and a runtime is what ends that.
+    if let Err(error) = apply_settings() {
         eprintln!("{error}");
         std::process::exit(1);
     }
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    };
+    runtime.block_on(async {
+        if let Err(error) = run().await {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    });
+}
+
+/// Let the file say what the environment has not.
+///
+/// A variable that is already set wins, because whoever set it did so later and
+/// more deliberately than whoever wrote the file. A state directory that cannot
+/// be resolved is not reported here: `run` says the same thing better, and
+/// saying it twice from two places would be worse than once.
+fn apply_settings() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let Ok(state_dir) = installation::state_directory() else {
+        return Ok(());
+    };
+    let lan = env::args().any(|argument| argument == "--lan");
+    for (key, value) in settings::pairs(&state_dir, lan)? {
+        if env::var_os(&key).is_none() {
+            // Sound here and nowhere later: no other thread exists yet.
+            unsafe { env::set_var(&key, value) };
+        }
+    }
+    Ok(())
 }
 
 async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
