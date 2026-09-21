@@ -42,7 +42,9 @@ button svg, a svg { flex-shrink: 0; }
 input, select, textarea { min-width: 0; }
 h1, h2, h3, p { margin: 0; }
 svg { flex-shrink: 0; vertical-align: middle; }
-.app-shell { display: flex; flex-direction: column; height: 100vh; height: 100dvh; width: 100%; overflow: hidden; }
+/* dvh knows about the browser's chrome; --app-height is set while a phone
+   keyboard is covering the page, which dvh cannot see. */
+.app-shell { display: flex; flex-direction: column; height: 100vh; height: 100dvh; height: var(--app-height, 100dvh); width: 100%; overflow: hidden; }
 .topbar { height: 60px; flex-shrink: 0; display: flex; align-items: center; gap: 18px; padding: 0 21px; background: white; border-bottom: 1px solid var(--border); z-index: 30; }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 205px; }
 .brand>strong { font-size: 17px; letter-spacing: -.55px; display: flex; align-items: center; gap: 10px; }

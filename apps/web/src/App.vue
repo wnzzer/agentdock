@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { shellHeight } from "./features/viewport-height";
 import type { EndpointProfile, FileEntry, GitStatus, LayoutDocument, LayoutNode, PaneNode, ProviderKind, Session, Workspace } from "@agentdock/protocol";
 import Canvas from "./components/Canvas.vue";
 import { createDefaultLayoutDocument, flattenPanes, validateLayout } from "./layout/layout-engine";
@@ -507,12 +508,29 @@ watch([sidebarExpanded, explorerOpen], ([sidebar, explorer]) => writePanelVisibi
 function beforeUnload(event: BeforeUnloadEvent) {
   if (hasDirtyDrafts() || hasGitDrafts() || pendingLayout || ["Saving…", "Save failed", "Save conflict", "Memory only"].includes(layoutStatus.value)) { event.preventDefault(); event.returnValue = ""; }
 }
+/**
+ * Give way to a phone keyboard.
+ *
+ * `100dvh` counts the browser's own chrome and nothing else, so a keyboard
+ * covers the bottom of the page without the page ever knowing. Whatever lives
+ * down there goes with it: in a terminal that is the prompt, and the command
+ * list a client draws underneath it, which was the whole of what a slash did.
+ */
+function fitToKeyboard() {
+  const height = shellHeight(window.visualViewport ?? undefined, window.innerHeight);
+  document.documentElement.style.setProperty("--app-height", height ? `${height}px` : "");
+}
 onMounted(() => {
   void bootstrap();
   pollTimer = setInterval(() => { if (!document.hidden && !showAuth.value) { void refreshSessions(); for (const id of trackedWorkspaces()) void refreshGit(id); } }, 5000);
   window.addEventListener("beforeunload", beforeUnload); window.addEventListener("resize", adaptDrawers);
+  // The visual viewport also scrolls under a keyboard, which is the other way
+  // its height stops describing what can be seen.
+  window.visualViewport?.addEventListener("resize", fitToKeyboard);
+  window.visualViewport?.addEventListener("scroll", fitToKeyboard);
+  fitToKeyboard();
 });
-onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); disposed = true; clearInterval(pollTimer); clearTimeout(layoutTimer); window.removeEventListener("beforeunload", beforeUnload); window.removeEventListener("resize", adaptDrawers); });
+onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); disposed = true; clearInterval(pollTimer); clearTimeout(layoutTimer); window.removeEventListener("beforeunload", beforeUnload); window.removeEventListener("resize", adaptDrawers); window.visualViewport?.removeEventListener("resize", fitToKeyboard); window.visualViewport?.removeEventListener("scroll", fitToKeyboard); });
 </script>
 
 <template>
