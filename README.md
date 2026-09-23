@@ -17,22 +17,59 @@
 
 <p align="center"><b>English</b> · <a href="README.zh-CN.md">简体中文</a></p>
 
-AgentDock is a self-hosted web workspace for the **official Claude Code and Codex clients**. It runs on the machine where your code lives — a laptop, a dev box, a server behind SSH — and gives every agent session, file, diff and terminal a place on one recursive split/tab canvas you can open from any browser. Rust server, Vue 3 client, one binary, no Docker.
+**Drive the official Claude Code and Codex from a browser — side by side.** AgentDock runs on the machine where your code lives — a laptop, a dev box, a server behind SSH — and gives every agent session, file, diff and terminal a place on one canvas you can split any way you like, from any browser, phone included. One `npm i -g`, one binary, no Docker.
 
-**A dock, not another agent.** AgentDock never implements an agent loop, a tool executor or a permission system of its own. Codex is driven through its official `app-server`; Claude Code through the CLI's own `stream-json` control interface. Your logins, models, hooks and permission prompts stay native — AgentDock renders an approval as a card and forwards your decision, and it never answers one for you or reads a client's credentials. When the official clients gain a feature, it arrives through the adapter rather than a reimplementation. The reasoning is in [Product boundary](docs/product-boundary.md).
-
-[Install](#install) · [Quick start](#quick-start) · [Highlights](#highlights) · [How it fits together](#how-it-fits-together) · [Security](#security) · [Docs](#documentation) · [Releases](https://github.com/wnzzer/agentdock/releases)
-
+[Why AgentDock](#why-agentdock) · [Install](#install) · [Quick start](#quick-start) · [Features](#features) · [How it fits together](#how-it-fits-together) · [Security](#security) · [Docs](#documentation) · [Releases](https://github.com/wnzzer/agentdock/releases)
 
 <p align="center">
-  <img src="docs/assets/screenshot-canvas.png" alt="The AgentDock canvas: a rendered Markdown file, the Git changes pane and a Rust source file docked side by side, with the file explorer on the right." width="100%">
-  <br><sub>The shared canvas — files, Git and code docked side by side. A real session against this repository.</sub>
+  <img src="docs/assets/screenshot-canvas.png" alt="The AgentDock canvas: two agent sessions reading this repository to answer different questions, and Git changes with a diff bottom right." width="100%">
+  <br><sub>Two agent sessions working side by side, with the Git diff right there. A real session against this repository.</sub>
 </p>
+
+## Why AgentDock
+
+### 1. The official clients, untouched — new models on day one
+
+AgentDock is **not another agent**, and not a reimplementation of one. Codex is driven through its official `app-server`; Claude Code through the CLI's own `stream-json` control interface. Logins, models, hooks, `CLAUDE.md` and permission prompts all stay native — AgentDock renders them as cards and forwards your decision, and it never answers one for you or reads a client's credentials. The reasoning is in [Product boundary](docs/product-boundary.md).
+
+That is why the model list is **asked of the client itself**: upgrade the client and new models such as Fable or Opus 5.5 show up in the menu. One that has not shown up yet can be used by typing its ID.
+
+<p align="center">
+  <img src="docs/assets/screenshot-models.png" alt="The model menu: Default, Opus, Fable, Sonnet and Haiku, all reported by the local Claude Code client, with a field for typing any model ID at the bottom." width="720">
+</p>
+
+### 2. Many agents, one canvas
+
+Recursive horizontal and vertical splits, drag-to-edge docking, centre-drop tabs, and `1:1` / `2×2` / `1:2:1` presets. Claude Code and Codex can work at the same time, sessions from different projects can sit side by side, and every file and Git pane stays bound to its own repository. **Closing a pane never ends its process**, and layouts live on the server, so another browser opens exactly what you left.
+
+### 3. A conversation you can read, not terminal scrollback
+
+Messages, folding tool cards, native approval and question cards, a context-usage ring and turn status at a glance. **Interrupt** and **End session** are separate actions; input is persisted before it is sent, so a dropped connection never runs anything twice. You can start typing while the client is still starting up.
 
 <p align="center">
   <img src="docs/assets/screenshot-chat.png" alt="The structured conversation view: folding tool cards, a native approval card and the composer with a context ring." width="100%">
-  <br><sub>Structured conversations: folding tool cards and native approval cards. Rendered by the built-in read-only design lab from local fixtures — no client or model involved.</sub>
+  <br><sub>Tool cards and native approval cards. Rendered by the built-in read-only design lab from local fixtures — no client or model involved.</sub>
 </p>
+
+### 4. Walk away from the desk, keep going on your phone
+
+The browser is the client. With `agentdock --lan` or one SSH port forward, you can follow an agent, approve a permission and ask the next question from your phone; the composer and command list stay above the on-screen keyboard. The processes run on the host, so closing the page or losing the network changes nothing — come back and carry on.
+
+<p align="center">
+  <img src="docs/assets/screenshot-mobile.png" alt="The conversation view at phone width: messages, tool cards and the composer at the bottom." width="360">
+</p>
+
+### 5. Files and Git within reach
+
+A lazy file tree, workspace-wide search that honours `.gitignore`, and `@path` completion in the composer; rendered Markdown, conflict-checked editing, and image / video / PDF previews. Git is a top-level pane: read the diff, stage per file and commit without switching to a terminal to check what the agent changed.
+
+<p align="center">
+  <img src="docs/assets/screenshot-files.png" alt="A syntax-highlighted Rust source file next to the Git changes pane, whose diff shows edits to the README." width="100%">
+</p>
+
+### 6. Nothing to migrate, and your data stays yours
+
+*Endpoint profiles → Import existing configuration* references your existing `~/.claude` or `~/.codex`, so sessions reuse the login and settings you already have without copying a credential. Or create isolated custom endpoints whose API keys are stored only as `env:` references. All state lives in `~/.agentdock/` on your own machine, with no telemetry.
 
 ## Install
 
@@ -75,7 +112,7 @@ agentdock stop
 agentdock serve      # foreground — what systemd or another supervisor should run
 ```
 
-## Highlights
+## Features
 
 ### 🧩 A canvas that docks anything
 

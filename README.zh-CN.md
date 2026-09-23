@@ -17,22 +17,59 @@
 
 <p align="center"><a href="README.md">English</a> · <b>简体中文</b></p>
 
-AgentDock 是一个自托管的 Web 工作台，服务于**官方 Claude Code 与 Codex 客户端**。它运行在代码所在的那台机器上——笔记本、开发机、SSH 后面的服务器都行——把每个 Agent 会话、文件、diff 和终端放进同一块可无限分屏/分页的画布里，任何浏览器都能打开。Rust 服务端、Vue 3 客户端、单个二进制，不需要 Docker。
+**在浏览器里，同时驾驭官方 Claude Code 与 Codex。** AgentDock 跑在代码所在的那台机器上——笔记本、开发机、SSH 后面的服务器——把每个 Agent 会话、文件、diff 和终端放进同一块可以随意分屏的画布，任何浏览器都能打开，手机也行。一条 `npm i -g`，一个二进制，不需要 Docker。
 
-**是船坞，不是又一个 Agent。** AgentDock 从不自己实现 Agent 循环、工具执行器或权限系统。Codex 通过官方 `app-server` 驱动，Claude Code 通过 CLI 自带的 `stream-json` 控制接口驱动。你的登录、模型、hooks 和权限确认全部保持原生——AgentDock 只是把审批渲染成卡片并转发你的决定，绝不替你回答，也不读取客户端的凭据。官方客户端出了新功能，通过适配层透传进来，而不是再抄一遍。背后的取舍见[产品边界](docs/product-boundary.md)。
-
-[安装](#安装) · [快速开始](#快速开始) · [亮点](#亮点) · [整体结构](#整体结构) · [安全](#安全) · [文档](#文档) · [Releases](https://github.com/wnzzer/agentdock/releases)
-
+[为什么是 AgentDock](#为什么是-agentdock) · [安装](#安装) · [快速开始](#快速开始) · [功能一览](#功能一览) · [整体结构](#整体结构) · [安全](#安全) · [文档](#文档) · [Releases](https://github.com/wnzzer/agentdock/releases)
 
 <p align="center">
-  <img src="docs/assets/screenshot-canvas.zh-CN.png" alt="AgentDock 画布：渲染后的 Markdown、Git 变更面板和 Rust 源码并排停靠，右侧是文件浏览器。" width="100%">
-  <br><sub>共享画布——文件、Git 和代码并排停靠。真实运行、打开的就是本仓库。</sub>
+  <img src="docs/assets/screenshot-canvas.zh-CN.png" alt="AgentDock 画布：两个 Agent 会话各自读代码回答不同的问题，右下是 Git 变更与 diff。" width="100%">
+  <br><sub>两个 Agent 会话并排工作，Git diff 就在旁边。真实运行、打开的就是本仓库。</sub>
 </p>
+
+## 为什么是 AgentDock
+
+### 1. 官方客户端，原汁原味——新模型当天就能用
+
+AgentDock **不是又一个 Agent**，也不是套壳重写。Codex 通过官方 `app-server` 驱动，Claude Code 通过 CLI 自带的 `stream-json` 控制接口驱动。登录、模型、hooks、`CLAUDE.md`、权限确认全部是原生的——AgentDock 只把它们渲染成卡片，把你的决定转发回去，绝不替你回答，也不读客户端的凭据。背后的取舍见[产品边界](docs/product-boundary.md)。
+
+所以模型列表是**直接问客户端要的**：客户端一升级，Fable、Opus 5.5 这样的新模型就出现在菜单里；还没出现的，也能直接输入模型 ID 先用上。
+
+<p align="center">
+  <img src="docs/assets/screenshot-models.zh-CN.png" alt="模型菜单：Default、Opus、Fable、Sonnet、Haiku 等选项都来自本机 Claude Code 客户端，底部可以直接输入模型 ID。" width="720">
+</p>
+
+### 2. 多个 Agent，一块画布
+
+横竖递归分屏、拖到边缘停靠、拖到中间叠成页签、`1:1` / `2×2` / `1:2:1` 一键预设。Claude Code 和 Codex 可以同时各干各的，不同项目的会话也能并排——而每个文件、Git 面板始终绑定自己的仓库。**关掉面板不会结束进程**，布局保存在服务端，换个浏览器打开还是原样。
+
+### 3. 看得懂的对话，而不是终端滚屏
+
+消息、可折叠的工具卡片、原生审批与提问卡片、上下文用量环、轮次状态一目了然。**中断**和**结束会话**是两个动作；输入先落库再发送，断线也不会重复执行。打开会话时客户端还在握手，也可以先打字。
 
 <p align="center">
   <img src="docs/assets/screenshot-chat.zh-CN.png" alt="结构化对话视图：可折叠的工具卡片、原生审批卡片，以及带上下文环的输入框。" width="100%">
-  <br><sub>结构化对话：可折叠的工具卡片与原生审批卡片。由内置的只读 design lab 用本地 fixture 渲染，不涉及任何客户端或模型。</sub>
+  <br><sub>工具卡片与原生审批卡片。由内置的只读 design lab 用本地 fixture 渲染，不涉及任何客户端或模型。</sub>
 </p>
+
+### 4. 离开电脑，在手机上接着干
+
+浏览器就是客户端。`agentdock --lan` 或一条 SSH 端口转发，就能在手机上看 Agent 进度、批准权限、追问下一步；键盘弹出时输入框和命令列表始终在键盘上方。进程跑在宿主机上，页面关了、网断了都不影响，回来接着聊。
+
+<p align="center">
+  <img src="docs/assets/screenshot-mobile.zh-CN.png" alt="手机宽度下的对话视图：消息、工具卡片和底部输入框。" width="360">
+</p>
+
+### 5. 文件与 Git 就在手边
+
+懒加载文件树、遵循 `.gitignore` 的全局搜索、输入框里 `@路径` 补全；Markdown 渲染预览、带冲突检测的编辑保存、图片/视频/PDF 预览。Git 是顶级面板：看 diff、按文件暂存、提交，不用切回终端检查 Agent 改了什么。
+
+<p align="center">
+  <img src="docs/assets/screenshot-files.zh-CN.png" alt="带语法高亮的 Rust 源码与 Git 变更面板并排，diff 显示对 README 的修改。" width="100%">
+</p>
+
+### 6. 零迁移，数据留在你手里
+
+在 *端点配置 → 导入现有配置* 里引用本机的 `~/.claude` / `~/.codex`，直接复用已有登录和设置，不复制任何凭据；也可以建相互隔离的自定义端点，API key 只存 `env:` 引用。状态全在你自己机器的 `~/.agentdock/`，没有任何遥测。
 
 ## 安装
 
@@ -75,7 +112,7 @@ agentdock stop
 agentdock serve      # 前台运行——交给 systemd 等进程管理器时用这个
 ```
 
-## 亮点
+## 功能一览
 
 ### 🧩 什么都能停靠的画布
 
