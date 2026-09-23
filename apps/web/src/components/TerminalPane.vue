@@ -135,7 +135,9 @@ function initializeTerminal() {
   if (!host.value) throw new Error("Terminal host is unavailable");
   terminal = new Terminal({
     cursorBlink: true, fontSize: 12, lineHeight: 1.22, scrollback: 5000,
-    fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
+    // A Nerd Font the viewer already has wins; the bundled symbols fill in the
+    // prompt icons for everyone else, phones included.
+    fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", "Symbols Nerd Font Mono", "AgentDock Symbols", monospace',
     theme: props.dark ? { background: "#17232d", foreground: "#dde6eb", cursor: "#63dac8" } : {
       background: "#ffffff", foreground: "#243343", cursor: "#0a8278", selectionBackground: "#ccebe6",
       black: "#243343", brightBlack: "#657380", red: "#b4374c", brightRed: "#c73f55", green: "#187953", brightGreen: "#098462",

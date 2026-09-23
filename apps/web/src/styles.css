@@ -1,3 +1,12 @@
+/* Nerd Font icons for shell prompts (git branch, folder, OS marks). Symbols
+   only, as a fallback behind the terminal's own font; the unicode-range means
+   it downloads only when a prompt actually draws one of these glyphs. */
+@font-face {
+  font-family: "AgentDock Symbols";
+  src: url("./assets/fonts/symbols-nerd-font-mono.woff2") format("woff2");
+  font-display: block;
+  unicode-range: U+E000-F8FF, U+F0000-FFFFD, U+23FB-23FE, U+2665, U+26A1, U+2B58;
+}
 @import url("./features/workflows.css");
 
 :root {
