@@ -26,11 +26,21 @@ pub struct Web;
 
 /// Only the modules the server actually spawns. Tests and fixtures are part of
 /// the repository, not of what a user installs.
+///
+/// History loading imports the Claude Agent SDK by package name, so its entry
+/// module travels with the bridges -- and so does its `package.json`, because
+/// that is how Node finds the entry module. Carrying `sdk.mjs` alone left a
+/// package directory with no manifest, and every import of it failed looking
+/// for an `index.js` that was never there. The SDK's other bundles are not
+/// imported and stay behind.
 #[derive(RustEmbed)]
 #[folder = "$CARGO_MANIFEST_DIR/../../packages/native-bridge"]
 #[include = "*.mjs"]
+#[include = "node_modules/@anthropic-ai/claude-agent-sdk/package.json"]
 #[exclude = "*.test.mjs"]
 #[exclude = "fixtures/*"]
+#[exclude = "node_modules/@anthropic-ai/claude-agent-sdk/bridge.mjs"]
+#[exclude = "node_modules/@anthropic-ai/claude-agent-sdk/node_modules/*"]
 pub struct Bridge;
 
 /// Whether anything was embedded at all. A `cargo build` that never ran the web
@@ -162,6 +172,13 @@ mod tests {
                 names.iter().any(|name| name == imported),
                 "{imported} missing"
             );
+        }
+        // A package is its manifest plus its entry; either alone fails to import.
+        for sdk in [
+            "node_modules/@anthropic-ai/claude-agent-sdk/package.json",
+            "node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs",
+        ] {
+            assert!(names.iter().any(|name| name == sdk), "{sdk} missing");
         }
         assert!(
             !names
