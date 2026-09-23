@@ -103,7 +103,9 @@ fn executable(path: &Path) -> bool {
 /// Resolve a command against the server's own `PATH`, the same way spawning it
 /// by bare name would.
 pub fn on_path(command: &str) -> Option<PathBuf> {
-    let paths = env::var_os("PATH")?;
+    on_search_path(command, env::var_os("PATH")?)
+}
+fn on_search_path(command: &str, paths: std::ffi::OsString) -> Option<PathBuf> {
     env::split_paths(&paths)
         .map(|directory| directory.join(command))
         .find(|candidate| executable(candidate))
@@ -111,11 +113,22 @@ pub fn on_path(command: &str) -> Option<PathBuf> {
 
 /// The program a session will actually launch, and where it came from.
 pub fn resolve(state_dir: &Path, provider: &ProviderKind) -> (String, ProgramSource) {
+    resolve_in(state_dir, provider, |key| env::var_os(key))
+}
+
+/// `resolve`, reading the environment through `var` so tests can describe one
+/// without changing the process's own -- which every other test running in
+/// parallel shares, and which spawning `git` reads.
+fn resolve_in(
+    state_dir: &Path,
+    provider: &ProviderKind,
+    var: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> (String, ProgramSource) {
     let Some(command) = command(provider) else {
         return (String::new(), ProgramSource::Missing);
     };
     if let Some(value) = override_key(provider)
-        .and_then(env::var_os)
+        .and_then(&var)
         .filter(|value| !value.is_empty())
     {
         return (
@@ -125,7 +138,7 @@ pub fn resolve(state_dir: &Path, provider: &ProviderKind) -> (String, ProgramSou
     }
     // PATH before the managed copy: installing from this page must never
     // repoint sessions away from the client the host already had.
-    if let Some(path) = on_path(command) {
+    if let Some(path) = var("PATH").and_then(|paths| on_search_path(command, paths)) {
         return (path.to_string_lossy().into_owned(), ProgramSource::Path);
     }
     if let Some(path) = managed_program(state_dir, command) {
@@ -291,12 +304,23 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&managed, fs::Permissions::from_mode(0o755)).unwrap();
         }
+        // Each case describes its own environment instead of changing the
+        // process's: tests run in parallel, and clearing PATH here once made
+        // other tests fail to find git.
+        let env = |pairs: &'static [(&'static str, &'static str)], path: Option<PathBuf>| {
+            move |key: &str| {
+                if key == "PATH" {
+                    return path.clone().map(|p| p.into_os_string());
+                }
+                pairs
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| (*v).into())
+            }
+        };
         // Nothing on PATH: the managed copy is the fallback that gets used.
-        let restore = env::var_os("PATH");
-        // SAFETY: single-threaded test of process-wide resolution.
-        unsafe { env::set_var("PATH", "") };
         assert_eq!(
-            resolve(&root, &ProviderKind::Codex),
+            resolve_in(&root, &ProviderKind::Codex, env(&[], None)),
             (
                 managed.to_string_lossy().into_owned(),
                 ProgramSource::Managed
@@ -312,32 +336,30 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&host_codex, fs::Permissions::from_mode(0o755)).unwrap();
         }
-        unsafe { env::set_var("PATH", &host) };
         assert_eq!(
-            resolve(&root, &ProviderKind::Codex),
+            resolve_in(&root, &ProviderKind::Codex, env(&[], Some(host.clone()))),
             (
                 host_codex.to_string_lossy().into_owned(),
                 ProgramSource::Path
             )
         );
         // An explicit server override still beats both.
-        unsafe { env::set_var("AGENTDOCK_CODEX_BIN", "/explicit/codex") };
         assert_eq!(
-            resolve(&root, &ProviderKind::Codex),
+            resolve_in(
+                &root,
+                &ProviderKind::Codex,
+                env(
+                    &[("AGENTDOCK_CODEX_BIN", "/explicit/codex")],
+                    Some(host.clone())
+                )
+            ),
             ("/explicit/codex".to_owned(), ProgramSource::Override)
         );
-        unsafe { env::remove_var("AGENTDOCK_CODEX_BIN") };
         // A missing client keeps its bare command name so its own error shows.
-        unsafe { env::set_var("PATH", "") };
         assert_eq!(
-            resolve(&root, &ProviderKind::ClaudeCode),
+            resolve_in(&root, &ProviderKind::ClaudeCode, env(&[], None)),
             ("claude".to_owned(), ProgramSource::Missing)
         );
-        match restore {
-            // SAFETY: restores the process default for other tests.
-            Some(value) => unsafe { env::set_var("PATH", value) },
-            None => unsafe { env::remove_var("PATH") },
-        }
         assert!(npm_package(&ProviderKind::Terminal).is_none());
         let _ = fs::remove_dir_all(&root);
     }
