@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import type { GitDiff, GitFile, GitStatus, Workspace } from "@agentdock/protocol";
+import type { GitDiff, GitFile, GitStatus } from "@agentdock/protocol";
 import { errorMessage, json, request, workspacePath } from "./api";
 import { isChangedFile, isStagedFile, parseUnifiedDiff, pathsForGitFiles } from "./git-model";
 import { gitViewState } from "./git-view-state";
@@ -9,7 +9,7 @@ import ChipMenu from "./ChipMenu.vue";
 import { useI18n } from "../i18n";
 const { t } = useI18n();
 const props = defineProps<{ workspaceId: string; refreshToken?: number }>();
-const emit = defineEmits<{ changed: [status: GitStatus]; openFile: [path: string]; worktree: [workspace: Workspace] }>();
+const emit = defineEmits<{ changed: [status: GitStatus]; openFile: [path: string] }>();
 const status = ref<GitStatus>({ branch: null, files: [] });
 const viewState = computed(() => gitViewState(props.workspaceId));
 const selected = computed({ get: () => viewState.value.selected, set: value => { viewState.value.selected = value; } });
@@ -85,7 +85,8 @@ async function discard() {
  *
  * Switching rewrites this checkout, so the server refuses it while a session
  * here is running, and Git refuses it over uncommitted work; either refusal
- * is shown as it is. A worktree is the way to work on another branch without
+ * is shown as it is. A single session moves to another branch from its own
+ * branch chip, into a worktree beside this checkout; those are listed here.
  * disturbing this one: it opens as a workspace of its own.
  */
 interface Worktree { path: string; branch?: string | null; main: boolean }
@@ -107,9 +108,6 @@ async function branchAction(run: () => Promise<unknown>) {
   finally { busy.value = false; }
 }
 const switchTo = (branch: string, create = false) => branchAction(() => request(`${workspacePath(props.workspaceId)}/git/switch`, json("POST", { branch, create })));
-const openWorktree = (body: { branch?: string; create?: boolean; path?: string }) => branchAction(async () => {
-  emit("worktree", await request<Workspace>(`${workspacePath(props.workspaceId)}/git/worktrees`, json("POST", body)));
-});
 async function commit() {
   if (!message.value.trim() || !stagedFiles.value.length || busy.value) return;
   const workspaceId = props.workspaceId, epoch = mutationEpoch, draft = viewState.value, sentMessage = message.value;
@@ -134,14 +132,13 @@ onBeforeUnmount(() => { alive = false; revision++; diffRevision++; mutationEpoch
               <header>{{ t('Branches') }}</header>
               <div v-for="name in branches.branches" :key="name" :class="['git-branch-row',{current:name===branches.current}]">
                 <button type="button" :disabled="busy||name===branches.current||!!worktreeFor(name)&&!worktreeFor(name)!.main" :title="worktreeFor(name)&&!worktreeFor(name)!.main?t('Checked out in another worktree'):t('Switch this checkout to {branch}', { branch: name })" @click="switchTo(name)"><Icon v-if="name===branches.current" name="check" :size="12" /><span>{{ name }}</span></button>
-                <button v-if="name!==branches.current" type="button" class="git-branch-tree" :disabled="busy" :title="worktreeFor(name)?t('Open its worktree'):t('Open in a new worktree')" @click="worktreeFor(name)?openWorktree({ path: worktreeFor(name)!.path }):openWorktree({ branch: name })">{{ t(worktreeFor(name)?'Open worktree':'New worktree') }}</button>
               </div>
-              <form class="git-branch-new" @submit.prevent="newBranch.trim()&&switchTo(newBranch.trim(), true)"><input v-model="newBranch" :placeholder="t('New branch name')" :aria-label="t('New branch name')" maxlength="200" spellcheck="false" autocomplete="off" /><div><button type="submit" :disabled="busy||!newBranch.trim()">{{ t('Create here') }}</button><button type="button" :disabled="busy||!newBranch.trim()" @click="openWorktree({ branch: newBranch.trim(), create: true })">{{ t('Create in new worktree') }}</button></div></form>
+              <form class="git-branch-new" @submit.prevent="newBranch.trim()&&switchTo(newBranch.trim(), true)"><input v-model="newBranch" :placeholder="t('New branch name')" :aria-label="t('New branch name')" maxlength="200" spellcheck="false" autocomplete="off" /><div><button type="submit" :disabled="busy||!newBranch.trim()">{{ t('Create here') }}</button></div></form>
               <template v-if="otherWorktrees.length">
                 <header>{{ t('Worktrees') }}</header>
-                <button v-for="tree in otherWorktrees" :key="tree.path" type="button" class="git-branch-worktree" :disabled="busy" :title="tree.path" @click="openWorktree({ path: tree.path })"><strong>{{ tree.branch || t('Detached HEAD') }}</strong><small>{{ tree.path }}</small></button>
+                <div v-for="tree in otherWorktrees" :key="tree.path" class="git-branch-worktree" :title="tree.path"><strong>{{ tree.branch || t('Detached HEAD') }}</strong><small>{{ tree.path }}</small></div>
               </template>
-              <p class="git-branch-note">{{ t('A worktree is a second checkout beside this one, opened as its own workspace, so sessions there never touch these files.') }}</p>
+              <p class="git-branch-note">{{ t('Switching here moves every session in this checkout. To put one session on another branch, use the branch chip in its message box: it runs in its own worktree.') }}</p>
             </template>
           </div>
         </ChipMenu><span class="count-badge">{{ status.files.length }}</span></span><button class="icon-button" :disabled="busy || loading" :aria-label="t('Refresh Git changes')" @click="refresh"><Icon name="refresh" :size="15" /></button></div>

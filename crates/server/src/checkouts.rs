@@ -1,0 +1,206 @@
+//! Which checkout of its repository a session works in.
+//!
+//! A branch belongs to a checkout, and every session in one directory shares
+//! it. A session that needs a branch of its own runs in a git worktree of the
+//! same repository instead, recorded on the session; `None` is the workspace
+//! directory itself. Worktrees stay part of their workspace -- they are not
+//! workspaces of their own -- so switching is a property of one session and
+//! never moves the others.
+use crate::{ApiError, AppState, Result, db, directories, root, session_record, workspace_io};
+use agentdock_domain::{Session, SessionId, WorkspaceId};
+use axum::{
+    Json, Router,
+    extract::{Path, State},
+    routing::post,
+};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+/// A checkout, chosen by branch or by an existing worktree's directory.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutChoice {
+    /// A branch: its existing worktree, the workspace itself if it is checked
+    /// out there, or a new worktree (creating the branch when `create`).
+    pub branch: Option<String>,
+    #[serde(default)]
+    pub create: bool,
+    /// An existing worktree of this repository.
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Checkout {
+    /// None for the workspace directory itself.
+    pub path: Option<String>,
+    pub branch: Option<String>,
+}
+
+/// Resolve a choice to a checkout, making the worktree when there is none.
+/// Neither branch nor path means the workspace directory.
+pub async fn resolve(
+    state: &AppState,
+    workspace_id: WorkspaceId,
+    choice: CheckoutChoice,
+) -> Result<Checkout> {
+    let repo = root(state, workspace_id).await?;
+    let listed = workspace_io::git_branches(&repo).await?;
+    let repo_text = repo.to_string_lossy().into_owned();
+    let is_repo = |path: &str| {
+        std::fs::canonicalize(path)
+            .map(|p| p == repo)
+            .unwrap_or(false)
+            || path == repo_text
+    };
+    let (path, branch) = match (choice.path, choice.branch.map(|b| b.trim().to_owned())) {
+        (None, None) => {
+            return Ok(Checkout {
+                path: None,
+                branch: listed.current,
+            });
+        }
+        (Some(path), None) => {
+            let found = listed
+                .worktrees
+                .iter()
+                .find(|w| w.path == path)
+                .ok_or_else(|| ApiError::bad("Not a worktree of this workspace's repository"))?;
+            (PathBuf::from(&found.path), found.branch.clone())
+        }
+        (None, Some(branch)) => {
+            if listed.current.as_deref() == Some(branch.as_str()) {
+                return Ok(Checkout {
+                    path: None,
+                    branch: Some(branch),
+                });
+            }
+            if let Some(found) = listed
+                .worktrees
+                .iter()
+                .find(|w| w.branch.as_deref() == Some(branch.as_str()))
+            {
+                (PathBuf::from(&found.path), Some(branch))
+            } else {
+                let main = listed
+                    .worktrees
+                    .iter()
+                    .find(|w| w.main)
+                    .ok_or_else(|| ApiError::bad("Not a Git repository"))?;
+                let planned =
+                    workspace_io::worktree_path(std::path::Path::new(&main.path), &branch)?;
+                // Where a new worktree may go is bounded exactly as where a new
+                // workspace may: this decides what the server can write to.
+                let parent = planned.parent().and_then(|p| p.parent()).map(PathBuf::from);
+                if !parent.is_some_and(|p| directories::within_roots(&state.workspace_roots, &p)) {
+                    return Err(ApiError::bad(
+                        "The worktree would sit outside the roots this server may use. Set AGENTDOCK_WORKSPACE_ROOTS to allow it.",
+                    ));
+                }
+                let create = choice.create && !listed.branches.contains(&branch);
+                (
+                    workspace_io::git_worktree_add(&repo, &branch, create).await?,
+                    Some(branch),
+                )
+            }
+        }
+        _ => return Err(ApiError::bad("Name a branch or a worktree, not both")),
+    };
+    let canonical = tokio::fs::canonicalize(&path)
+        .await
+        .map_err(|_| ApiError::conflict("Worktree directory is unavailable"))?;
+    if canonical == repo || is_repo(&canonical.to_string_lossy()) {
+        return Ok(Checkout { path: None, branch });
+    }
+    if !directories::within_roots(&state.workspace_roots, &canonical) {
+        return Err(ApiError::bad(
+            "That worktree is outside the roots this server may use. Set AGENTDOCK_WORKSPACE_ROOTS to allow it.",
+        ));
+    }
+    Ok(Checkout {
+        path: Some(canonical.to_string_lossy().into_owned()),
+        branch,
+    })
+}
+
+/// The directory a session's client starts in.
+///
+/// A recorded checkout is used only while it is still a worktree of the
+/// workspace's repository: a worktree removed or re-pointed outside AgentDock
+/// fails the start with a reason instead of silently running somewhere else.
+pub async fn session_cwd(state: &AppState, session: &Session) -> Result<PathBuf> {
+    let repo = root(state, session.workspace_id).await?;
+    let Some(path) = session.checkout_path.as_deref() else {
+        return Ok(repo);
+    };
+    let listed = workspace_io::git_branches(&repo).await.ok();
+    let valid = listed.is_some_and(|l| l.worktrees.iter().any(|w| w.path == path));
+    let canonical = tokio::fs::canonicalize(path)
+        .await
+        .ok()
+        .filter(|p| p.is_dir());
+    match canonical {
+        Some(dir) if valid && directories::within_roots(&state.workspace_roots, &dir) => Ok(dir),
+        _ => Err(ApiError::conflict(format!(
+            "This session's worktree {path} is no longer available. Choose another branch for it."
+        ))),
+    }
+}
+
+/// Move a session to another checkout. Stops it first if it is idle, as an
+/// endpoint change does; a turn in progress or an open approval refuses.
+async fn set_checkout(
+    State(state): State<AppState>,
+    Path(id): Path<SessionId>,
+    Json(choice): Json<CheckoutChoice>,
+) -> Result<Json<Session>> {
+    let _guard = state.operations.lock().await;
+    let session = session_record(&state, id).await?;
+    // A terminal cannot change its directory while it runs, and ending it is
+    // the user's decision, not a side effect of choosing a branch.
+    if state
+        .runtime
+        .get(&id.to_string())
+        .is_some_and(|r| r.running())
+    {
+        return Err(ApiError::conflict(
+            "End the native terminal before moving it to another branch",
+        ));
+    }
+    let checkout = resolve(&state, session.workspace_id, choice).await?;
+    if checkout.path == session.checkout_path {
+        return Ok(Json(session));
+    }
+    crate::conversations::stop_if_idle(&state, id).await?;
+    let label = checkout
+        .branch
+        .clone()
+        .unwrap_or_else(|| "Detached HEAD".into());
+    let (path, branch) = (checkout.path.clone(), checkout.branch.clone());
+    if !db(&state, move |s| {
+        s.set_session_checkout(id, path.as_deref(), branch.as_deref(), &label)
+    })
+    .await?
+    {
+        return Err(ApiError::conflict(
+            "The session must be idle or stopped before it moves",
+        ));
+    }
+    crate::conversations::publish_snapshot(&state, id).await;
+    Ok(Json(session_record(&state, id).await?))
+}
+
+/// A worktree for a branch, made or found, without moving any session.
+async fn worktree(
+    State(state): State<AppState>,
+    Path(id): Path<WorkspaceId>,
+    Json(choice): Json<CheckoutChoice>,
+) -> Result<Json<Checkout>> {
+    let _guard = state.operations.lock().await;
+    Ok(Json(resolve(&state, id, choice).await?))
+}
+
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/sessions/{id}/checkout", post(set_checkout))
+        .route("/api/workspaces/{id}/git/worktrees", post(worktree))
+}

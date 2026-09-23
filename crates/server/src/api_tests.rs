@@ -227,7 +227,8 @@ async fn workspace_file_git_layout_workflow() {
     assert_eq!(result["commit"].as_str().unwrap().len(), 40);
     let (_, status) = call(f.app(), "GET", &format!("{base}/git/status"), Value::Null).await;
     assert!(status["files"].as_array().unwrap().is_empty());
-    // A worktree becomes a workspace of its own, beside the repository.
+    // A worktree is part of its workspace: made beside the repository, never
+    // registered as a workspace of its own.
     let (status, tree) = call(
         f.app(),
         "POST",
@@ -235,27 +236,21 @@ async fn workspace_file_git_layout_workflow() {
         json!({"branch":"feature/tree","create":true}),
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED, "{tree}");
-    assert!(
-        tree["root_path"]
-            .as_str()
-            .unwrap()
-            .ends_with("repo.worktrees/feature-tree")
-    );
-    assert!(tree["name"].as_str().unwrap().ends_with("· feature/tree"));
-    // Opening it again finds the same workspace instead of registering another.
-    let (status, again) = call(
+    assert_eq!(status, StatusCode::OK, "{tree}");
+    let tree_path = tree["path"].as_str().unwrap().to_owned();
+    assert!(tree_path.ends_with("repo.worktrees/feature-tree"));
+    assert_eq!(tree["branch"], "feature/tree");
+    let (_, listed) = call(f.app(), "GET", "/api/workspaces", Value::Null).await;
+    assert_eq!(listed.as_array().unwrap().len(), 1, "no second workspace");
+    // Asking again finds the same worktree rather than making another.
+    let (_, again) = call(
         f.app(),
         "POST",
         &format!("{base}/git/worktrees"),
-        json!({"path":tree["root_path"]}),
+        json!({"branch":"feature/tree"}),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(again["id"], tree["id"]);
-    let (_, branches) = call(f.app(), "GET", &format!("{base}/git/branches"), Value::Null).await;
-    assert_eq!(branches["worktrees"].as_array().unwrap().len(), 2);
-    // A path that is not one of this repository's worktrees is refused.
+    assert_eq!(again["path"], tree["path"]);
     let (status, _) = call(
         f.app(),
         "POST",
@@ -264,6 +259,52 @@ async fn workspace_file_git_layout_workflow() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // A session moves to that checkout on its own; the workspace is untouched.
+    let (_, session) = call(
+        f.app(),
+        "POST",
+        &format!("{base}/sessions"),
+        json!({"provider":"claude_code","title":"On a branch"}),
+    )
+    .await;
+    let sid = session["id"].as_str().unwrap().to_owned();
+    let (status, moved) = call(
+        f.app(),
+        "POST",
+        &format!("/api/sessions/{sid}/checkout"),
+        json!({"branch":"feature/tree"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{moved}");
+    assert_eq!(moved["checkout_path"].as_str(), Some(tree_path.as_str()));
+    assert_eq!(moved["checkout_branch"], "feature/tree");
+    assert_eq!(moved["configuration_revision"], 1, "a new native context");
+    // Choosing the workspace's own branch brings it back to the workspace.
+    let (_, home) = call(f.app(), "GET", &format!("{base}/git/branches"), Value::Null).await;
+    let current = home["current"].as_str().unwrap().to_owned();
+    let (_, back) = call(
+        f.app(),
+        "POST",
+        &format!("/api/sessions/{sid}/checkout"),
+        json!({"branch":current}),
+    )
+    .await;
+    assert!(back["checkout_path"].is_null());
+    let (_, conversation) = call(
+        f.app(),
+        "GET",
+        &format!("/api/sessions/{sid}/conversation"),
+        Value::Null,
+    )
+    .await;
+    let boundaries = conversation["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["type"] == "configuration")
+        .count();
+    assert_eq!(boundaries, 2, "each move is marked in the conversation");
     let (status, _) = call(
         f.app(),
         "POST",

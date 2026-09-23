@@ -14,7 +14,7 @@ import ProviderIcon from "./ProviderIcon.vue";
 import ModelPicker from "./ModelPicker.vue";
 const { t }=useI18n();
 const props = defineProps<{ workspace: Workspace; profiles: EndpointProfile[]; initialProvider?: ProviderKind }>();
-const emit = defineEmits<{ close: []; created: [session: Session]; profiles: []; workspace: [workspace: Workspace] }>();
+const emit = defineEmits<{ close: []; created: [session: Session]; profiles: [] }>();
 const provider = ref<ProviderKind>(props.initialProvider ?? "claude_code");
 const title = ref(t('{provider} session',{provider:providerLabel(provider.value)}));
 const profileId=ref(preferredProfileSelection(provider.value,props.profiles)), profileTouched=ref(false), model=ref(""), effort=ref(""), busy=ref(false),error=ref(""),discovering=ref(false),modelError=ref("");
@@ -30,7 +30,7 @@ const ephemeral=ref(false);
 /**
  * Where the session works: this checkout, or a worktree of its own on a
  * branch -- existing or new -- so it never shares files with sessions here.
- * The worktree opens as its own workspace and the session is created there.
+ * The session is created here, then moved into that worktree.
  */
 const place=ref<'here'|'worktree'>('here'), worktreeBranch=ref(''), repo=ref<{current?:string|null;branches:string[]}>();
 watch(place,async value=>{ if(value!=='worktree'||repo.value)return; try{repo.value=await request(`${workspacePath(props.workspace.id)}/git/branches`);}catch(cause){error.value=errorMessage(cause);place.value='here';} });
@@ -67,9 +67,9 @@ async function create() {
   if (!title.value.trim() || busy.value || !validProfile.value || !validEnvironment.value || place.value === 'worktree' && !worktreeBranch.value.trim()) return;
   const selectedProvider=provider.value, selectedProfileId=profileId.value;
   busy.value = true; error.value = "";
-  try { let target = props.workspace;
-    if (place.value === 'worktree') { const branch = worktreeBranch.value.trim(); target = await request<Workspace>(`${workspacePath(props.workspace.id)}/git/worktrees`, json("POST", { branch, create: !repo.value?.branches.includes(branch) })); emit("workspace", target); }
-    const session = await request<Session>(`${workspacePath(target.id)}/sessions`, json("POST", { title: title.value.trim(), provider: selectedProvider, endpoint_profile_id: selectedProfileId || null, ...(backendCapabilities.structuredChat&&selectedProvider!=='terminal'?{interaction_mode:'structured'}:{}), ...sessionModelOverride(selectedProvider,selectedProfile.value,model.value), ...sessionEffortOverride(selectedProvider,selectedProfile.value,effort.value), ...(backendCapabilities.environment&&Object.keys(parsedEnvironment.value.environment).length?{environment:parsedEnvironment.value.environment}:{}), ...(ephemeralSupported.value&&ephemeral.value?{ephemeral:true}:{}) })); rememberProfileSelection(selectedProvider,selectedProfileId); emit("created", session); }
+  try {
+    let session = await request<Session>(`${workspacePath(props.workspace.id)}/sessions`, json("POST", { title: title.value.trim(), provider: selectedProvider, endpoint_profile_id: selectedProfileId || null, ...(backendCapabilities.structuredChat&&selectedProvider!=='terminal'?{interaction_mode:'structured'}:{}), ...sessionModelOverride(selectedProvider,selectedProfile.value,model.value), ...sessionEffortOverride(selectedProvider,selectedProfile.value,effort.value), ...(backendCapabilities.environment&&Object.keys(parsedEnvironment.value.environment).length?{environment:parsedEnvironment.value.environment}:{}), ...(ephemeralSupported.value&&ephemeral.value?{ephemeral:true}:{}) })); if (place.value === 'worktree') { const branch = worktreeBranch.value.trim(); session = await request<Session>(`/sessions/${encodeURIComponent(session.id)}/checkout`, json("POST", { branch, create: !repo.value?.branches.includes(branch) })); }
+    rememberProfileSelection(selectedProvider,selectedProfileId); emit("created", session); }
   catch (cause) { error.value = errorMessage(cause); }
   finally { busy.value = false; }
 }

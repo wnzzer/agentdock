@@ -1,6 +1,6 @@
 //! Structured native-client transport. The CLI owns the Agent loop and tool
 //! execution; this module only supervises JSONL, persistence and UI decisions.
-use crate::{ApiError, AppState, Result, db, providers, root, session_record};
+use crate::{ApiError, AppState, Result, db, providers, session_record};
 use agentdock_domain::{InteractionMode, ProviderKind, Session, SessionId, SessionStatus};
 use agentdock_persistence::MessageSubmission;
 use axum::{
@@ -241,7 +241,7 @@ pub async fn start_locked(state: &AppState, session: &Session) -> Result<Arc<Cha
             "At most 32 native chat processes can run at once",
         ));
     }
-    let cwd = root(state, session.workspace_id).await?;
+    let cwd = crate::checkouts::session_cwd(state, session).await?;
     let config_state = state.clone();
     let config_session = session.clone();
     let spec = tokio::task::spawn_blocking(move || {
@@ -770,6 +770,30 @@ async fn configuration(
     }
     state.chats.publish(id, snapshot(&state, id).await?);
     Ok(Json(session_record(&state, id).await?))
+}
+
+/// Stop a structured session that is idle, before moving it; refuse one mid-turn
+/// or waiting on an approval. A session not running needs nothing.
+pub async fn stop_if_idle(state: &AppState, id: SessionId) -> Result<()> {
+    if let Some(runtime) = state.chats.get(id).filter(|r| r.running()) {
+        if !runtime.idle() {
+            return Err(ApiError::conflict(
+                "Finish or interrupt the active turn and resolve approvals before switching",
+            ));
+        }
+        state.chats.stop(id).await?;
+        db(state, move |s| {
+            s.set_session_status(id, SessionStatus::Stopped)
+        })
+        .await?;
+    }
+    Ok(())
+}
+/// Tell connected views the conversation changed outside a turn.
+pub async fn publish_snapshot(state: &AppState, id: SessionId) {
+    if let Ok(value) = snapshot(state, id).await {
+        state.chats.publish(id, value);
+    }
 }
 
 async fn socket(

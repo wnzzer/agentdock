@@ -60,7 +60,7 @@ test('inactive session menu targets stay mounted without reserving title space a
   }
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('../components/LayoutNode.vue', import.meta.url), 'utf8');
-  assert.match(source, /\.dock-tab\.is-active \{ max-width:260px;/);
+  assert.match(source, /\.dock-tab\.is-active \{ max-width:360px;/);
   assert.match(source, /\.dock-tab:not\(\.is-active\)>\.dock-tab-session-actions \{ display:none; \}/);
   assert.match(source, /@container dock-pane \(max-width:480px\) \{ \.dock-tab-workspace,\.dock-tab-branch \{ display:none; \}/);
 });

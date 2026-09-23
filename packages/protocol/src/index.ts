@@ -36,6 +36,9 @@ export interface Session {
    * the client interactively on the same conversation, for commands the
    * structured pipe cannot carry. */
   resume_source_id?: string | null;
+  /** A worktree of the workspace's repository this session runs in; absent means the workspace itself. */
+  checkout_path?: string | null;
+  checkout_branch?: string | null;
   error: string | null;
 }
 

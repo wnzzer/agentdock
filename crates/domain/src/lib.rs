@@ -185,6 +185,13 @@ pub struct Session {
     /// config home `--resume` must read, which belongs to that source session.
     #[serde(default)]
     pub resume_source_id: Option<SessionId>,
+    /// A worktree of the workspace's repository this session runs in, instead
+    /// of the workspace directory; `None` is the workspace itself.
+    #[serde(default)]
+    pub checkout_path: Option<String>,
+    /// The branch that checkout was on when it was chosen, for labels.
+    #[serde(default)]
+    pub checkout_branch: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

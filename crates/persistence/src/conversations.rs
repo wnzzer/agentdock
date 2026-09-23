@@ -149,6 +149,45 @@ impl Store {
         Ok(true)
     }
 
+    /// Point a stopped session at another checkout of its workspace's
+    /// repository -- a worktree on another branch -- or back at the workspace
+    /// itself with `None`. The next start is a different process in a different
+    /// directory, so like an endpoint change it is a new native context: the
+    /// revision is bumped, the native id cleared, and a boundary recorded.
+    /// Returns false when the session is not stopped.
+    pub fn set_session_checkout(
+        &self,
+        id: SessionId,
+        path: Option<&str>,
+        branch: Option<&str>,
+        label: &str,
+    ) -> Result<bool> {
+        let mut connection = self.connection.lock().expect("sqlite lock");
+        let tx = connection.transaction()?;
+        let session = tx.query_row(
+            &format!("SELECT {SESSION_COLUMNS} FROM sessions WHERE id=?1"),
+            [id.to_string()],
+            session_row,
+        )?;
+        if !matches!(
+            session.status,
+            SessionStatus::Stopped | SessionStatus::Failed
+        ) {
+            return Ok(false);
+        }
+        tx.execute(
+            "UPDATE sessions SET checkout_path=?1,checkout_branch=?2,provider_session_id=NULL,configuration_revision=configuration_revision+1,updated_at=?3,error=NULL WHERE id=?4",
+            params![path, branch, Utc::now().to_rfc3339(), id.to_string()],
+        )?;
+        append(
+            &tx,
+            id,
+            json!({"type":"configuration","id":Uuid::new_v4().to_string(),"profile_name":label,"text":"The session now works in this checkout. A new native conversation starts there; earlier displayed history is not sent to it."}),
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
     pub fn conversation(&self, id: SessionId) -> Result<StoredConversation> {
         let conn = self.connection.lock().expect("sqlite lock");
         let (truncated, anchors) = conn

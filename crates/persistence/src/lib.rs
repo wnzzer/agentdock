@@ -11,7 +11,7 @@ use std::{path::Path, sync::Mutex};
 use uuid::Uuid;
 pub type DbError = rusqlite::Error;
 
-const SESSION_COLUMNS: &str = "id, workspace_id, provider, title, status, created_at, updated_at, endpoint_profile_id, provider_session_id, error, endpoint_snapshot, native_source_id, native_config_dir, environment, interaction_mode, configuration_revision, archived_at, ephemeral, resume_source_id";
+const SESSION_COLUMNS: &str = "id, workspace_id, provider, title, status, created_at, updated_at, endpoint_profile_id, provider_session_id, error, endpoint_snapshot, native_source_id, native_config_dir, environment, interaction_mode, configuration_revision, archived_at, ephemeral, resume_source_id, checkout_path, checkout_branch";
 const PROFILE_COLUMNS: &str = "id, name, provider, endpoint_url, model, permission_mode, secret_ref, created_at, proxy_url, model_aliases, native_source_id, native_config_dir, native_config_env, environment, effort";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,7 +31,7 @@ impl Store {
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 12 {
+        if version > 13 {
             return Err(rusqlite::Error::InvalidQuery);
         }
         let tx = connection.transaction()?;
@@ -103,6 +103,11 @@ impl Store {
                 "../../../migrations/0012_session_resume_source.sql"
             ))?;
         }
+        if version < 13 {
+            tx.execute_batch(include_str!(
+                "../../../migrations/0013_session_checkout.sql"
+            ))?;
+        }
         // Capture the endpoint settings for legacy M0 sessions once, before templates change.
         let legacy = {
             let mut stmt = tx.prepare("SELECT s.id,p.id FROM sessions s JOIN endpoint_profiles p ON p.id=s.endpoint_profile_id WHERE s.endpoint_snapshot IS NULL")?;
@@ -121,7 +126,7 @@ impl Store {
                 params![snapshot, id],
             )?;
         }
-        tx.pragma_update(None, "user_version", 12)?;
+        tx.pragma_update(None, "user_version", 13)?;
         tx.commit()?;
         Ok(Self {
             connection: Mutex::new(connection),
@@ -398,6 +403,8 @@ impl Store {
             native_source_id: None,
             native_config_dir: None,
             resume_source_id,
+            checkout_path: None,
+            checkout_branch: None,
             ephemeral,
         };
         let snapshot_json = session
@@ -869,6 +876,8 @@ fn session_row(r: &rusqlite::Row<'_>) -> Result<Session> {
             .get::<_, Option<String>>(18)?
             .map(parse_uuid)
             .transpose()?,
+        checkout_path: r.get(19)?,
+        checkout_branch: r.get(20)?,
         endpoint_profile_id: r.get::<_, Option<String>>(7)?.map(parse_uuid).transpose()?,
         provider_session_id: r.get(8)?,
         error: r.get(9)?,
@@ -1737,7 +1746,7 @@ mod tests {
                     .unwrap()
                     .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                     .unwrap(),
-                12
+                13
             );
             let current = store.get_endpoint_profile(profile.id).unwrap().unwrap();
             assert!(current.native_config.is_none());
@@ -2127,7 +2136,7 @@ mod tests {
                     .unwrap()
                     .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                     .unwrap(),
-                12
+                13
             );
             assert!(matches!(
                 store.get_session(session_id).unwrap().unwrap().status,

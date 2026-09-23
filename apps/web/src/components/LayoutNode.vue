@@ -8,7 +8,7 @@ import TabIcon from "../features/TabIcon.vue";
 import Icon from "../features/Icon.vue";
 const { t } = useI18n();
 
-const props = defineProps<{ node: LayoutNode; selected?: string | null; maximized?: string | null; locatedPaneId?: string | null; workspaceLabels?: Record<string, string>; workspaceBranches?: Record<string, string>; sessionProviders?: Record<string, ProviderKind>; ephemeralSessionIds?: string[]; ephemeralSupported?: boolean }>();
+const props = defineProps<{ node: LayoutNode; selected?: string | null; maximized?: string | null; locatedPaneId?: string | null; workspaceLabels?: Record<string, string>; workspaceBranches?: Record<string, string>; sessionBranches?: Record<string, string>; sessionProviders?: Record<string, ProviderKind>; ephemeralSessionIds?: string[]; ephemeralSupported?: boolean }>();
 defineSlots<{ pane(props: { pane: PaneNode }): unknown }>();
 const emit = defineEmits<{
   select: [pane: PaneNode, groupId?: string];
@@ -101,7 +101,12 @@ function titleFor(pane: PaneNode) {
 }
 /** A session's branch is its workspace's; files and Git panes already say
  * which checkout they show, so only sessions carry it. */
-function branchFor(pane: PaneNode) { const id = pane.metadata?.workspace_id; return (pane.kind === "agent_chat" || pane.kind === "terminal") && typeof id === "string" ? props.workspaceBranches?.[id] : undefined; }
+function branchFor(pane: PaneNode) {
+  if (pane.kind !== "agent_chat" && pane.kind !== "terminal") return undefined;
+  // A session in a worktree has a branch of its own; the rest share their workspace's.
+  const session = pane.metadata?.session_id, id = pane.metadata?.workspace_id;
+  return (typeof session === "string" ? props.sessionBranches?.[session] : undefined) ?? (typeof id === "string" ? props.workspaceBranches?.[id] : undefined);
+}
 function workspaceFor(pane: PaneNode) { const id = pane.metadata?.workspace_id; return typeof id === "string" ? props.workspaceLabels?.[id] : undefined; }
 const ephemeralIds = computed(() => new Set(props.ephemeralSessionIds ?? []));
 function isEphemeral(pane: PaneNode) { const id = pane.metadata?.session_id; return typeof id === "string" && ephemeralIds.value.has(id); }
@@ -217,13 +222,13 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
 <template>
   <div v-if="node.type === 'split'" ref="splitElement" class="dock-split" :class="'is-' + node.direction" :style="splitStyle" :data-split-id="node.id">
     <div class="dock-child">
-      <LayoutNode :node="node.first" :selected="selected" :maximized="maximized" :located-pane-id="locatedPaneId" :workspace-labels="workspaceLabels" :workspace-branches="workspaceBranches" :session-providers="sessionProviders" :ephemeral-session-ids="ephemeralSessionIds" :ephemeral-supported="ephemeralSupported" @select="forwardSelect" @split="forwardSplit" @resize="forwardResize" @resizing="emit('resizing', $event)" @close="emit('close', $event)" @maximize="emit('maximize', $event)" @drop-pane="forwardDrop" @add-pane="forwardAdd" @create-session="forwardCreate" @reveal-session="emit('reveal-session', $event)">
+      <LayoutNode :node="node.first" :selected="selected" :maximized="maximized" :located-pane-id="locatedPaneId" :workspace-labels="workspaceLabels" :workspace-branches="workspaceBranches" :session-branches="sessionBranches" :session-providers="sessionProviders" :ephemeral-session-ids="ephemeralSessionIds" :ephemeral-supported="ephemeralSupported" @select="forwardSelect" @split="forwardSplit" @resize="forwardResize" @resizing="emit('resizing', $event)" @close="emit('close', $event)" @maximize="emit('maximize', $event)" @drop-pane="forwardDrop" @add-pane="forwardAdd" @create-session="forwardCreate" @reveal-session="emit('reveal-session', $event)">
         <template #pane="scope"><slot name="pane" :pane="scope.pane" /></template>
       </LayoutNode>
     </div>
     <div class="dock-separator" role="separator" tabindex="0" :aria-label="t(node.direction === 'horizontal' ? 'Resize columns' : 'Resize rows')" :aria-orientation="node.direction === 'horizontal' ? 'vertical' : 'horizontal'" :aria-valuenow="Math.round(node.ratio * 100)" :aria-valuemin="5" :aria-valuemax="95" :title="t('Drag to resize · double-click for 1:1 · arrow keys for precision')" @pointerdown="beginResize" @keydown="keyboardResize" @dblclick="emit('resize', node.id, 0.5, true)" />
     <div class="dock-child">
-      <LayoutNode :node="node.second" :selected="selected" :maximized="maximized" :located-pane-id="locatedPaneId" :workspace-labels="workspaceLabels" :workspace-branches="workspaceBranches" :session-providers="sessionProviders" :ephemeral-session-ids="ephemeralSessionIds" :ephemeral-supported="ephemeralSupported" @select="forwardSelect" @split="forwardSplit" @resize="forwardResize" @resizing="emit('resizing', $event)" @close="emit('close', $event)" @maximize="emit('maximize', $event)" @drop-pane="forwardDrop" @add-pane="forwardAdd" @create-session="forwardCreate" @reveal-session="emit('reveal-session', $event)">
+      <LayoutNode :node="node.second" :selected="selected" :maximized="maximized" :located-pane-id="locatedPaneId" :workspace-labels="workspaceLabels" :workspace-branches="workspaceBranches" :session-branches="sessionBranches" :session-providers="sessionProviders" :ephemeral-session-ids="ephemeralSessionIds" :ephemeral-supported="ephemeralSupported" @select="forwardSelect" @split="forwardSplit" @resize="forwardResize" @resizing="emit('resizing', $event)" @close="emit('close', $event)" @maximize="emit('maximize', $event)" @drop-pane="forwardDrop" @add-pane="forwardAdd" @create-session="forwardCreate" @reveal-session="emit('reveal-session', $event)">
         <template #pane="scope"><slot name="pane" :pane="scope.pane" /></template>
       </LayoutNode>
     </div>
@@ -309,7 +314,7 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
 .dock-tabs::-webkit-scrollbar { height: 5px; }
 .dock-tabs::-webkit-scrollbar-thumb { border-width: 1px; }
 .dock-tab { display:flex;align-items:center;gap:7px;max-width:210px;min-width:85px;flex-shrink:0;padding:0 8px 0 11px;color:#78838e;font-size:11px;cursor:grab;border-bottom:2px solid transparent;outline:none;user-select:none; }
-.dock-tab.is-active { max-width:260px;color:#243746;background:#fff;border-bottom-color:#16a398; }
+.dock-tab.is-active { max-width:360px;color:#243746;background:#fff;border-bottom-color:#16a398; }
 .dock-tab:focus-visible { box-shadow:inset 0 0 0 2px #53b9b0; }
 .dock-tab-title { min-width:48px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600; }
 .dock-tab-branch { display:inline-flex;align-items:center;gap:3px;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0;font-size:8px;border-radius:4px;padding:1px 4px;background:#efeafb;color:#7a66b0; }

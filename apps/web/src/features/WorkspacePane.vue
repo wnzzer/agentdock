@@ -15,7 +15,7 @@ const emit = defineEmits<{
   structuredSession: [id: string]; profiles: [];
   revealSession: [id: string]; keepSession: [id: string];
   gitChanged: [id: string, status: GitStatus]; openFile: [id: string, path: string]; filesSaved: [id: string];
-  browse: [id: string | undefined]; reveal: [id: string, path: string]; worktree: [workspace: Workspace];
+  browse: [id: string | undefined]; reveal: [id: string, path: string];
 }>();
 const workspace = computed(() => paneWorkspace(props.pane, props.workspaces, props.sessions));
 const session = computed(() => paneSession(props.pane, props.sessions));
@@ -41,7 +41,7 @@ function renameSession(id: string) { emit("renameRequest", id); }
     <div v-if="invalid" class="pane-empty"><Icon name="info" :size="26"/><h3>{{ t('Pane source unavailable') }}</h3><p>{{ t('This pane cannot resolve its original workspace or session. It will not use another workspace automatically.') }}</p></div>
     <SessionPane v-else-if="isAgent && session" :key="`session:${session.id}`" :pane-id="pane.id" :session="session" :sessions="choices" :profiles="profiles" @changed="emit('sessionChanged')" @create="callbacks.newSession" @select="emit('openSession',$event)" @rename-request="renameSession" @environment="emit('sessionEnvironment',$event)" @profiles="emit('profiles')" @reveal="emit('revealSession',$event)" @keep="emit('keepSession',$event)" />
     <NativeSessionPane v-else-if="isAgent" :key="`${pane.id}:${workspace?.id??''}`" :session="session" :sessions="choices" :profiles="profiles" :terminal="pane.kind==='terminal'" @changed="emit('sessionChanged')" @create="callbacks.newSession" @select="emit('openSession',$event)" @environment="emit('sessionEnvironment',$event)" @structured="emit('structuredSession',$event)" />
-    <GitPane v-else-if="pane.kind==='git_diff' && workspace" :key="`${pane.id}:${workspace.id}`" :workspace-id="workspace.id" :refresh-token="gitRefresh[workspace.id]??0" @changed="callbacks.gitChanged" @open-file="callbacks.openFile" @worktree="emit('worktree',$event)" />
+    <GitPane v-else-if="pane.kind==='git_diff' && workspace" :key="`${pane.id}:${workspace.id}`" :workspace-id="workspace.id" :refresh-token="gitRefresh[workspace.id]??0" @changed="callbacks.gitChanged" @open-file="callbacks.openFile" />
     <FilePane v-else-if="workspace" :key="`${pane.id}:${workspace.id}`" :workspace-id="workspace.id" :path="paneString(pane,'path')" @saved="callbacks.filesSaved" @browse="callbacks.browse" @reveal="callbacks.reveal" />
     <div v-else class="pane-empty"><Icon name="folder" :size="28"/><h3>{{ t('Choose a workspace source') }}</h3><p>{{ t('Open files or Git using a workspace shortcut in the sidebar.') }}</p></div>
   </section>
