@@ -415,6 +415,8 @@ async function sessionCreated(session: Session) { sessionWorkspaceId.value = und
 async function historyLoaded(session: Session) { historyWorkspaceId.value = undefined; await sessionCreated(session); }
 /** A worktree arrives as a workspace; the next thing wanted there is a session. */
 async function worktreeOpened(workspace: Workspace) { await workspaceCreated(workspace); newSession(workspace.id); }
+/** A worktree made while creating a session: registered without leaving the dialog. */
+function worktreeWorkspace(workspace: Workspace) { workspaceRegistryRevision++; workspaces.value = [workspace, ...workspaces.value.filter(item => item.id !== workspace.id)]; }
 async function workspaceCreated(workspace: Workspace) {
   workspaceRegistryRevision++;
   showWorkspace.value = false;
@@ -584,7 +586,7 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
   <WorkspaceDialog v-if="showWorkspace" @close="showWorkspace=false" @created="workspaceCreated"/>
   <ImageLightbox />
   <SettingsDialog v-if="settingsSection" :profiles="profiles" :initial-section="settingsSection" @close="settingsSection=undefined" @changed="refreshProfiles"/>
-  <CreateSessionDialog v-if="sessionWorkspace" :workspace="sessionWorkspace" :profiles="profiles" :initial-provider="sessionProvider" @close="sessionWorkspaceId=undefined" @created="sessionCreated" @profiles="sessionWorkspaceId=undefined;settingsSection='endpoints'"/>
+  <CreateSessionDialog v-if="sessionWorkspace" :workspace="sessionWorkspace" :profiles="profiles" :initial-provider="sessionProvider" @close="sessionWorkspaceId=undefined" @created="sessionCreated" @workspace="worktreeWorkspace" @profiles="sessionWorkspaceId=undefined;settingsSection='endpoints'"/>
   <SessionEnvironmentDialog v-if="environmentSession" :key="environmentSession.id" :session="environmentSession" @close="environmentSessionId=undefined" @saved="sessionEnvironmentSaved"/>
   <SessionRenameDialog v-if="renameSessionTarget" :key="renameSessionTarget.id" :session="renameSessionTarget" @close="renameSessionId=undefined" @save="saveRenameSession"/>
   <LoadHistoryDialog v-if="historyWorkspace && backendCapabilities.nativeHistory" :workspace="historyWorkspace" @close="historyWorkspaceId=undefined" @loaded="historyLoaded"/>

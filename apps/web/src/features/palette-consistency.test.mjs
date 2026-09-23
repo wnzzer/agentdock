@@ -42,3 +42,11 @@ test('chat retains mobile sizing and semantic warning/error colors within the or
   // The semantic error colour is unchanged; it is now named rather than repeated.
   assert.ok(style.includes('var(--danger-ink)'));
 });
+
+// An @import after any other rule is dropped by the build without an error,
+// and with it every style the imported sheet carried.
+test('the shell stylesheet keeps its imports before every other rule', () => {
+  const shell = readFileSync(new URL('../styles.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').trim();
+  const firstImport = shell.indexOf('@import'), firstRule = shell.search(/[^;]\s*\{/);
+  assert.ok(firstImport === 0 && (firstRule === -1 || firstRule > shell.lastIndexOf('@import')), 'every @import comes first');
+});

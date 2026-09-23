@@ -14,7 +14,7 @@ import ProviderIcon from "./ProviderIcon.vue";
 import ModelPicker from "./ModelPicker.vue";
 const { t }=useI18n();
 const props = defineProps<{ workspace: Workspace; profiles: EndpointProfile[]; initialProvider?: ProviderKind }>();
-const emit = defineEmits<{ close: []; created: [session: Session]; profiles: [] }>();
+const emit = defineEmits<{ close: []; created: [session: Session]; profiles: []; workspace: [workspace: Workspace] }>();
 const provider = ref<ProviderKind>(props.initialProvider ?? "claude_code");
 const title = ref(t('{provider} session',{provider:providerLabel(provider.value)}));
 const profileId=ref(preferredProfileSelection(provider.value,props.profiles)), profileTouched=ref(false), model=ref(""), effort=ref(""), busy=ref(false),error=ref(""),discovering=ref(false),modelError=ref("");
@@ -27,6 +27,14 @@ const choices=computed(()=>nativeConfig.value?[]:[...Object.entries(selectedProf
 const effectiveModel=computed(()=>{if(nativeConfig.value)return undefined;const selected=model.value||selectedProfile.value?.model;return selected?(selectedProfile.value?.model_aliases?.[selected]??selected):undefined});
 const effortOptions=computed(()=>provider.value==='terminal'?[]:modelEfforts(provider.value,effectiveModel.value,catalog.value,effort.value||selectedProfile.value?.effort));
 const ephemeral=ref(false);
+/**
+ * Where the session works: this checkout, or a worktree of its own on a
+ * branch -- existing or new -- so it never shares files with sessions here.
+ * The worktree opens as its own workspace and the session is created there.
+ */
+const place=ref<'here'|'worktree'>('here'), worktreeBranch=ref(''), repo=ref<{current?:string|null;branches:string[]}>();
+watch(place,async value=>{ if(value!=='worktree'||repo.value)return; try{repo.value=await request(`${workspacePath(props.workspace.id)}/git/branches`);}catch(cause){error.value=errorMessage(cause);place.value='here';} });
+const worktreeExisting=computed(()=>!!repo.value?.branches.includes(worktreeBranch.value.trim()));
 const ephemeralSupported=computed(()=>backendCapabilities.ephemeralSessions);
 const environmentDrafts=ref(new Map<string,EnvironmentRow[]>());
 const environmentScope=computed(()=>JSON.stringify([props.workspace.id,provider.value,profileId.value]));
@@ -56,10 +64,12 @@ async function discover(){
   finally{if(own===revision)discovering.value=false;}
 }
 async function create() {
-  if (!title.value.trim() || busy.value || !validProfile.value || !validEnvironment.value) return;
+  if (!title.value.trim() || busy.value || !validProfile.value || !validEnvironment.value || place.value === 'worktree' && !worktreeBranch.value.trim()) return;
   const selectedProvider=provider.value, selectedProfileId=profileId.value;
   busy.value = true; error.value = "";
-  try { const session = await request<Session>(`${workspacePath(props.workspace.id)}/sessions`, json("POST", { title: title.value.trim(), provider: selectedProvider, endpoint_profile_id: selectedProfileId || null, ...(backendCapabilities.structuredChat&&selectedProvider!=='terminal'?{interaction_mode:'structured'}:{}), ...sessionModelOverride(selectedProvider,selectedProfile.value,model.value), ...sessionEffortOverride(selectedProvider,selectedProfile.value,effort.value), ...(backendCapabilities.environment&&Object.keys(parsedEnvironment.value.environment).length?{environment:parsedEnvironment.value.environment}:{}), ...(ephemeralSupported.value&&ephemeral.value?{ephemeral:true}:{}) })); rememberProfileSelection(selectedProvider,selectedProfileId); emit("created", session); }
+  try { let target = props.workspace;
+    if (place.value === 'worktree') { const branch = worktreeBranch.value.trim(); target = await request<Workspace>(`${workspacePath(props.workspace.id)}/git/worktrees`, json("POST", { branch, create: !repo.value?.branches.includes(branch) })); emit("workspace", target); }
+    const session = await request<Session>(`${workspacePath(target.id)}/sessions`, json("POST", { title: title.value.trim(), provider: selectedProvider, endpoint_profile_id: selectedProfileId || null, ...(backendCapabilities.structuredChat&&selectedProvider!=='terminal'?{interaction_mode:'structured'}:{}), ...sessionModelOverride(selectedProvider,selectedProfile.value,model.value), ...sessionEffortOverride(selectedProvider,selectedProfile.value,effort.value), ...(backendCapabilities.environment&&Object.keys(parsedEnvironment.value.environment).length?{environment:parsedEnvironment.value.environment}:{}), ...(ephemeralSupported.value&&ephemeral.value?{ephemeral:true}:{}) })); rememberProfileSelection(selectedProvider,selectedProfileId); emit("created", session); }
   catch (cause) { error.value = errorMessage(cause); }
   finally { busy.value = false; }
 }
@@ -75,8 +85,7 @@ onBeforeUnmount(()=>{revision++;});
       <template v-if="provider!=='terminal'">
         <label>{{ t('Endpoint profile') }}<select v-model="profileId" :disabled="busy" @change="profileTouched=true"><option v-if="profileId===PROFILE_CHOICE_REQUIRED" :value="PROFILE_CHOICE_REQUIRED" disabled>{{ t('Choose a session configuration') }}</option><option value="">{{ t('Isolated configuration · separate sign-in may be required') }}</option><option v-for="profile in available" :key="profile.id" :value="profile.id">{{ profile.name }} · {{ profile.native_config ? t('Host configuration · shared sign-in') : profile.model || t('default model') }}</option></select></label>
         <p v-if="!validProfile" class="inline-notice">{{ t('Choose a configuration explicitly when several host accounts are available. No account will be selected silently.') }}</p>
-        <p v-else-if="nativeConfig" class="form-help">{{ t('This session will use {name} and its existing sign-in, if still valid.',{name:selectedProfile?.name??''}) }}</p>
-        <div v-if="nativeConfig" class="inline-notice native-session-notice"><strong><ProviderIcon :provider="provider" :size="15" />{{ t('New session · shared host configuration') }}</strong><code>{{ nativeConfig.config_dir }}</code><p>{{ t('Account, model, endpoint, proxy and permissions follow the native client. Shared configuration is not session-isolated.') }}</p><p>{{ t('This is a new session using the host configuration, not a resumed history session.') }}</p><p>{{ t('Directory availability does not confirm sign-in. The native client may still ask you to log in.') }}</p><p>{{ t('This is a live directory reference, not a snapshot of its contents. Changes to native settings affect subsequent starts.') }}</p><p>{{ t('AgentDock does not copy credentials or rewrite this configuration. The native client may update its own sign-in cache and history.') }}</p></div>
+                <div v-if="nativeConfig" class="inline-notice native-session-notice"><strong><ProviderIcon :provider="provider" :size="15" />{{ t('Shared host configuration') }}</strong><code>{{ nativeConfig.config_dir }}</code><p>{{ t('Sign-in, model and permissions come from this directory, shared with the host; AgentDock never copies or rewrites it. The directory being there does not mean it is signed in.') }}</p></div>
         <template v-else-if="validProfile">
         <div v-if="selectedProfile" class="inline-notice"><ProviderIcon :provider="provider" :size="15" /> {{ selectedProfile.endpoint_url || t('Official endpoint') }}<br />{{ t('Permission intent') }}: {{ t(selectedProfile.permission_mode) }} · {{ t('This session keeps a configuration snapshot.') }}<br v-if="selectedProfile.proxy_url" /><span v-if="selectedProfile.proxy_url">{{ t('Proxy URL') }}: {{ selectedProfile.proxy_url }}</span></div>
         <div class="session-model-bar"><label>{{ t('Session model') }}<ModelPicker v-model="model" :models="choices" :placeholder="selectedProfile?.model || t('Use profile or native default')" /></label><button v-if="selectedProfile || provider==='codex'" type="button" class="small-button" :disabled="discovering||!backendCapabilities.models" :title="!backendCapabilities.models?t('Backend upgrade required'):undefined" @click="discover">{{ discovering?t('Loading models…'):t('Load models') }}</button></div>
@@ -90,6 +99,8 @@ onBeforeUnmount(()=>{revision++;});
         </template>
         <button type="button" class="text-button" :disabled="busy" @click="emit('profiles')">{{ t('Manage endpoint profiles') }}</button>
       </template>
+      <div v-if="provider!=='terminal'" class="session-place"><span>{{ t('Works in') }}</span><div class="session-place-options"><label><input v-model="place" type="radio" value="here" :disabled="busy" />{{ t('This checkout') }}</label><label><input v-model="place" type="radio" value="worktree" :disabled="busy" />{{ t('Its own worktree') }}</label></div>
+        <template v-if="place==='worktree'"><input v-model="worktreeBranch" list="session-worktree-branches" :disabled="busy" maxlength="200" spellcheck="false" autocomplete="off" :placeholder="t('Branch name, new or existing')" /><datalist id="session-worktree-branches"><option v-for="name in repo?.branches??[]" :key="name" :value="name" /></datalist><small>{{ worktreeBranch.trim() ? t(worktreeExisting ? 'Opens a worktree on the existing branch {branch}.' : 'Creates branch {branch} from {current} in a new worktree.', { branch: worktreeBranch.trim(), current: repo?.current ?? 'HEAD' }) : t('The session gets its own directory and branch, beside this repository.') }}</small></template></div>
       <label v-if="ephemeralSupported" class="session-ephemeral-choice"><input v-model="ephemeral" type="checkbox" :disabled="busy" /><span><strong>{{ t('Temporary window') }}</strong><small>{{ t('Discarded when its window is closed, and cleared on restart. It still appears in its workspace, marked temporary, so you can keep it at any time.') }}</small></span></label>
       <EnvironmentEditor v-model="environmentDraft" :inherited="selectedProfile?.environment" :supported="backendCapabilities.environment" :disabled="busy||!validProfile" />
       <p class="form-help">{{ t('Environment drafts stay with this provider and profile. Switching accounts does not carry overrides across.') }}</p>
@@ -97,9 +108,9 @@ onBeforeUnmount(()=>{revision++;});
       <div v-for="message in environmentErrors" :key="message" class="inline-error" role="alert">{{ t(message) }}</div>
       <div v-if="unsupportedEnvironment" class="inline-notice" role="alert">{{ t('Environment overrides require an updated backend. Your draft has not been discarded.') }}<button v-if="environmentDraft.length" type="button" class="text-button" :disabled="busy" @click="environmentDraft=[]">{{ t('Discard environment draft') }}</button></div>
       <div v-if="error" class="inline-error" role="alert">{{ error }}</div>
-      <div class="dialog-actions"><button type="button" class="secondary-button" :disabled="busy" @click="emit('close')">{{ t('Cancel') }}</button><button class="primary-button" :disabled="busy || !title.trim() || !validProfile || !validEnvironment">{{ busy?t('Creating…'):t('Create session') }}</button></div>
+      <div class="dialog-actions"><button type="button" class="secondary-button" :disabled="busy" @click="emit('close')">{{ t('Cancel') }}</button><button class="primary-button" :disabled="busy || !title.trim() || !validProfile || !validEnvironment || place==='worktree' && !worktreeBranch.trim()">{{ busy?t('Creating…'):t('Create session') }}</button></div>
     </form>
   </ModalDialog>
 </template>
-<style scoped>.session-ephemeral-choice{flex-direction:row;align-items:flex-start;gap:9px;padding:9px 11px;border:1px solid #e6e1f1;border-radius:7px;background:#faf8fd}.session-ephemeral-choice input[type=checkbox]{width:14px;height:14px;min-width:14px;margin:2px 0 0;flex:0 0 14px;accent-color:#8973b4}.session-ephemeral-choice strong{display:block;font-size:10px;font-weight:550;color:#6f5c93}.session-ephemeral-choice small{display:block;margin-top:3px;font-size:9px;line-height:15px;color:#9a93ad;font-weight:400}
+<style scoped>.session-place{display:flex;flex-direction:column;gap:7px;padding:10px 11px;border:1px solid #e4e9ed;border-radius:8px;font-size:12px}.session-place>span{font-weight:550;color:#647681}.session-place-options{display:flex;gap:16px}.session-place-options label{flex-direction:row;align-items:center;gap:6px;font-size:12px;color:#273745;white-space:nowrap}.session-place-options input[type=radio]{display:inline-block;width:auto;margin:0;padding:0;accent-color:var(--teal)}.session-place input[type=text],.session-place input:not([type]){height:34px;padding:0 9px;border:1px solid #dfe7ec;border-radius:7px;font:12px ui-monospace,monospace}.session-place small{font-size:11px;color:#81909d;line-height:1.5}.session-ephemeral-choice{flex-direction:row;align-items:flex-start;gap:9px;padding:9px 11px;border:1px solid #e6e1f1;border-radius:7px;background:#faf8fd}.session-ephemeral-choice input[type=checkbox]{width:14px;height:14px;min-width:14px;margin:2px 0 0;flex:0 0 14px;accent-color:#8973b4}.session-ephemeral-choice strong{display:block;font-size:10px;font-weight:550;color:#6f5c93}.session-ephemeral-choice small{display:block;margin-top:3px;font-size:9px;line-height:15px;color:#9a93ad;font-weight:400}
 .session-model-bar{display:flex;align-items:end;gap:8px}.session-model-bar>label{flex:1;min-width:0}.session-model-bar>button{margin-bottom:1px;white-space:nowrap}.native-session-notice>strong{display:flex;align-items:center;gap:6px;font-weight:550;color:#397d6c}.native-session-notice>code{display:block;margin:8px 0;font-size:10px;overflow-wrap:anywhere}.native-session-notice p{margin:7px 0 0;line-height:18px}</style>
