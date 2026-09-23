@@ -227,6 +227,51 @@ async fn workspace_file_git_layout_workflow() {
     assert_eq!(result["commit"].as_str().unwrap().len(), 40);
     let (_, status) = call(f.app(), "GET", &format!("{base}/git/status"), Value::Null).await;
     assert!(status["files"].as_array().unwrap().is_empty());
+    // A worktree becomes a workspace of its own, beside the repository.
+    let (status, tree) = call(
+        f.app(),
+        "POST",
+        &format!("{base}/git/worktrees"),
+        json!({"branch":"feature/tree","create":true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{tree}");
+    assert!(
+        tree["root_path"]
+            .as_str()
+            .unwrap()
+            .ends_with("repo.worktrees/feature-tree")
+    );
+    assert!(tree["name"].as_str().unwrap().ends_with("· feature/tree"));
+    // Opening it again finds the same workspace instead of registering another.
+    let (status, again) = call(
+        f.app(),
+        "POST",
+        &format!("{base}/git/worktrees"),
+        json!({"path":tree["root_path"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(again["id"], tree["id"]);
+    let (_, branches) = call(f.app(), "GET", &format!("{base}/git/branches"), Value::Null).await;
+    assert_eq!(branches["worktrees"].as_array().unwrap().len(), 2);
+    // A path that is not one of this repository's worktrees is refused.
+    let (status, _) = call(
+        f.app(),
+        "POST",
+        &format!("{base}/git/worktrees"),
+        json!({"path":"/tmp"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = call(
+        f.app(),
+        "POST",
+        &format!("{base}/git/switch"),
+        json!({"branch":"side","create":true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
     let layout = default_layout();
     assert_eq!(
         call(f.app(), "PUT", &format!("{base}/layout"), layout.clone())

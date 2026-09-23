@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import type { GitDiff, GitFile, GitStatus } from "@agentdock/protocol";
+import type { GitDiff, GitFile, GitStatus, Workspace } from "@agentdock/protocol";
 import { errorMessage, json, request, workspacePath } from "./api";
 import { isChangedFile, isStagedFile, parseUnifiedDiff, pathsForGitFiles } from "./git-model";
 import { gitViewState } from "./git-view-state";
 import Icon from "./Icon.vue";
+import ChipMenu from "./ChipMenu.vue";
 import { useI18n } from "../i18n";
 const { t } = useI18n();
 const props = defineProps<{ workspaceId: string; refreshToken?: number }>();
-const emit = defineEmits<{ changed: [status: GitStatus]; openFile: [path: string] }>();
+const emit = defineEmits<{ changed: [status: GitStatus]; openFile: [path: string]; worktree: [workspace: Workspace] }>();
 const status = ref<GitStatus>({ branch: null, files: [] });
 const viewState = computed(() => gitViewState(props.workspaceId));
 const selected = computed({ get: () => viewState.value.selected, set: value => { viewState.value.selected = value; } });
@@ -79,6 +80,36 @@ async function discard() {
   } catch (cause) { if (alive && epoch === mutationEpoch) error.value = errorMessage(cause); }
   finally { if (alive && epoch === mutationEpoch) busy.value = false; }
 }
+/**
+ * Branches and worktrees, from the branch name in the toolbar.
+ *
+ * Switching rewrites this checkout, so the server refuses it while a session
+ * here is running, and Git refuses it over uncommitted work; either refusal
+ * is shown as it is. A worktree is the way to work on another branch without
+ * disturbing this one: it opens as a workspace of its own.
+ */
+interface Worktree { path: string; branch?: string | null; main: boolean }
+const branchMenu = ref<InstanceType<typeof ChipMenu>>();
+const branches = ref<{ current?: string | null; branches: string[]; worktrees: Worktree[] }>();
+const newBranch = ref("");
+/** Every worktree except the one this pane shows. */
+const otherWorktrees = computed(() => (branches.value?.worktrees ?? []).filter(tree => !(tree.branch && tree.branch === branches.value?.current)));
+const worktreeFor = (branch: string) => branches.value?.worktrees.find(tree => tree.branch === branch);
+async function loadBranches() {
+  try { branches.value = await request(`${workspacePath(props.workspaceId)}/git/branches`); }
+  catch (cause) { error.value = errorMessage(cause); }
+}
+async function branchAction(run: () => Promise<unknown>) {
+  if (busy.value) return;
+  busy.value = true; error.value = ""; notice.value = undefined;
+  try { await run(); branchMenu.value?.close(true); newBranch.value = ""; await refresh(); }
+  catch (cause) { error.value = errorMessage(cause); branchMenu.value?.close(true); }
+  finally { busy.value = false; }
+}
+const switchTo = (branch: string, create = false) => branchAction(() => request(`${workspacePath(props.workspaceId)}/git/switch`, json("POST", { branch, create })));
+const openWorktree = (body: { branch?: string; create?: boolean; path?: string }) => branchAction(async () => {
+  emit("worktree", await request<Workspace>(`${workspacePath(props.workspaceId)}/git/worktrees`, json("POST", body)));
+});
 async function commit() {
   if (!message.value.trim() || !stagedFiles.value.length || busy.value) return;
   const workspaceId = props.workspaceId, epoch = mutationEpoch, draft = viewState.value, sentMessage = message.value;
@@ -96,7 +127,24 @@ onBeforeUnmount(() => { alive = false; revision++; diffRevision++; mutationEpoch
 </script>
 <template>
   <section class="git-pane">
-    <div class="content-toolbar"><span><Icon name="git" :size="15" /><strong>{{ status.branch || t('Git changes') }}</strong><span class="count-badge">{{ status.files.length }}</span></span><button class="icon-button" :disabled="busy || loading" :aria-label="t('Refresh Git changes')" @click="refresh"><Icon name="refresh" :size="15" /></button></div>
+    <div class="content-toolbar"><span class="git-branch-bar"><ChipMenu ref="branchMenu" class="git-branch" :label="status.branch || t('Detached HEAD')" :title="t('Branches and worktrees')" :disabled="busy" @toggle="(event: Event) => { if ((event.target as HTMLDetailsElement).open) void loadBranches(); }"><template #mark><Icon name="git" :size="13" /></template>
+          <div class="git-branch-panel">
+            <p v-if="!branches" class="git-branch-note">{{ t('Loading…') }}</p>
+            <template v-else>
+              <header>{{ t('Branches') }}</header>
+              <div v-for="name in branches.branches" :key="name" :class="['git-branch-row',{current:name===branches.current}]">
+                <button type="button" :disabled="busy||name===branches.current||!!worktreeFor(name)&&!worktreeFor(name)!.main" :title="worktreeFor(name)&&!worktreeFor(name)!.main?t('Checked out in another worktree'):t('Switch this checkout to {branch}', { branch: name })" @click="switchTo(name)"><Icon v-if="name===branches.current" name="check" :size="12" /><span>{{ name }}</span></button>
+                <button v-if="name!==branches.current" type="button" class="git-branch-tree" :disabled="busy" :title="worktreeFor(name)?t('Open its worktree'):t('Open in a new worktree')" @click="worktreeFor(name)?openWorktree({ path: worktreeFor(name)!.path }):openWorktree({ branch: name })">{{ t(worktreeFor(name)?'Open worktree':'New worktree') }}</button>
+              </div>
+              <form class="git-branch-new" @submit.prevent="newBranch.trim()&&switchTo(newBranch.trim(), true)"><input v-model="newBranch" :placeholder="t('New branch name')" :aria-label="t('New branch name')" maxlength="200" spellcheck="false" autocomplete="off" /><div><button type="submit" :disabled="busy||!newBranch.trim()">{{ t('Create here') }}</button><button type="button" :disabled="busy||!newBranch.trim()" @click="openWorktree({ branch: newBranch.trim(), create: true })">{{ t('Create in new worktree') }}</button></div></form>
+              <template v-if="otherWorktrees.length">
+                <header>{{ t('Worktrees') }}</header>
+                <button v-for="tree in otherWorktrees" :key="tree.path" type="button" class="git-branch-worktree" :disabled="busy" :title="tree.path" @click="openWorktree({ path: tree.path })"><strong>{{ tree.branch || t('Detached HEAD') }}</strong><small>{{ tree.path }}</small></button>
+              </template>
+              <p class="git-branch-note">{{ t('A worktree is a second checkout beside this one, opened as its own workspace, so sessions there never touch these files.') }}</p>
+            </template>
+          </div>
+        </ChipMenu><span class="count-badge">{{ status.files.length }}</span></span><button class="icon-button" :disabled="busy || loading" :aria-label="t('Refresh Git changes')" @click="refresh"><Icon name="refresh" :size="15" /></button></div>
     <div v-if="error" class="inline-error" role="alert">{{ error }}</div><div v-if="notice" class="inline-success" role="status">{{ t('Committed {hash} · {message}', notice) }}</div>
     <div class="git-content">
       <div class="git-sidebar">
@@ -120,4 +168,31 @@ onBeforeUnmount(() => { alive = false; revision++; diffRevision++; mutationEpoch
 .git-discard{color:var(--muted);font-size:14px}
 .git-discard:hover:not(:disabled){color:var(--danger)}
 .git-discard-confirm{margin:0 0 10px}
+
+.git-branch-bar{display:flex;align-items:center;gap:8px;min-width:0}
+.git-branch{max-width:220px}
+/* The composer's chips open upward; this one sits at the top of its pane. */
+.git-branch :deep(.chip-menu-panel){top:calc(100% + 6px);bottom:auto;width:320px;max-height:min(420px,60vh);overflow-y:auto;padding:6px}
+.git-branch-panel header{margin:8px 8px 4px;font-size:10px;font-weight:600;letter-spacing:.3px;color:var(--muted)}
+.git-branch-row{display:flex;align-items:center;gap:6px;border-radius:7px}
+.git-branch-row:hover{background:var(--teal-soft)}
+.git-branch-row>button:first-child{flex:1;min-width:0;display:flex;align-items:center;gap:6px;padding:7px 8px;border:0;background:none;text-align:left;font:12px ui-monospace,monospace;color:var(--ink);cursor:pointer}
+.git-branch-row>button:first-child span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.git-branch-row.current>button:first-child{color:var(--teal);font-weight:600}
+.git-branch-row>button:disabled{cursor:default;opacity:1}
+.git-branch-tree{flex-shrink:0;border:0;background:none;padding:4px 8px;font-size:10.5px;color:var(--violet);cursor:pointer;opacity:0;border-radius:6px}
+.git-branch-row:hover .git-branch-tree,.git-branch-tree:focus-visible{opacity:1}
+.git-branch-tree:hover{background:#efeafb}
+.git-branch-new{margin:8px 4px 4px;padding-top:8px;border-top:1px solid var(--line)}
+.git-branch-new input{width:100%;height:30px;padding:0 8px;border:1px solid var(--line);border-radius:7px;font:12px ui-monospace,monospace;background:var(--surface);color:var(--ink)}
+.git-branch-new>div{display:flex;gap:6px;margin-top:6px}
+.git-branch-new button{flex:1;height:28px;border:1px solid var(--teal-line);border-radius:7px;background:var(--surface);font-size:11px;color:var(--teal);cursor:pointer}
+.git-branch-new button+button{border-color:#dcd3f2;color:var(--violet)}
+.git-branch-new button:disabled{opacity:.45;cursor:not-allowed}
+.git-branch-worktree{display:block;width:100%;padding:7px 8px;border:0;border-radius:7px;background:none;text-align:left;cursor:pointer}
+.git-branch-worktree:hover{background:#f5f2fc}
+.git-branch-worktree strong{display:block;font:12px ui-monospace,monospace;color:var(--ink)}
+.git-branch-worktree small{display:block;font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.git-branch-note{margin:8px 8px 4px;font-size:10.5px;line-height:1.5;color:var(--muted)}
+@media(pointer:coarse){.git-branch-tree{opacity:1}}
 </style>

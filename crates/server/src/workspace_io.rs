@@ -846,6 +846,185 @@ pub async fn git_discard(root: &Path, paths: &[String]) -> Result<(), IoError> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct GitWorktree {
+    pub path: String,
+    pub branch: Option<String>,
+    /// The repository's own checkout, as opposed to one added beside it.
+    pub main: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GitBranches {
+    /// None when HEAD is detached.
+    pub current: Option<String>,
+    pub branches: Vec<String>,
+    pub worktrees: Vec<GitWorktree>,
+}
+
+async fn git_text(root: &Path, args: &[&str]) -> Result<Option<String>, IoError> {
+    let (stdout, _stderr, success) = run_git(
+        root,
+        args.iter().map(|arg| (*arg).to_owned()).collect(),
+        GIT_TIMEOUT,
+    )
+    .await?;
+    Ok(success.then(|| String::from_utf8_lossy(&stdout).trim().to_owned()))
+}
+
+/// Local branches and the worktrees of this repository.
+pub async fn git_branches(root: &Path) -> Result<GitBranches, IoError> {
+    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    let branches = git_text(&root, &["branch", "--format=%(refname:short)"])
+        .await?
+        .ok_or_else(|| IoError::new(400, "Not a Git repository"))?;
+    let current = git_text(&root, &["symbolic-ref", "--short", "-q", "HEAD"])
+        .await?
+        .filter(|name| !name.is_empty());
+    let listing = git_text(&root, &["worktree", "list", "--porcelain"])
+        .await?
+        .unwrap_or_default();
+    Ok(GitBranches {
+        current,
+        branches: branches
+            .lines()
+            .map(str::trim)
+            .filter(|name| !name.is_empty() && !name.starts_with('('))
+            .map(str::to_owned)
+            .collect(),
+        worktrees: parse_worktrees(&listing),
+    })
+}
+
+fn parse_worktrees(listing: &str) -> Vec<GitWorktree> {
+    listing
+        .split("\n\n")
+        .filter_map(|block| {
+            let mut path = None;
+            let mut branch = None;
+            let mut bare = false;
+            for line in block.lines() {
+                if let Some(value) = line.strip_prefix("worktree ") {
+                    path = Some(value.to_owned());
+                } else if let Some(value) = line.strip_prefix("branch ") {
+                    branch = Some(value.trim_start_matches("refs/heads/").to_owned());
+                } else if line == "bare" {
+                    bare = true;
+                }
+            }
+            (!bare).then_some(())?;
+            path.map(|path| GitWorktree {
+                path,
+                branch,
+                main: false,
+            })
+        })
+        .enumerate()
+        .map(|(index, mut worktree)| {
+            worktree.main = index == 0;
+            worktree
+        })
+        .collect()
+}
+
+/// A name Git itself accepts for a branch, checked by Git rather than guessed.
+async fn valid_branch(root: &Path, branch: &str) -> Result<(), IoError> {
+    if branch.is_empty() || branch.len() > 200 || branch.starts_with('-') {
+        return Err(IoError::new(400, "Invalid branch name"));
+    }
+    match git_text(root, &["check-ref-format", "--branch", branch]).await? {
+        Some(_) => Ok(()),
+        None => Err(IoError::new(400, "Invalid branch name")),
+    }
+}
+
+/// Switch this checkout to another local branch, or create one here.
+/// Git refuses a switch that would overwrite uncommitted work, and that
+/// refusal is passed on rather than forced through.
+pub async fn git_switch(root: &Path, branch: &str, create: bool) -> Result<(), IoError> {
+    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    valid_branch(&root, branch).await?;
+    let mut args: Vec<String> = vec!["switch".into()];
+    if create {
+        args.push("-c".into());
+    }
+    args.push(branch.to_owned());
+    let (_stdout, stderr, success) = run_git(&root, args, GIT_TIMEOUT).await?;
+    if success {
+        Ok(())
+    } else {
+        Err(IoError::new(409, git_error(&stderr)))
+    }
+}
+
+/// Where a new worktree for `branch` goes: beside the repository's own
+/// checkout, in `<repo>.worktrees/<branch>`, so every worktree of one
+/// repository sits together and none of them inside another.
+pub fn worktree_path(main_checkout: &Path, branch: &str) -> Result<PathBuf, IoError> {
+    let name = main_checkout
+        .file_name()
+        .ok_or_else(|| IoError::new(400, "The repository has no directory name"))?;
+    let parent = main_checkout
+        .parent()
+        .ok_or_else(|| IoError::new(400, "The repository has no parent directory"))?;
+    let slug: String = branch
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let slug = slug.trim_matches(|c| c == '-' || c == '.');
+    if slug.is_empty() {
+        return Err(IoError::new(400, "Invalid branch name"));
+    }
+    Ok(parent
+        .join(format!("{}.worktrees", name.to_string_lossy()))
+        .join(slug))
+}
+
+/// Add a worktree for `branch` (created from HEAD when `create`), returning
+/// its directory. An existing directory is never reused or overwritten.
+pub async fn git_worktree_add(root: &Path, branch: &str, create: bool) -> Result<PathBuf, IoError> {
+    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    valid_branch(&root, branch).await?;
+    let listing = git_text(&root, &["worktree", "list", "--porcelain"])
+        .await?
+        .ok_or_else(|| IoError::new(400, "Not a Git repository"))?;
+    let main = parse_worktrees(&listing)
+        .into_iter()
+        .find(|worktree| worktree.main)
+        .ok_or_else(|| IoError::new(400, "Not a Git repository"))?;
+    let target = worktree_path(Path::new(&main.path), branch)?;
+    if target.exists() {
+        return Err(IoError::new(
+            409,
+            format!("{} already exists", target.display()),
+        ));
+    }
+    if let Some(parent) = target.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let mut args: Vec<String> = vec!["worktree".into(), "add".into()];
+    if create {
+        args.extend([
+            "-b".into(),
+            branch.to_owned(),
+            target.to_string_lossy().into_owned(),
+        ]);
+    } else {
+        args.extend([target.to_string_lossy().into_owned(), branch.to_owned()]);
+    }
+    let (_stdout, stderr, success) = run_git(&root, args, COMMIT_TIMEOUT).await?;
+    if !success {
+        return Err(IoError::new(409, git_error(&stderr)));
+    }
+    Ok(target)
+}
+
 pub async fn git_commit(root: &Path, message: &str) -> Result<String, IoError> {
     if message.trim().is_empty() {
         return Err(IoError::new(400, "commit message is required"));
@@ -1417,6 +1596,66 @@ mod tests {
                 .contains("new.txt")
         );
         git_unstage(&repo.path, &["new.txt".into()]).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn branches_switch_and_worktrees_sit_beside_the_repository() {
+        let repo = TempRepo::new();
+        fs::write(repo.path.join("a.txt"), "a\n").unwrap();
+        git_stage(&repo.path, &["a.txt".into()]).await.unwrap();
+        git_commit(&repo.path, "first").await.unwrap();
+        let start = git_branches(&repo.path).await.unwrap();
+        let home = start.current.clone().expect("on a branch");
+        assert_eq!(start.worktrees.len(), 1);
+        assert!(start.worktrees[0].main);
+
+        git_switch(&repo.path, "feature/x", true).await.unwrap();
+        assert_eq!(
+            git_branches(&repo.path).await.unwrap().current.as_deref(),
+            Some("feature/x")
+        );
+        git_switch(&repo.path, &home, false).await.unwrap();
+        assert_eq!(
+            git_switch(&repo.path, "-rf", false)
+                .await
+                .unwrap_err()
+                .status,
+            400
+        );
+        assert_eq!(
+            git_switch(&repo.path, "no-such-branch", false)
+                .await
+                .unwrap_err()
+                .status,
+            409
+        );
+
+        let tree = git_worktree_add(&repo.path, "feature/y", true)
+            .await
+            .unwrap();
+        let canonical = fs::canonicalize(&repo.path).unwrap();
+        let expected = canonical.parent().unwrap().join(format!(
+            "{}.worktrees",
+            canonical.file_name().unwrap().to_string_lossy()
+        ));
+        assert_eq!(tree, expected.join("feature-y"));
+        assert!(tree.join("a.txt").exists());
+        let after = git_branches(&repo.path).await.unwrap();
+        assert!(
+            after
+                .worktrees
+                .iter()
+                .any(|w| !w.main && w.branch.as_deref() == Some("feature/y"))
+        );
+        // The same branch cannot get a second directory.
+        assert_eq!(
+            git_worktree_add(&repo.path, "feature/y", false)
+                .await
+                .unwrap_err()
+                .status,
+            409
+        );
+        let _ = fs::remove_dir_all(&expected);
     }
 
     #[tokio::test]

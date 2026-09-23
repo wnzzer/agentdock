@@ -28,6 +28,7 @@ const props = withDefaults(defineProps<{
   minHeight?: number;
   defaultWorkspaceId?: string;
   workspaceLabels?: Record<string, string>;
+  workspaceBranches?: Record<string, string>;
   sessionProviders?: Record<string, ProviderKind>;
   ephemeralSessionIds?: string[];
   ephemeralSupported?: boolean;
@@ -230,7 +231,7 @@ onBeforeUnmount(() => {
   <div class="dock-canvas" :class="{ 'is-resizing': resizing }">
     <div v-if="notice" class="dock-canvas-notice" role="status">{{ t(notice) }}<button type="button" :aria-label="t('Dismiss layout notice')" @click="notice = ''">×</button></div>
     <div ref="stage" class="dock-canvas-stage">
-      <LayoutNode :node="visible" :selected="selected" :maximized="maximized" :located-pane-id="locatedPaneId" :workspace-labels="workspaceLabels" :session-providers="sessionProviders" :ephemeral-session-ids="ephemeralSessionIds" :ephemeral-supported="ephemeralSupported" @select="selectPane" @split="split" @resize="resize" @resizing="resizing = $event" @close="close" @maximize="maximize" @drop-pane="dropFromPointer" @add-pane="add" @create-session="(id,provider,ephemeral)=>emit('create-session',id,provider,ephemeral)" @reveal-session="emit('reveal-session', $event)">
+      <LayoutNode :node="visible" :selected="selected" :maximized="maximized" :located-pane-id="locatedPaneId" :workspace-labels="workspaceLabels" :workspace-branches="workspaceBranches" :session-providers="sessionProviders" :ephemeral-session-ids="ephemeralSessionIds" :ephemeral-supported="ephemeralSupported" @select="selectPane" @split="split" @resize="resize" @resizing="resizing = $event" @close="close" @maximize="maximize" @drop-pane="dropFromPointer" @add-pane="add" @create-session="(id,provider,ephemeral)=>emit('create-session',id,provider,ephemeral)" @reveal-session="emit('reveal-session', $event)">
         <template #pane="scope"><slot name="pane" :pane="scope.pane" /></template>
       </LayoutNode>
     </div>

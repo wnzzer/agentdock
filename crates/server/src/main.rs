@@ -192,6 +192,23 @@ struct GitPaths {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct BranchInput {
+    branch: String,
+    #[serde(default)]
+    create: bool,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorktreeInput {
+    /// A new worktree for this branch...
+    branch: Option<String>,
+    #[serde(default)]
+    create: bool,
+    /// ...or one the repository already has, opened as a workspace.
+    path: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CommitInput {
     message: String,
 }
@@ -625,6 +642,9 @@ fn router(state: AppState) -> Router {
         .route("/api/workspaces/{id}/git/stage", post(git_stage))
         .route("/api/workspaces/{id}/git/unstage", post(git_unstage))
         .route("/api/workspaces/{id}/git/discard", post(git_discard))
+        .route("/api/workspaces/{id}/git/branches", get(git_branches))
+        .route("/api/workspaces/{id}/git/switch", post(git_switch))
+        .route("/api/workspaces/{id}/git/worktrees", post(git_worktree))
         .route("/api/workspaces/{id}/git/commit", post(git_commit))
         .route(
             "/api/endpoint-profiles",
@@ -1739,6 +1759,111 @@ async fn git_discard(
     let _guard = state.operations.lock().await;
     workspace_io::git_discard(&root(&state, id).await?, &input.paths).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+async fn git_branches(
+    State(state): State<AppState>,
+    Path(id): Path<WorkspaceId>,
+) -> Result<Json<workspace_io::GitBranches>> {
+    Ok(Json(
+        workspace_io::git_branches(&root(&state, id).await?).await?,
+    ))
+}
+/// Switching branches rewrites the files under every session working in this
+/// checkout, so it waits until none of them is running: an agent halfway
+/// through an edit would otherwise find its files replaced underneath it.
+async fn git_switch(
+    State(state): State<AppState>,
+    Path(id): Path<WorkspaceId>,
+    Json(input): Json<BranchInput>,
+) -> Result<StatusCode> {
+    let _guard = state.operations.lock().await;
+    let busy = db(&state, move |s| s.list_sessions(Some(id)))
+        .await?
+        .into_iter()
+        .filter(|session| {
+            matches!(
+                session.status,
+                SessionStatus::Running | SessionStatus::Starting | SessionStatus::Waiting
+            )
+        })
+        .count();
+    if busy > 0 {
+        return Err(ApiError::conflict(format!(
+            "{busy} session(s) are running in this workspace. End them, or open the branch in a new worktree instead."
+        )));
+    }
+    workspace_io::git_switch(&root(&state, id).await?, input.branch.trim(), input.create).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+/// A worktree becomes a workspace of its own, so its files, its Git pane and
+/// the sessions started in it all work as they do anywhere else, and a
+/// session's branch is simply its workspace's.
+async fn git_worktree(
+    State(state): State<AppState>,
+    Path(id): Path<WorkspaceId>,
+    Json(input): Json<WorktreeInput>,
+) -> Result<(StatusCode, Json<Workspace>)> {
+    let _guard = state.operations.lock().await;
+    let base = workspace(&state, id).await?;
+    let repo = root(&state, id).await?;
+    let listed = workspace_io::git_branches(&repo).await?;
+    let (target, branch) = match (input.path, input.branch) {
+        (Some(path), None) => {
+            let found = listed
+                .worktrees
+                .iter()
+                .find(|w| w.path == path)
+                .ok_or_else(|| ApiError::bad("Not a worktree of this repository"))?;
+            (PathBuf::from(&found.path), found.branch.clone())
+        }
+        (None, Some(branch)) => {
+            let branch = branch.trim().to_owned();
+            let main = listed
+                .worktrees
+                .iter()
+                .find(|w| w.main)
+                .ok_or_else(|| ApiError::bad("Not a Git repository"))?;
+            let planned = workspace_io::worktree_path(std::path::Path::new(&main.path), &branch)?;
+            // Checked before anything is created: this decides which part of
+            // the host the server may write to, exactly as creating a
+            // workspace does.
+            let parent = planned.parent().and_then(|p| p.parent()).map(PathBuf::from);
+            if !parent.is_some_and(|p| directories::within_roots(&state.workspace_roots, &p)) {
+                return Err(ApiError::bad(
+                    "The worktree would sit outside the roots this server may use. Set AGENTDOCK_WORKSPACE_ROOTS to allow it.",
+                ));
+            }
+            let made = workspace_io::git_worktree_add(&repo, &branch, input.create).await?;
+            (made, Some(branch))
+        }
+        _ => return Err(ApiError::bad("Name a branch or an existing worktree")),
+    };
+    let canonical = tokio::fs::canonicalize(&target)
+        .await
+        .map_err(|_| ApiError::conflict("Worktree directory is unavailable"))?;
+    if !directories::within_roots(&state.workspace_roots, &canonical) {
+        return Err(ApiError::bad(
+            "That worktree is outside the roots this server may use. Set AGENTDOCK_WORKSPACE_ROOTS to allow it.",
+        ));
+    }
+    let path = canonical.to_string_lossy().into_owned();
+    let existing = db(&state, |s| s.list_workspaces())
+        .await?
+        .into_iter()
+        .find(|w| w.root_path == path);
+    if let Some(existing) = existing {
+        return Ok((StatusCode::OK, Json(existing)));
+    }
+    let name = format!(
+        "{} · {}",
+        base.name,
+        branch.unwrap_or_else(|| "detached".into())
+    );
+    let name: String = name.chars().take(200).collect();
+    Ok((
+        StatusCode::CREATED,
+        Json(db(&state, move |s| s.create_workspace(&name, &path)).await?),
+    ))
 }
 async fn git_commit(
     State(state): State<AppState>,
