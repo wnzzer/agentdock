@@ -59,6 +59,26 @@ async function stage(files: GitFile[], unstage: boolean) {
   } catch (cause) { if (alive && epoch === mutationEpoch) error.value = errorMessage(cause); }
   finally { if (alive && epoch === mutationEpoch) busy.value = false; }
 }
+/**
+ * Throwing away working-tree changes cannot be undone, so it always asks
+ * first, naming how many files and whether any of them are new (new files are
+ * deleted, not reverted). Only the unstaged group offers it: staged work is
+ * never discarded from here.
+ */
+const discardTarget = ref<GitFile[]>();
+const discardNew = computed(() => (discardTarget.value ?? []).filter(file => file.worktree === '?').length);
+async function discard() {
+  const files = discardTarget.value;
+  if (!files?.length || busy.value) return;
+  const workspaceId = props.workspaceId, epoch = mutationEpoch;
+  busy.value = true; error.value = ""; notice.value = undefined;
+  try {
+    await request(`${workspacePath(workspaceId)}/git/discard`, json("POST", { paths: files.map(file => file.path) }));
+    discardTarget.value = undefined;
+    if (alive && epoch === mutationEpoch) await refresh();
+  } catch (cause) { if (alive && epoch === mutationEpoch) error.value = errorMessage(cause); }
+  finally { if (alive && epoch === mutationEpoch) busy.value = false; }
+}
 async function commit() {
   if (!message.value.trim() || !stagedFiles.value.length || busy.value) return;
   const workspaceId = props.workspaceId, epoch = mutationEpoch, draft = viewState.value, sentMessage = message.value;
@@ -81,7 +101,8 @@ onBeforeUnmount(() => { alive = false; revision++; diffRevision++; mutationEpoch
     <div class="git-content">
       <div class="git-sidebar">
         <form class="commit-form" @submit.prevent="commit"><textarea v-model="message" :aria-label="t('Commit message')" :placeholder="t('Commit message…')" rows="2" :disabled="busy" /><button class="primary-button" :disabled="busy || !message.trim() || !stagedFiles.length"><Icon name="check" :size="14" />{{ busy ? t('Working…') : t('Commit staged ({count})', { count: stagedFiles.length }) }}</button></form>
-        <div class="git-groups"><section v-for="group in groups" :key="group.title" class="git-group"><header><strong>{{ t(group.title) }} <span>{{ group.files.length }}</span></strong><button class="text-button" :disabled="busy || !group.files.length" @click="stage(group.files, group.staged)">{{ t(group.staged ? 'Unstage all' : 'Stage all') }}</button></header><div v-for="file in group.files" :key="file.path" :class="['git-file', { selected: selected?.path === file.path && selected.staged === group.staged }]"><button class="git-file-open" :title="file.original_path ? `${file.original_path} → ${file.path}` : file.path" @click="openDiff(file.path, group.staged)"><span :class="['git-file-code', { staged: group.staged }]">{{ group.staged ? file.index : file.worktree }}</span><span>{{ file.path }}</span></button><button class="icon-button" :aria-label="t(group.staged ? 'Unstage {path}' : 'Stage {path}', { path: file.path })" :disabled="busy" @click="stage([file], group.staged)">{{ group.staged ? '−' : '+' }}</button></div><p v-if="!group.files.length" class="group-empty">{{ t(error ? 'Git unavailable' : loading ? 'Checking…' : group.staged ? 'Nothing staged' : 'Working tree clean') }}</p></section></div>
+        <div v-if="discardTarget" class="confirmation-bar git-discard-confirm" role="alertdialog"><span>{{ discardTarget.length===1 ? t('Discard changes to {path}? This cannot be undone.', { path: discardTarget[0].path }) : t('Discard changes to {count} files? This cannot be undone.', { count: discardTarget.length }) }}<template v-if="discardNew"> {{ t('{count} new files will be deleted.', { count: discardNew }) }}</template></span><div class="toolbar-buttons"><button type="button" class="small-button danger" :disabled="busy" @click="discard">{{ t(busy ? 'Working…' : 'Discard') }}</button><button type="button" class="small-button" :disabled="busy" @click="discardTarget=undefined">{{ t('Cancel') }}</button></div></div>
+        <div class="git-groups"><section v-for="group in groups" :key="group.title" class="git-group"><header><strong>{{ t(group.title) }} <span>{{ group.files.length }}</span></strong><span class="git-group-actions"><button v-if="!group.staged" class="text-button danger-text" :disabled="busy || !group.files.length" @click="discardTarget=group.files">{{ t('Discard all') }}</button><button class="text-button" :disabled="busy || !group.files.length" @click="stage(group.files, group.staged)">{{ t(group.staged ? 'Unstage all' : 'Stage all') }}</button></span></header><div v-for="file in group.files" :key="file.path" :class="['git-file', { selected: selected?.path === file.path && selected.staged === group.staged }]"><button class="git-file-open" :title="file.original_path ? `${file.original_path} → ${file.path}` : file.path" @click="openDiff(file.path, group.staged)"><span :class="['git-file-code', { staged: group.staged }]">{{ group.staged ? file.index : file.worktree }}</span><span>{{ file.path }}</span></button><button v-if="!group.staged" class="icon-button git-discard" :aria-label="t('Discard changes to {path}', { path: file.path })" :title="t('Discard changes')" :disabled="busy" @click="discardTarget=[file]">↺</button><button class="icon-button" :aria-label="t(group.staged ? 'Unstage {path}' : 'Stage {path}', { path: file.path })" :disabled="busy" @click="stage([file], group.staged)">{{ group.staged ? '−' : '+' }}</button></div><p v-if="!group.files.length" class="group-empty">{{ t(error ? 'Git unavailable' : loading ? 'Checking…' : group.staged ? 'Nothing staged' : 'Working tree clean') }}</p></section></div>
       </div>
       <div class="diff-view">
         <div v-if="selected" class="diff-title"><span class="truncate" :title="selected.path">{{ selected.path }}</span><span class="diff-badge">{{ t(selected.staged ? 'Staged' : 'Working tree') }}</span><button class="icon-button" :aria-label="t('Open changed file in editor')" @click="emit('openFile', selected.path)"><Icon name="file" :size="14" /></button></div>
@@ -93,3 +114,10 @@ onBeforeUnmount(() => { alive = false; revision++; diffRevision++; mutationEpoch
     </div>
   </section>
 </template>
+
+<style scoped>
+.git-group-actions{display:flex;align-items:center;gap:10px}
+.git-discard{color:var(--muted);font-size:14px}
+.git-discard:hover:not(:disabled){color:var(--danger)}
+.git-discard-confirm{margin:0 0 10px}
+</style>

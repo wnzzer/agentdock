@@ -789,6 +789,63 @@ async fn git_index_op(root: &Path, operation: &str, paths: &[String]) -> Result<
     }
 }
 
+/// Throw away working-tree changes to the named files.
+///
+/// A tracked file goes back to what is staged for it -- the index, not HEAD --
+/// so discarding never touches work that was already staged. An untracked file
+/// has nothing to go back to and is removed, through the same guarded delete
+/// the file explorer uses, which never follows a link out of the workspace.
+/// Paths are named one by one: there is no "discard everything" spelling.
+pub async fn git_discard(root: &Path, paths: &[String]) -> Result<(), IoError> {
+    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    if paths.is_empty() {
+        return Ok(());
+    }
+    if paths.len() > 1000 {
+        return Err(IoError::new(413, "Too many paths"));
+    }
+    let mut tracked = Vec::new();
+    let mut untracked = Vec::new();
+    for path in paths {
+        if path.is_empty() || path == "." {
+            return Err(IoError::new(400, "Explicit file paths required"));
+        }
+        let rel = safe_relative(path)?;
+        if is_protected_path(&rel) {
+            return Err(IoError::new(403, "protected path"));
+        }
+        let known = run_git(
+            &root,
+            vec![
+                "ls-files".into(),
+                "--error-unmatch".into(),
+                "--".into(),
+                path.clone(),
+            ],
+            GIT_TIMEOUT,
+        )
+        .await?
+        .2;
+        if known {
+            tracked.push(path.clone());
+        } else {
+            untracked.push(path.clone());
+        }
+    }
+    if !tracked.is_empty() {
+        let mut args = vec!["checkout".into(), "--".into()];
+        args.extend(tracked);
+        let (_stdout, stderr, success) = run_git(&root, args, GIT_TIMEOUT).await?;
+        if !success {
+            return Err(IoError::new(400, git_error(&stderr)));
+        }
+    }
+    for path in untracked {
+        delete_entry(&root, &path).await?;
+    }
+    Ok(())
+}
+
 pub async fn git_commit(root: &Path, message: &str) -> Result<String, IoError> {
     if message.trim().is_empty() {
         return Err(IoError::new(400, "commit message is required"));
@@ -1360,6 +1417,30 @@ mod tests {
                 .contains("new.txt")
         );
         git_unstage(&repo.path, &["new.txt".into()]).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn discarding_restores_what_is_staged_and_removes_what_git_never_knew() {
+        let repo = TempRepo::new();
+        fs::write(repo.path.join("kept.txt"), "one\n").unwrap();
+        git_stage(&repo.path, &["kept.txt".into()]).await.unwrap();
+        git_commit(&repo.path, "first").await.unwrap();
+        // Staged work survives: discard goes back to the index, not to HEAD.
+        fs::write(repo.path.join("kept.txt"), "two\n").unwrap();
+        git_stage(&repo.path, &["kept.txt".into()]).await.unwrap();
+        fs::write(repo.path.join("kept.txt"), "three\n").unwrap();
+        fs::write(repo.path.join("scratch.txt"), "junk\n").unwrap();
+        git_discard(&repo.path, &["kept.txt".into(), "scratch.txt".into()])
+            .await
+            .unwrap();
+        assert_eq!(fs::read_to_string(repo.path.join("kept.txt")).unwrap(), "two\n");
+        assert!(!repo.path.join("scratch.txt").exists());
+        // A deleted tracked file comes back.
+        fs::remove_file(repo.path.join("kept.txt")).unwrap();
+        git_discard(&repo.path, &["kept.txt".into()]).await.unwrap();
+        assert!(repo.path.join("kept.txt").exists());
+        // Nothing is discarded without being named.
+        assert_eq!(git_discard(&repo.path, &[".".into()]).await.unwrap_err().status, 400);
     }
 
     #[cfg(unix)]

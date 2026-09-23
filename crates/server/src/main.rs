@@ -622,6 +622,7 @@ fn router(state: AppState) -> Router {
         .route("/api/workspaces/{id}/git/diff", get(git_diff))
         .route("/api/workspaces/{id}/git/stage", post(git_stage))
         .route("/api/workspaces/{id}/git/unstage", post(git_unstage))
+        .route("/api/workspaces/{id}/git/discard", post(git_discard))
         .route("/api/workspaces/{id}/git/commit", post(git_commit))
         .route(
             "/api/endpoint-profiles",
@@ -1726,6 +1727,15 @@ async fn git_unstage(
 ) -> Result<StatusCode> {
     let _guard = state.operations.lock().await;
     workspace_io::git_unstage(&root(&state, id).await?, &input.paths).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn git_discard(
+    State(state): State<AppState>,
+    Path(id): Path<WorkspaceId>,
+    Json(input): Json<GitPaths>,
+) -> Result<StatusCode> {
+    let _guard = state.operations.lock().await;
+    workspace_io::git_discard(&root(&state, id).await?, &input.paths).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 async fn git_commit(
