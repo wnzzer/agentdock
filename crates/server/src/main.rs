@@ -14,6 +14,7 @@ mod model_catalog;
 mod native_config;
 mod native_history;
 mod providers;
+mod resources;
 mod security;
 mod settings;
 mod workspace_io;
@@ -558,6 +559,7 @@ fn router(state: AppState) -> Router {
     Router::new()
         .merge(accounts::routes())
         .merge(clients::routes())
+        .merge(resources::routes())
         .merge(conversations::routes())
         .route("/api/health", get(health))
         .route("/api/auth", get(security::status).post(security::login))

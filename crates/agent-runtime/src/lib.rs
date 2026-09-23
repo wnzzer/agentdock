@@ -301,6 +301,17 @@ impl RuntimeManager {
             .cloned()
     }
 
+    /// Process ids of the sessions still running, for resource reporting.
+    pub fn process_ids(&self) -> Vec<(String, u32)> {
+        self.sessions
+            .read()
+            .expect("runtime sessions lock poisoned")
+            .iter()
+            .filter(|(_, session)| session.running())
+            .filter_map(|(id, session)| session.inner.process_id.map(|pid| (id.clone(), pid)))
+            .collect()
+    }
+
     pub async fn stop(&self, id: &str) -> RuntimeResult<()> {
         let session = self
             .get(id)

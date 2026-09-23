@@ -1433,14 +1433,23 @@ mod tests {
         git_discard(&repo.path, &["kept.txt".into(), "scratch.txt".into()])
             .await
             .unwrap();
-        assert_eq!(fs::read_to_string(repo.path.join("kept.txt")).unwrap(), "two\n");
+        assert_eq!(
+            fs::read_to_string(repo.path.join("kept.txt")).unwrap(),
+            "two\n"
+        );
         assert!(!repo.path.join("scratch.txt").exists());
         // A deleted tracked file comes back.
         fs::remove_file(repo.path.join("kept.txt")).unwrap();
         git_discard(&repo.path, &["kept.txt".into()]).await.unwrap();
         assert!(repo.path.join("kept.txt").exists());
         // Nothing is discarded without being named.
-        assert_eq!(git_discard(&repo.path, &[".".into()]).await.unwrap_err().status, 400);
+        assert_eq!(
+            git_discard(&repo.path, &[".".into()])
+                .await
+                .unwrap_err()
+                .status,
+            400
+        );
     }
 
     #[cfg(unix)]

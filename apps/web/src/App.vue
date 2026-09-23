@@ -10,6 +10,7 @@ import FileExplorer from "./features/FileExplorer.vue";
 import LoadHistoryDialog from "./features/LoadHistoryDialog.vue";
 import WorkspaceDialog from "./features/WorkspaceDialog.vue";
 import SettingsDialog from "./features/SettingsDialog.vue";
+import HostUsage from "./features/HostUsage.vue";
 import CreateSessionDialog from "./features/CreateSessionDialog.vue";
 import SessionEnvironmentDialog from "./features/SessionEnvironmentDialog.vue";
 import SessionRenameDialog from "./features/SessionRenameDialog.vue";
@@ -575,7 +576,7 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
         <FileExplorer ref="explorer" :workspace-id="explorerWorkspace.id" :refresh-token="fileRefresh[explorerWorkspace.id]??0" :selected-path="activeFilePath" @open="openFile(explorerWorkspace.id,$event)" @close="explorerOpen=false"/>
       </aside>
     </div>
-    <footer class="statusbar"><span :title="contextWorkspace?.root_path"><Icon name="git" :size="13"/>{{ contextWorkspace?.name || t('No workspace') }} · {{ currentGitAvailable?currentGit.branch||t('Detached HEAD'):t('Git unavailable') }}</span><button v-if="contextWorkspace" @click="openChanges(contextWorkspace.id)">{{ currentGitAvailable?t('{count} changes',{count:currentGit.files.length}):t('Changes') }}</button><span v-if="currentGit.ahead!==undefined">↑ {{ currentGit.ahead }}</span><span v-if="currentGit.behind!==undefined">↓ {{ currentGit.behind }}</span><span class="flex-spacer"/><span v-if="canvasReady" :class="{'danger-text':['Save failed','Save conflict','Memory only'].includes(layoutStatus)}">{{ t('Layout {status}',{status:t(layoutStatus)}) }}</span><span class="status-agent-count"><i :class="['state-dot',activeSessions.length?'running':'stopped']"/>{{ t('{count} active sessions',{count:activeSessions.length}) }}</span></footer>
+    <footer class="statusbar"><span :title="contextWorkspace?.root_path"><Icon name="git" :size="13"/>{{ contextWorkspace?.name || t('No workspace') }} · {{ currentGitAvailable?currentGit.branch||t('Detached HEAD'):t('Git unavailable') }}</span><button v-if="contextWorkspace" @click="openChanges(contextWorkspace.id)">{{ currentGitAvailable?t('{count} changes',{count:currentGit.files.length}):t('Changes') }}</button><span v-if="currentGit.ahead!==undefined">↑ {{ currentGit.ahead }}</span><span v-if="currentGit.behind!==undefined">↓ {{ currentGit.behind }}</span><span class="flex-spacer"/><span v-if="canvasReady" :class="{'danger-text':['Save failed','Save conflict','Memory only'].includes(layoutStatus)}">{{ t('Layout {status}',{status:t(layoutStatus)}) }}</span><HostUsage :sessions="sessions" /><span class="status-agent-count"><i :class="['state-dot',activeSessions.length?'running':'stopped']"/>{{ t('{count} active sessions',{count:activeSessions.length}) }}</span></footer>
   </div>
   <WorkspaceDialog v-if="showWorkspace" @close="showWorkspace=false" @created="workspaceCreated"/>
   <SettingsDialog v-if="settingsSection" :profiles="profiles" :initial-section="settingsSection" @close="settingsSection=undefined" @changed="refreshProfiles"/>

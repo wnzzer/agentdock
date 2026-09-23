@@ -45,6 +45,8 @@ pub struct ChatRuntime {
     ready: AtomicBool,
     busy: AtomicBool,
     approvals: Mutex<HashMap<String, HashSet<String>>>,
+    /// The bridge process; the native client runs beneath it.
+    pid: Option<u32>,
 }
 #[cfg(unix)]
 struct OwnedProcessGroup(Option<u32>);
@@ -101,6 +103,16 @@ impl ChatRuntime {
     }
 }
 impl ChatManager {
+    /// Process ids of the conversations still running, for resource reporting.
+    pub fn process_ids(&self) -> Vec<(SessionId, u32)> {
+        self.sessions
+            .lock()
+            .expect("chat sessions")
+            .iter()
+            .filter(|(_, runtime)| runtime.running())
+            .filter_map(|(id, runtime)| runtime.pid.map(|pid| (*id, pid)))
+            .collect()
+    }
     pub fn get(&self, id: SessionId) -> Option<Arc<ChatRuntime>> {
         self.sessions
             .lock()
@@ -277,6 +289,7 @@ pub async fn start_locked(state: &AppState, session: &Session) -> Result<Arc<Cha
         ready: AtomicBool::new(false),
         busy: AtomicBool::new(false),
         approvals: Mutex::new(HashMap::new()),
+        pid: child.id(),
     });
     db(state, move |s| {
         s.set_session_status(id, SessionStatus::Starting)
