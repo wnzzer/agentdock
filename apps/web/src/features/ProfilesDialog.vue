@@ -25,7 +25,7 @@ const editingRecord = ref<EndpointProfile>();
 const editingProfile = computed(() => props.profiles.find(profile => profile.id === editing.value) ?? editingRecord.value);
 const editingNative = computed(() => editingProfile.value?.native_config);
 const editingManaged = computed(() => editingNative.value?.source_id.startsWith('account:'));
-const formVisible = ref(!props.profiles.length), busy = ref(false), discovering = ref(false);
+const formVisible = ref(true), busy = ref(false), discovering = ref(false);
 const importVisible = ref(false), loadingSources = ref(false), sourcesLoaded = ref(false), sharedConfirmed = ref(false);
 const nativeSources = ref<NativeHistorySource[]>([]), nativeSourceId = ref(""), nativeName = ref("");
 const selectedSource = computed(() => nativeSources.value.find(source => source.id === nativeSourceId.value));
@@ -87,7 +87,8 @@ async function save() {
   try{
     const saved=await request<EndpointProfile>("/endpoint-profiles"+(editing.value?"/"+encodeURIComponent(editing.value):""),json(editing.value?"PATCH":"POST",payload()));
     notice.value=editingNative.value?(backendCapabilities.environment?"Profile updated. Process environment overrides were saved without changing the native configuration.":"Profile name updated. The native configuration was not changed."):editing.value?"Profile updated. Existing session snapshots are unchanged.":"Profile created. Select it when creating a session.";
-    pendingNavigation.value=undefined;formVisible.value=false;emit("changed",saved);
+    // Stay on what was just saved; the notice says it took.
+    const message=notice.value;pendingNavigation.value=undefined;edit(saved);notice.value=message;emit("changed",saved);
   }catch(cause){error.value=errorMessage(cause);}finally{busy.value=false;}
 }
 async function remove(){
@@ -122,19 +123,35 @@ async function importNative() {
   }catch(cause){if(!disposed)error.value=errorMessage(cause);}
   finally{if(!disposed)busy.value=false;}
 }
+/** One line per profile: the provider is already its icon, and the directory
+ * is shown once the profile is opened. */
+function profileSummary(p: EndpointProfile) {
+  if (p.native_config) return sharesHostConfig(p.native_config) ? t('Host configuration · shared sign-in') : t('Isolated configuration · this account only');
+  let host = '';
+  try { host = p.endpoint_url ? new URL(p.endpoint_url).host : ''; } catch { host = p.endpoint_url ?? ''; }
+  return [p.model || t('Native client default'), host || t('Official endpoint'), p.proxy_url ? t('Proxy configured') : ''].filter(Boolean).join(' · ');
+}
+/** Cancelling goes back to a profile rather than to an empty page. */
+function cancelForm() {
+  requestLeave(() => {
+    const back = props.profiles.find(profile => profile.id === editing.value) ?? props.profiles[0];
+    if (back) edit(back); else formVisible.value = false;
+  });
+}
+// Open on something to read rather than on a blank page that asks for a click.
+if (props.profiles.length) edit(props.profiles[0]);
 onBeforeUnmount(()=>{disposed=true;nativeRevision++;discoveryRevision++;});
 </script>
 
 <template>
   <ModalDialog :title="t('Endpoint profiles')" wide :closable="!busy" :embedded="embedded" @close="requestLeave(() => emit('close'))">
-    <p class="form-description">{{ t('Choose an isolated endpoint profile or reuse an existing host configuration. Host configurations stay shared.') }}</p>
     <p v-if="!backendCapabilities.nativeConfig" class="inline-notice">{{ t('Native configuration import and history loading require an updated backend.') }}</p>
     <div class="profiles-layout">
       <section class="profiles-list">
         <button class="secondary-button" :disabled="busy" @click="requestLeave(() => edit())"><Icon name="plus" :size="14" />{{ t('New profile') }}</button>
         <button v-for="p in profiles" :key="p.id" :class="['profile-card',{selected:editing===p.id&&formVisible}]" :disabled="busy" @click="requestLeave(() => edit(p))">
           <span :class="['provider-mark',p.provider]"><ProviderIcon :provider="p.provider" /></span>
-          <span><strong>{{ p.name }}</strong><small>{{ providerLabel(p.provider) }} · {{ p.native_config ? t('Native settings') : p.model || t('Native client default') }}</small><small v-if="p.native_config" class="shared-profile-label">{{ sharesHostConfig(p.native_config) ? t('Host configuration · shared sign-in') : t('Isolated configuration · this account only') }}</small><small v-else>{{ t(p.permission_mode) }} · {{ p.proxy_url ? t('Proxy configured') : t('Host network') }}</small><small v-if="p.native_config" class="profile-path" :title="p.native_config.config_dir">{{ p.native_config.config_dir }}</small></span>
+          <span><strong>{{ p.name }}</strong><small :class="{'shared-profile-label':!!p.native_config}">{{ profileSummary(p) }}</small></span>
         </button>
         <p v-if="!profiles.length" class="small-empty">{{ t('No profiles yet. Native, isolated sessions also work without one.') }}</p>
       </section>
@@ -144,43 +161,37 @@ onBeforeUnmount(()=>{disposed=true;nativeRevision++;discoveryRevision++;});
         <div v-if="pendingNavigation" class="confirmation-bar" role="alert">{{ t('Discard unsaved environment changes?') }}<div class="toolbar-buttons"><button type="button" class="small-button danger" @click="discardEnvironmentDraft">{{ t('Discard environment changes') }}</button><button type="button" class="small-button" @click="pendingNavigation=undefined">{{ t('Keep editing') }}</button></div></div>
         <form v-if="importVisible" class="form-stack" @submit.prevent="importNative">
           <h3>{{ t('Import existing configuration') }}</h3>
-          <p class="form-description">{{ t('Add Claude Code or Codex configuration already on this host as a reusable profile.') }}</p>
-          <p class="form-help">{{ t('After importing, new sessions for this client will select this configuration by default. Existing sessions are unchanged.') }}</p>
+          <p class="form-help">{{ t('Reuse the sign-in and settings of a Claude Code or Codex already set up on this host.') }}</p>
           <div class="native-source-controls"><label>{{ t('Host configuration source') }}<select v-model="nativeSourceId" :disabled="busy||loadingSources"><option value="" disabled>{{ t('Select a host configuration') }}</option><option v-for="source in nativeSources" :key="source.id" :value="source.id" :disabled="!source.available">{{ source.label }} · {{ t(source.available?'Directory available':'Not found on this host') }}</option></select></label><button type="button" class="icon-button" :aria-label="t('Refresh host configurations')" :disabled="busy||loadingSources" @click="loadNativeSources"><Icon name="refresh" :size="16" /></button></div>
           <p v-if="loadingSources" class="form-help" role="status">{{ t('Loading host configurations…') }}</p>
           <p v-else-if="sourcesLoaded&&!nativeSources.some(source=>source.available)" class="form-help">{{ t('No usable native configuration directories were found. Configure the native client on this host, then refresh.') }}</p>
           <template v-if="selectedSource">
-            <div class="shared-config-panel"><strong><ProviderIcon :provider="selectedSource.provider" :size="17" />{{ t('Host configuration · shared sign-in') }}</strong><code>{{ selectedSource.path }}</code><p>{{ t('Directory availability does not confirm sign-in. The native client may still ask you to log in.') }}</p></div>
+            <div class="shared-config-panel"><strong><ProviderIcon :provider="selectedSource.provider" :size="17" />{{ t('Host configuration · shared sign-in') }}</strong><code>{{ selectedSource.path }}</code></div>
             <label>{{ t('Name') }}<input v-model="nativeName" :disabled="busy||!!existingNativeProfile" :placeholder="selectedSource.label" maxlength="120" /></label>
             <p v-if="existingNativeProfile" class="form-help">{{ t('This source is already linked. Importing reuses the existing profile; you can rename it afterwards.') }}</p>
-            <p class="form-help">{{ t('Import only creates a profile reference. It does not start the client or sign you in.') }}</p>
-            <div class="shared-config-consent"><p>{{ t('Account, model, endpoint, proxy and permissions follow the native client. Shared configuration is not session-isolated.') }}</p><p>{{ t('AgentDock does not copy credentials or rewrite this configuration. The native client may update its own sign-in cache and history.') }}</p><p>{{ t('This is a live directory reference, not a snapshot of its contents. Changes to native settings affect subsequent starts.') }}</p><label><input v-model="sharedConfirmed" type="checkbox" :disabled="busy" />{{ t('I agree to reuse this shared host configuration for new sessions.') }}</label></div>
+            <div class="shared-config-consent"><p>{{ t('Sessions will share this directory with the host: its sign-in, model and permissions. AgentDock only references it and never copies or rewrites anything; the directory being there does not mean it is signed in.') }}</p><label><input v-model="sharedConfirmed" type="checkbox" :disabled="busy" />{{ t('I agree to reuse this shared host configuration for new sessions.') }}</label></div>
           </template>
           <div class="dialog-actions"><button type="button" class="secondary-button" :disabled="busy" @click="closeImport">{{ t('Cancel') }}</button><button class="primary-button" :disabled="busy||loadingSources||!selectedSource?.available||!sharedConfirmed">{{ t(busy?'Importing…':'Import configuration') }}</button></div>
         </form>
         <form v-else-if="formVisible" class="form-stack" @submit.prevent="save">
           <h3>{{ editing ? t('Edit profile') : t('Create profile') }}</h3>
           <div class="form-columns">
-            <label>{{ t('Name') }}<input v-model="form.name" required :disabled="busy" :placeholder="t('Personal Codex')" maxlength="120" /></label>
+            <label>{{ t('Name') }}<input v-model="form.name" required :disabled="busy" :placeholder="t('Personal {client}', { client: providerLabel(form.provider) })" maxlength="120" /></label>
             <label>{{ t('Provider') }}<select v-model="form.provider" :disabled="!!editing||busy"><option value="claude_code">Claude Code</option><option value="codex">Codex</option></select></label>
           </div>
           <template v-if="editingNative">
-            <div class="shared-config-panel"><strong><ProviderIcon :provider="editingProfile!.provider" :size="17" />{{ sharesHostConfig(editingNative) ? t('Host configuration · shared sign-in') : t('Isolated configuration · this account only') }}</strong><code>{{ editingNative.config_dir }}</code><p v-if="sharesHostConfig(editingNative)">{{ t('This directory belonged to the host already. Anything else that edits it — a profile switcher, a native re-login — changes this account too.') }}</p><p v-else>{{ t('AgentDock created this directory for this account, and nothing else signs in through it.') }}</p><p>{{ t('Native account and directory settings remain managed by the client. Advanced environment overrides only affect new child processes.') }}</p><p>{{ t('Edit the profile name and process environment here. Native configuration files and account directories are not changed.') }}</p></div>
-            <p class="form-help">{{ t('Directory availability does not confirm sign-in. The native client may still ask you to log in.') }}</p>
-            <p class="form-help">{{ t('AgentDock does not copy credentials or rewrite this configuration. The native client may update its own sign-in cache and history.') }}</p>
-            <p class="form-help">{{ t('This is a live directory reference, not a snapshot of its contents. Changes to native settings affect subsequent starts.') }}</p>
+            <div class="shared-config-panel"><strong><ProviderIcon :provider="editingProfile!.provider" :size="17" />{{ sharesHostConfig(editingNative) ? t('Host configuration · shared sign-in') : t('Isolated configuration · this account only') }}</strong><code>{{ editingNative.config_dir }}</code><p v-if="sharesHostConfig(editingNative)">{{ t('Shared with the host: sign-in, model and permissions come from this directory, and anything else that edits it changes this profile too. AgentDock never copies or rewrites it.') }}</p><p v-else>{{ t('AgentDock created this directory for this account, and nothing else signs in through it.') }}</p></div>
           </template>
           <template v-else>
-          <label>{{ t('Endpoint URL') }} <small>{{ t('optional') }}</small><input v-model="form.endpoint_url" type="url" :placeholder="t('Official endpoint when empty')" autocomplete="off" /></label>
-          <label>{{ t('Proxy URL') }} <small>HTTP / HTTPS</small><input v-model="form.proxy_url" type="url" placeholder="http://127.0.0.1:7890" autocomplete="off" /></label>
-          <p class="form-help">{{ t('The proxy runs on the server, not in this browser. Empty uses the host network. Claude Code does not support SOCKS.') }}</p>
+          <label>{{ t('Endpoint URL') }}<input v-model="form.endpoint_url" type="url" :placeholder="t('Official endpoint when empty')" autocomplete="off" /></label>
+          <label>{{ t('Proxy URL') }}<input v-model="form.proxy_url" type="url" placeholder="http://127.0.0.1:7890" autocomplete="off" /></label>
+          <p class="form-help">{{ t('Applied on the server. Empty uses the host network.') }}<template v-if="form.provider==='claude_code'"> {{ t('Claude Code does not support SOCKS.') }}</template></p>
           <label>{{ t('Secret reference') }} <small>{{ t('never an API key') }}</small><input v-model="form.secret_ref" placeholder="env:AGENTDOCK_SECRET_PROVIDER_KEY" autocomplete="off" spellcheck="false" /></label>
-          <p :class="secretValid?'form-help':'inline-error'">{{ secretValid?t('MVP supports env:AGENTDOCK_SECRET_NAME from the server environment. Secret values are not returned to the browser.'):t('Enter an environment reference, not the secret itself.') }}</p>
-          <div class="model-fetch"><strong>{{ t('Model selection') }}</strong><button type="button" class="small-button" :disabled="discovering||!backendCapabilities.models||!secretValid||!!aliases.error" :title="!backendCapabilities.models?t('Backend upgrade required'):undefined" @click="discover"><Icon name="refresh" :size="14" />{{ discovering?t('Loading models…'):t('Load models from endpoint') }}</button></div>
+          <p :class="secretValid?'form-help':'inline-error'">{{ secretValid?t('Name a server environment variable such as env:AGENTDOCK_SECRET_WORK. Its value never reaches the browser.'):t('Enter an environment reference, not the secret itself.') }}</p>
+          <div class="model-fetch"><strong>{{ t('Model selection') }}</strong><button type="button" class="small-button" :disabled="discovering||!backendCapabilities.models||!secretValid||!!aliases.error" :title="!backendCapabilities.models?t('Backend upgrade required'):t('Reads the endpoint\'s model list. No model is run.')" @click="discover"><Icon name="refresh" :size="14" />{{ discovering?t('Loading models…'):t('Load models from endpoint') }}</button></div>
           <div v-if="modelError" class="inline-error" role="alert">{{ modelError }}<p>{{ t('You can still enter a model ID or alias manually.') }}</p></div>
           <p v-if="models" class="form-help">{{ t('{count} models returned', {count:models.models.length}) }} · <span>{{ models.source_url }}</span><br v-if="models.has_more" /><span v-if="models.has_more">{{ t('The endpoint has more models; this is the first page.') }}</span></p>
           <label>{{ t('Default model') }}<ModelPicker v-model="form.model" :models="choices" :placeholder="t('Choose a model or enter an ID')" /></label>
-          <p class="form-help">{{ t('Native Codex uses its client catalog. Custom endpoints use the models API and may require an API key. No inference is requested.') }}</p>
           <label v-if="effortOptions.length">{{ t('Thinking depth') }}<select v-model="form.effort"><option value="">{{ t('Automatic · provider default') }}</option><option v-for="effort in effortOptions" :key="effort" :value="effort">{{ effortLabel(effort) }}</option></select></label>
           <p v-else class="form-help">{{ t('Load a model list to show the reasoning levels supported by this model.') }}</p>
           <label>{{ t('Model aliases') }}<textarea v-model="aliasesText" rows="3" spellcheck="false" placeholder="fast = actual-model-id&#10;review = another-model-id" /></label>
@@ -188,15 +199,13 @@ onBeforeUnmount(()=>{disposed=true;nativeRevision++;discoveryRevision++;});
           <p v-else class="form-help">{{ t('One alias = model-id per line. Aliases change display selection, not the provider protocol.') }}</p>
           <p v-if="form.model" class="model-effective">{{ t('Effective model') }}: <code>{{ resolved }}</code></p>
           <label>{{ t('Permission intent') }}<select v-model="form.permission_mode"><option value="native">{{ t('Native · provider defaults') }}</option><option value="interactive">{{ t('Interactive · conservative native prompts') }}</option><option value="trusted">{{ t('Trusted · native file-edit trust') }}</option><option v-if="form.provider==='claude_code'" value="plan">{{ t('Plan · review before edits') }}</option><option value="blocked">{{ t('Blocked · do not start') }}</option></select></label>
-          <p class="form-help">{{ t('AgentDock maps this intent to provider settings; the native client owns the actual permissions and approvals.') }}</p>
           </template>
           <EnvironmentEditor v-model="environmentDraft" :supported="backendCapabilities.environment" :disabled="busy" />
-          <p class="form-help">{{ t('Profile environment defaults are copied into new sessions. Existing sessions keep their saved overrides; native configuration files are not edited.') }}</p>
           <p v-if="environmentError" class="inline-error" role="alert">{{ t(environmentError) }}</p>
           <p v-if="editingManaged" class="form-help">{{ t('Manage this account from Official accounts. Its profile cannot be removed separately from its account.') }}</p>
-          <div class="dialog-actions"><button v-if="editing && !editingManaged" type="button" class="text-button danger-text" :disabled="busy" @click="deleteId=editing">{{ t(editingNative?'Remove profile reference':'Delete profile') }}</button><span class="flex-spacer" /><button type="button" class="secondary-button" :disabled="busy" @click="requestLeave(() => { formVisible=false; })">{{ t('Cancel') }}</button><button class="primary-button" :disabled="busy||!canSave">{{ busy?t('Saving…'):t('Save profile') }}</button></div>
+          <div class="dialog-actions"><button v-if="editing && !editingManaged" type="button" class="text-button danger-text" :disabled="busy" @click="deleteId=editing">{{ t(editingNative?'Remove profile reference':'Delete profile') }}</button><span class="flex-spacer" /><button type="button" class="secondary-button" :disabled="busy" @click="cancelForm">{{ t('Cancel') }}</button><button class="primary-button" :disabled="busy||!canSave">{{ busy?t('Saving…'):t('Save profile') }}</button></div>
         </form>
-        <div v-else class="pane-empty"><Icon name="settings" :size="28" /><h3>{{ t('A profile for each context') }}</h3><p>{{ t('Select a profile to edit, or create one for a different account or endpoint.') }}</p></div>
+        <div v-else class="pane-empty"><p>{{ t('Select a profile to edit, or create one for a different account or endpoint.') }}</p></div>
         <div v-if="deleteId" class="confirmation-bar">{{ t(deletingProfile?.native_config?'Remove this profile reference? Native settings, sign-in and history stay on the host. Existing sessions retain their reference.':'Delete this profile? Existing session snapshots remain.') }} {{ deletingProfile?.name }}<div class="toolbar-buttons"><button class="small-button danger" :disabled="busy" @click="remove">{{ t('Confirm delete') }}</button><button class="small-button" :disabled="busy" @click="deleteId=undefined">{{ t('Keep profile') }}</button></div></div>
       </div>
     </div>
@@ -206,4 +215,36 @@ onBeforeUnmount(()=>{disposed=true;nativeRevision++;discoveryRevision++;});
 .model-fetch {display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid #e7ecef;padding-top:12px;}
 .model-fetch strong {font-size:12px;}.model-effective {margin:0;color:#087e73;font-size:12px;}.form-help {overflow-wrap:anywhere;}
 .native-import-button{background:#eef8f4;border-color:#cfe6dd;color:#247f6e}.native-source-controls{display:flex;align-items:end;gap:8px}.native-source-controls>label{flex:1;min-width:0}.native-source-controls>.icon-button{margin-bottom:5px}.shared-config-panel{border:1px solid #d9e9e3;border-radius:8px;background:#f5fbf8;padding:12px}.shared-config-panel>strong{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:550;color:#3d8071}.shared-config-panel>code{display:block;margin-top:8px;font-size:10px;overflow-wrap:anywhere;color:#567e78}.shared-config-panel p{font-size:10px;line-height:18px;color:#6e8584;margin-top:8px}.shared-config-consent{padding:12px;border:1px solid #ece4c8;border-radius:8px;background:#fffaf0}.shared-config-consent p{font-size:10px;line-height:18px;color:#837e66;margin:0 0 8px}.shared-config-consent>label{flex-direction:row;align-items:flex-start;gap:8px;line-height:17px;color:#626b5b}.shared-config-consent input{width:14px;height:14px;margin-top:2px;flex-shrink:0;accent-color:#258672}.profile-card .shared-profile-label{color:#478b7d}.profile-card .profile-path{max-width:143px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#98aaa6}
+
+/* Settings-page type scale: the shared form styles run from 8px to 11px in a
+   pale grey, which read as faint rather than calm at this density. */
+.profiles-layout{margin-top:0;grid-template-columns:210px minmax(0,1fr)}
+.profile-card{align-items:center;padding:9px 10px;border-radius:9px;margin-bottom:3px}
+.profile-card.selected{background:var(--teal-soft);border-color:var(--teal-line)}
+.profile-card strong{font-size:12.5px;line-height:18px;color:var(--ink);font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.profile-card small{font-size:10.5px;line-height:15px;color:var(--muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.profile-card>span:last-child{flex:1}
+.profiles-list>.secondary-button{font-size:12px;min-height:36px}
+.form-stack{gap:14px}
+.form-stack>h3{font-size:14px;font-weight:600;color:var(--ink)}
+.form-stack label{font-size:11.5px;color:var(--ink-soft)}
+.form-stack label>small{font-size:10px;color:var(--muted)}
+.form-stack input,.form-stack select,.form-stack textarea{font-size:12.5px;color:var(--ink);border-color:var(--border);background:var(--surface);border-radius:8px}
+.form-stack textarea{display:block;width:100%;padding:9px 11px;border:1px solid var(--border);line-height:1.6;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;resize:vertical;outline:0}
+.form-stack textarea:focus{border-color:#b5d6c8}
+.form-stack textarea::placeholder{color:#b1bdc5}
+.form-help{font-size:11px;line-height:1.7;color:var(--muted)}
+.model-fetch strong{font-size:13px;color:var(--ink)}
+.shared-config-panel>strong{font-size:12px}
+.shared-config-panel>code{font-size:11px}
+.shared-config-panel p,.shared-config-consent p{font-size:11.5px;line-height:1.7}
+.pane-empty p{font-size:12px;color:var(--muted)}
+/* The list stays put while a long form scrolls beside it. */
+.profiles-list{position:sticky;top:0;align-self:start}
+.form-stack input,.form-stack select{font-weight:400}
+.form-stack :deep(.model-picker-input>input){width:auto;flex:1 1 0;min-width:0;font-weight:400;font-size:12.5px;color:var(--ink);background:var(--surface);border-color:var(--border);border-radius:8px}
+@media(max-width:760px){
+  .profiles-layout{grid-template-columns:minmax(0,1fr)}
+  .profiles-list{position:static;border-right:0;padding-right:0;border-bottom:1px solid var(--border);padding-bottom:10px}
+}
 </style>
