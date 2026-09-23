@@ -54,6 +54,7 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Loading conversation…": "正在加载对话…",
   "Waiting for your approval": "等待你的确认",
   "Agent is working": "Agent 正在工作",
+  "{count} tool calls": "{count} 次工具调用",
   "Discard all": "全部丢弃",
   "Discard changes": "丢弃改动",
   "Discard changes to {path}": "丢弃 {path} 的改动",

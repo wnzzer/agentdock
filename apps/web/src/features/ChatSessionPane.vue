@@ -16,6 +16,7 @@ import { attachmentError, canSendMessage, composeMessage, formatBytes, MAX_ATTAC
 import { applyCommand, matchCommands, moveHighlight, slashQuery, unsupportedCommand } from './slash-commands';
 import { MarkdownContent } from './MarkdownContent';
 import { handoffArrivals, handoffTranscript } from './handoff';
+import { toolRuns, toolRunNames, toolRunStatus, type ToolRun } from './tool-runs';
 import { mentionQuery, applyMention } from './file-mentions';
 import { createFileSearch } from './file-search';
 import type { SearchHit } from './file-search';
@@ -48,6 +49,13 @@ const approvalBusy = ref(''), approvalAnswers = reactive<Record<string, Record<s
 const previewDrafts = createChatDraftStore();
 const draft = computed(() => reactive((isPreview.value ? previewDrafts : chatDrafts).get(props.session.id)));
 const view = computed(() => conversationView(events.value, running.value));
+/** Tool calls made back to back read as one card; see tool-runs.ts. */
+const displayItems = computed(() => toolRuns(view.value.items));
+/** While a run is going, its summary names the call in progress. */
+function runningLine(run: ToolRun) {
+  const current = [...run.tools].reverse().find(tool => tool.status === 'running');
+  return current ? (current.activity ? lastLine(current.activity) : current.name) : toolRunNames(run);
+}
 const entry = computed(() => isPreview.value ? { epoch: 0 } : sessionConnections.get(props.session.id));
 const matchingProfiles = computed(() => props.profiles.filter(profile => profile.provider === props.session.provider));
 const activeProfile = computed(() => props.session.endpoint_snapshot ?? matchingProfiles.value.find(profile => profile.id === props.session.endpoint_profile_id));
@@ -752,9 +760,9 @@ function keydown(event: KeyboardEvent) {
     <div ref="viewport" :class="['chat-timeline',{'is-empty':!view.items.length}]" role="log" :aria-label="t('Conversation messages')" aria-live="polite" :aria-busy="view.turn==='running'" @contextmenu="openTimelineMenu" @scroll="atBottom">
       <p v-if="truncated" class="chat-history-notice">{{ t('Earlier display history was trimmed. Native history remains managed by the official client.') }}</p>
       <div v-if="!view.items.length" class="chat-welcome"><span class="chat-welcome-mark"><ProviderIcon :provider="session.provider" :size="32" /></span><h3>{{ t('What shall we build?') }}</h3><p>{{ t('A real conversation with your native agent, with room for tools, changes and your next idea.') }}</p><span class="chat-context-chip" :title="activeProfile?(activeProfile.native_config?t('Uses the sign-in and settings in {path}',{path:activeProfile.native_config.config_dir}):undefined):t('A fresh, empty client home: no host sign-in or settings, so it may ask you to log in.')"><ProviderIcon :provider="session.provider" :size="12"/>{{ endpointName }}</span><Transition name="chat-boot" :duration="240"><p v-if="booting" class="chat-boot" role="status"><span class="chat-boot-bar"><i/></span>{{ t('Starting {provider}… models and commands arrive with it.',{provider:providerLabel(session.provider)}) }}</p></Transition><div v-if="startersAvailable" class="chat-starters"><button v-for="(starter,index) in STARTERS" :key="starter.title" type="button" :style="{'--starter-delay':index*60+'ms'}" @click="useStarter(starter.prompt)"><span class="chat-starter-icon" :data-tone="starter.icon"><Icon :name="starter.icon" :size="16"/></span><span><strong>{{ t(starter.title) }}</strong><small>{{ t(starter.note) }}</small></span></button></div><p v-if="session.provider==='claude_code'" class="chat-trust-note">{{ t('Claude headless mode skips the interactive workspace-trust prompt. Send messages only for directories you trust; supported tool approvals still come from the native client.') }}</p></div>
-      <template v-for="(item,index) in view.items" :key="item.type+':'+index+':'+item.id">
+      <template v-for="(item,index) in displayItems" :key="item.type+':'+index+':'+item.id">
         <article v-if="item.type==='message'" :class="['chat-message',item.role]"><div class="chat-message-label"><ProviderIcon v-if="item.role==='assistant'" :provider="session.provider" :size="15" /><span>{{ item.role==='user'?t('You'):providerLabel(session.provider) }}</span></div><MarkdownContent :text="item.text" /></article>
-        <details v-else-if="item.type==='tool'" class="chat-tool"><summary><span :class="['tool-indicator',item.status]">{{ item.status==='completed'?'✓':item.status==='failed'?'!':'↻' }}</span><strong>{{ item.name }}</strong><small>{{ item.activity && item.status==='running' ? lastLine(item.activity) : t(item.status==='running'?(running?'Working…':'Session ended'):item.status==='failed'?'Failed':'Completed') }}</small><Icon class="chat-tool-chevron" name="chevron" :size="14" /></summary><pre v-if="item.activity" class="tool-activity">{{ item.activity }}</pre><pre v-if="item.text">{{ item.text }}</pre><p v-else-if="!item.activity">{{ t('The client did not provide tool output.') }}</p></details>
+        <component :is="item.type==='tool_run'&&item.tools.length>1?'details':'div'" v-else-if="item.type==='tool_run'" :class="item.tools.length>1?['chat-tool-run',toolRunStatus(item)]:'chat-tool-solo'"><summary v-if="item.tools.length>1"><span :class="['tool-indicator',toolRunStatus(item)]">{{ toolRunStatus(item)==='completed'?'✓':toolRunStatus(item)==='failed'?'!':'↻' }}</span><strong>{{ t('{count} tool calls',{count:item.tools.length}) }}</strong><small>{{ toolRunStatus(item)==='running' ? runningLine(item) : toolRunNames(item) }}</small><Icon class="chat-tool-chevron" name="chevron" :size="14" /></summary><details v-for="tool in item.tools" :key="tool.id" class="chat-tool"><summary><span :class="['tool-indicator',tool.status]">{{ tool.status==='completed'?'✓':tool.status==='failed'?'!':'↻' }}</span><strong>{{ tool.name }}</strong><small>{{ tool.activity && tool.status==='running' ? lastLine(tool.activity) : t(tool.status==='running'?(running?'Working…':'Session ended'):tool.status==='failed'?'Failed':'Completed') }}</small><Icon class="chat-tool-chevron" name="chevron" :size="14" /></summary><pre v-if="tool.activity" class="tool-activity">{{ tool.activity }}</pre><pre v-if="tool.text">{{ tool.text }}</pre><p v-else-if="!tool.activity">{{ t('The client did not provide tool output.') }}</p></details></component>
         <article v-else-if="item.type==='approval'" :class="['chat-approval',{resolved:item.resolved}]"><header><Icon name="info" :size="18" /><strong>{{ item.title }}</strong><span v-if="item.resolved">{{ t('Resolved') }}</span></header><MarkdownContent :text="item.text" /><template v-if="!item.resolved">
           <div v-for="question in item.questions" :key="question.id" class="chat-question"><label :for="'answer-'+session.id+'-'+item.id+'-'+question.id">{{ question.header }} {{ question.question }}</label>
             <div v-if="question.multiSelect&&!question.isSecret&&question.options.length" class="chat-multi-options"><label v-for="option in question.options" :key="option.label"><input type="checkbox" :checked="approvalAnswers[item.id]?.[question.id]?.includes(option.label)??false" :disabled="isPreview||!!approvalBusy" @change="toggleAnswer(item.id,question.id,option.label,$event)" /><span><strong>{{ option.label }}</strong><small v-if="option.description">{{ option.description }}</small></span></label><label v-if="question.isOther" class="chat-other-answer"><span>{{ t('Other answer') }}</span><input type="text" autocomplete="off" :value="approvalOther[item.id]?.[question.id]??''" :disabled="isPreview||!!approvalBusy" @input="otherAnswer(item.id,question.id,$event)" /></label></div>
@@ -1006,4 +1014,17 @@ function keydown(event: KeyboardEvent) {
 .chat-handoff-choice strong{display:flex!important;align-items:center;gap:6px}
 .chat-handoff-confirm{border-color:#dcd3f2;background:#f7f4fd;color:#5b4a8e}
 .chat-handoff-confirm>div button:first-child{background:var(--violet);color:#fff;border-color:var(--violet)}
+
+/* A run of tool calls: one card whose body is the calls themselves. */
+.chat-tool-solo{display:contents}
+.chat-tool-run{max-width:820px;margin:0 auto 13px;border:1px solid var(--border);border-radius:11px;background:var(--sunken);overflow:hidden}
+.chat-tool-run>summary{display:flex;align-items:center;gap:9px;min-height:46px;padding:8px 13px;cursor:pointer;list-style:none}
+.chat-tool-run>summary::-webkit-details-marker{display:none}
+.chat-tool-run>summary strong{font-size:12px;font-weight:600;flex:1;min-width:0}
+.chat-tool-run>summary small{font:10.5px ui-monospace,monospace;color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%}
+.chat-tool-run[open]>summary{border-bottom:1px solid var(--border)}
+.chat-tool-run[open]>summary .chat-tool-chevron{transform:rotate(270deg)}
+.chat-tool-run>.chat-tool{margin:0;border:0;border-radius:0;background:none}
+.chat-tool-run>.chat-tool+.chat-tool{border-top:1px solid var(--border)}
+.chat-tool-run>.chat-tool summary{min-height:38px;padding-left:22px}
 </style>
