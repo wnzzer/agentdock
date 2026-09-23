@@ -1,6 +1,6 @@
 import { reactive } from "vue";
 
-export interface BackendHealth { ok: boolean; platform?: string; instance_label?: string; api_version?: number; capabilities?: string[] }
+export interface BackendHealth { ok: boolean; platform?: string; instance_label?: string; version?: string; api_version?: number; capabilities?: string[] }
 export function capabilitiesFor(health: BackendHealth) {
   const modern = typeof health.api_version === "number" && health.api_version >= 2;
   const has = (name: string, legacy = modern) => Array.isArray(health.capabilities) ? health.capabilities.includes(name) : legacy;

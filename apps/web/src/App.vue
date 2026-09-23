@@ -55,7 +55,7 @@ const activeFilePath = computed(() => focusedPane.value && focusedWorkspace.valu
 const sidebarOpen = ref(false), loading = ref(true), apiOnline = ref(false), error = ref("");
 const connectionError = ref(""), refreshingResources = ref(false);
 const visibleError = computed(() => error.value || connectionError.value);
-const platform = ref<string>(), instanceLabel = ref<string>();
+const platform = ref<string>(), instanceLabel = ref<string>(), serverVersion = ref<string>();
 const showWorkspace = ref(false), showAuth = ref(false);
 const settingsSection = ref<'agents' | 'endpoints' | 'accounts'>();
 const archiveBusyIds = ref<string[]>([]), keepBusyIds = ref<string[]>([]), quickBusy = ref(false);
@@ -465,7 +465,7 @@ async function refreshResources() {
     if (!health.ok) throw new ApiError("AgentDock health check failed", 503);
     const previousSharedStorage = backendCapabilities.sharedCanvas;
     setBackendCapabilities(health); apiOnline.value = true;
-    platform.value = health.platform; instanceLabel.value = health.instance_label;
+    platform.value = health.platform; instanceLabel.value = health.instance_label; serverVersion.value = health.version;
     const [workspaceList] = await Promise.all([request<Workspace[]>("/workspaces"), refreshSessions(), refreshProfiles()]);
     if (registryRevision === workspaceRegistryRevision) {
       workspaces.value = workspaceList;
@@ -492,7 +492,7 @@ async function bootstrap() {
       request<EndpointProfile[]>("/endpoint-profiles"), request<BackendHealth>("/health"),
     ]);
     if (disposed || own !== bootstrapRevision) return;
-    apiOnline.value = health.ok; platform.value = health.platform; instanceLabel.value = health.instance_label;
+    apiOnline.value = health.ok; platform.value = health.platform; instanceLabel.value = health.instance_label; serverVersion.value = health.version;
     setBackendCapabilities(health);
     workspaces.value = workspaceList; sessions.value = sessionList; profiles.value = profileList;
     const preferred = workspaceList.find(workspace => workspace.id === selectedWorkspaceId.value || workspace.id === rememberedWorkspace()) ?? workspaceList[0];
@@ -542,7 +542,7 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
 <template>
   <div :class="['app-shell', { 'explorer-hidden': !explorerOpen || !explorerWorkspace, 'sidebar-collapsed': sidebarCollapsed }]">
     <header class="topbar">
-      <div class="brand"><button class="icon-button mobile-menu" :aria-label="t('Toggle workspace navigation')" @click="sidebarOpen = !sidebarOpen"><Icon name="menu" /></button><button class="icon-button sidebar-toggle" :class="{selected:!sidebarCollapsed}" :aria-pressed="!sidebarCollapsed" :aria-label="t(sidebarCollapsed?'Expand workspace panel':'Collapse workspace panel')" :title="t(sidebarCollapsed?'Expand workspace panel':'Collapse workspace panel')" @click="toggleSidebar"><Icon name="panelLeft"/></button><span class="brand-mark"><span /></span><strong>AgentDock<span class="brand-version">{{ instanceLabel || t('local / mvp') }}</span></strong></div>
+      <div class="brand"><button class="icon-button mobile-menu" :aria-label="t('Toggle workspace navigation')" @click="sidebarOpen = !sidebarOpen"><Icon name="menu" /></button><button class="icon-button sidebar-toggle" :class="{selected:!sidebarCollapsed}" :aria-pressed="!sidebarCollapsed" :aria-label="t(sidebarCollapsed?'Expand workspace panel':'Collapse workspace panel')" :title="t(sidebarCollapsed?'Expand workspace panel':'Collapse workspace panel')" @click="toggleSidebar"><Icon name="panelLeft"/></button><span class="brand-mark"><span /></span><strong>AgentDock<span class="brand-version" :title="serverVersion?t('AgentDock {version}',{version:serverVersion}):undefined">{{ instanceLabel || (serverVersion ? 'v' + serverVersion : 'AgentDock') }}</span></strong></div>
       <div class="top-crumb"><span>{{ t('Shared workspace canvas') }}</span><Icon name="chevron" :size="13"/><strong>{{ contextWorkspace?.name || t('Your next workspace') }}</strong></div>
       <div class="top-actions">
         <span class="connection-badge"><i :class="['state-dot', apiOnline ? 'running' : 'stopped']"/>{{ t(loading ? 'Connecting' : apiOnline ? 'Host connected' : 'Offline') }}</span>

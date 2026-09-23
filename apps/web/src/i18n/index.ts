@@ -54,6 +54,7 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Loading conversation…": "正在加载对话…",
   "Waiting for your approval": "等待你的确认",
   "Agent is working": "Agent 正在工作",
+  "AgentDock {version}": "AgentDock {version}",
   "Shared host configuration": "共享宿主机配置",
   "Sign-in, model and permissions come from this directory, shared with the host; AgentDock never copies or rewrites it. The directory being there does not mean it is signed in.": "登录、模型和权限都来自这个目录，与宿主机共享；AgentDock 不复制也不改写它。目录存在不代表已经登录。",
   "Works in": "工作位置",
