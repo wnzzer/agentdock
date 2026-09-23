@@ -406,3 +406,15 @@ test('images resolve inside the workspace only, relative to the file that names 
   assert.deepEqual(attachedImagePaths('Attached files in this workspace:\n- shots/one.png\n- notes.txt\n\nLook at this'), ['shots/one.png']);
   assert.deepEqual(attachedImagePaths('No header here\n- shots/one.png'), []);
 });
+
+test('GFM tables become table blocks, with alignment, code pipes and ragged rows handled', async () => {
+  const { markdownBlocks } = await import('./chat-model.ts');
+  const blocks = markdownBlocks('Intro line\n| | Claude | Codex |\n|---|:---:|---:|\n| Start | `a | b` | `app-server` |\n| Short |\n\nAfter');
+  assert.deepEqual(blocks.map(b => b.type), ['paragraph', 'table', 'paragraph']);
+  const table = blocks[1];
+  assert.deepEqual(table.header, ['', 'Claude', 'Codex']);
+  assert.deepEqual(table.align, [undefined, 'center', 'right']);
+  assert.deepEqual(table.rows, [['Start', '`a | b`', '`app-server`'], ['Short', '', '']]);
+  // Pipes without a divider row stay prose.
+  assert.equal(markdownBlocks('a | b\nc | d')[0].type, 'paragraph');
+});

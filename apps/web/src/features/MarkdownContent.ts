@@ -40,6 +40,12 @@ export const MarkdownContent = defineComponent({
       h('div', { class: 'chat-markdown' }, markdownBlocks(props.text).map(block =>
         block.type === 'code'
           ? h('div', { class: 'chat-code' }, [block.language ? h('small', block.language) : null, h('pre', [h('code', block.text)])])
+          : block.type === 'table'
+            // Wide tables scroll inside their own box rather than the message.
+            ? h('div', { class: 'chat-table' }, [h('table', [
+                h('thead', [h('tr', block.header.map((cell, index) => h('th', { style: block.align[index] ? { textAlign: block.align[index] } : undefined }, inline(cell))))]),
+                h('tbody', block.rows.map(row => h('tr', row.map((cell, index) => h('td', { style: block.align[index] ? { textAlign: block.align[index] } : undefined }, inline(cell)))))),
+              ])])
           : block.type === 'list'
             ? h(block.ordered ? 'ol' : 'ul', block.items.map(item => h('li', inline(item))))
             : h(block.type === 'heading' ? `h${Math.min(block.level ?? 3, 6)}` : block.type === 'quote' ? 'blockquote' : 'p', inline(block.text))));

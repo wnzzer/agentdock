@@ -247,7 +247,7 @@ export function sessionConfigurationPayload(
 }
 
 export type MarkdownInline = { type: 'text' | 'strong' | 'em' | 'code'; text: string } | { type: 'link'; text: string; href: string } | { type: 'image'; alt: string; src: string };
-export type MarkdownBlock = { type: 'paragraph' | 'heading' | 'quote'; text: string; level?: number } | { type: 'code'; text: string; language: string } | { type: 'list'; ordered: boolean; items: string[] };
+export type MarkdownBlock = { type: 'paragraph' | 'heading' | 'quote'; text: string; level?: number } | { type: 'code'; text: string; language: string } | { type: 'list'; ordered: boolean; items: string[] } | { type: 'table'; header: string[]; align: Array<'left' | 'center' | 'right' | undefined>; rows: string[][] };
 /**
  * No HTML or executable URL schemes. The renderer uses Vue text nodes.
  *
@@ -283,6 +283,21 @@ export function markdownInline(text: string): MarkdownInline[] {
   if (cursor < text.length) result.push({ type: 'text', text: text.slice(cursor) });
   return result;
 }
+/** Cells of a `| a | b |` row. A `|` inside backticks or escaped as `\\|` is text. */
+function tableCells(line: string): string[] {
+  const cells: string[] = []; let cell = '', code = false;
+  const body = line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '');
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c === '\\' && body[i + 1] === '|') { cell += '|'; i++; continue; }
+    if (c === '`') code = !code;
+    if (c === '|' && !code) { cells.push(cell.trim()); cell = ''; continue; }
+    cell += c;
+  }
+  cells.push(cell.trim());
+  return cells;
+}
+const TABLE_DIVIDER = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
 export function markdownBlocks(text: string): MarkdownBlock[] {
   const lines = text.replace(/\r\n/g, '\n').split('\n'), blocks: MarkdownBlock[] = [];
   for (let i = 0; i < lines.length;) {
@@ -293,6 +308,16 @@ export function markdownBlocks(text: string): MarkdownBlock[] {
     const heading = line.match(/^(#{1,6})\s+(.*)$/);
     if (heading) { blocks.push({ type: 'heading', level: heading[1].length, text: heading[2] }); i++; continue; }
     if (/^>\s?/.test(line)) { blocks.push({ type: 'quote', text: line.replace(/^>\s?/, '') }); i++; continue; }
+    // A GFM table: a row, a divider of dashes, then rows until one without a pipe.
+    if (line.includes('|') && i + 1 < lines.length && TABLE_DIVIDER.test(lines[i + 1])) {
+      const header = tableCells(line), divider = tableCells(lines[i + 1]);
+      if (divider.length === header.length) {
+        const align = divider.map(cell => cell.startsWith(':') && cell.endsWith(':') ? 'center' as const : cell.endsWith(':') ? 'right' as const : cell.startsWith(':') ? 'left' as const : undefined);
+        const rows: string[][] = []; i += 2;
+        while (i < lines.length && lines[i].trim() && lines[i].includes('|')) { const cells = tableCells(lines[i++]); rows.push(header.map((_, index) => cells[index] ?? '')); }
+        blocks.push({ type: 'table', header, align, rows }); continue;
+      }
+    }
     const list = line.match(/^\s*(?:([-*+])|(\d+)\.)\s+(.*)$/);
     if (list) {
       const ordered = !!list[2], items: string[] = [];
@@ -300,7 +325,7 @@ export function markdownBlocks(text: string): MarkdownBlock[] {
       blocks.push({ type: 'list', ordered, items }); continue;
     }
     const body = [line]; i++;
-    while (i < lines.length && lines[i].trim() && !/^(?:\s*```|#{1,6}\s|>\s?|\s*(?:[-*+]|\d+\.)\s)/.test(lines[i])) body.push(lines[i++]);
+    while (i < lines.length && lines[i].trim() && !/^(?:\s*```|#{1,6}\s|>\s?|\s*(?:[-*+]|\d+\.)\s)/.test(lines[i]) && !(lines[i].includes('|') && TABLE_DIVIDER.test(lines[i + 1] ?? ''))) body.push(lines[i++]);
     blocks.push({ type: 'paragraph', text: body.join('\n') });
   }
   return blocks;
