@@ -218,7 +218,13 @@ watch([sessions, layout], () => {
   if (prompt && (!sessions.value.some(item => item.id === prompt.session.id) || !flattenPanes(layout.value.root).some(pane => pane.id === prompt.paneId))) discardPrompt.value = undefined;
 }, { deep: true });
 function openSession(session: Session) {
-  if (!workspaces.value.some(workspace => workspace.id === session.workspace_id)) { error.value = t("Pane source unavailable"); return; }
+  if (!workspaces.value.some(workspace => workspace.id === session.workspace_id)) {
+    // A session can arrive before its workspace does -- one opened in a
+    // worktree made a moment ago, from inside a pane. Fetch it rather than
+    // refusing a session that exists.
+    void request<Workspace>(workspacePath(session.workspace_id)).then(workspace => { worktreeWorkspace(workspace); openSession(session); }).catch(() => { error.value = t("Pane source unavailable"); });
+    return;
+  }
   sessions.value = [session, ...sessions.value.filter(item => item.id !== session.id)];
   // Opening a session selects its bound view. A legacy PTY shown in the
   // conversation shell must not start just because a pane was mounted;
