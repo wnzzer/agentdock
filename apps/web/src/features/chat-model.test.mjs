@@ -391,3 +391,18 @@ test('an unattended mode survives pruning, and an invented one never reaches the
   assert.equal(isChatEvent({ type: 'settings', permission_modes: ['ask', 'Danger Mode'] }), false);
   assert.equal(isChatEvent({ type: 'settings', permission_modes: Array.from({ length: 9 }, () => 'ask') }), false);
 });
+
+test('images resolve inside the workspace only, relative to the file that names them', async () => {
+  const { markdownInline, workspaceImagePath, attachedImagePaths } = await import('./chat-model.ts');
+  assert.deepEqual(markdownInline('see ![shot](img/a.png) now')[1], { type: 'image', alt: 'shot', src: 'img/a.png' });
+  assert.equal(markdownInline('![up](../shared/b.png)')[0].type, 'image');
+  assert.equal(workspaceImagePath('img/a.png', 'docs'), 'docs/img/a.png');
+  assert.equal(workspaceImagePath('../assets/b.webp', 'docs/guide'), 'docs/assets/b.webp');
+  assert.equal(workspaceImagePath('/root.png', 'docs'), 'root.png');
+  assert.equal(workspaceImagePath('../../escape.png', 'docs'), undefined);
+  assert.equal(workspaceImagePath('https://tracker.example/pixel.png'), undefined);
+  assert.equal(workspaceImagePath('//cdn.example/x.png'), undefined);
+  assert.equal(workspaceImagePath('notes.txt'), undefined);
+  assert.deepEqual(attachedImagePaths('Attached files in this workspace:\n- shots/one.png\n- notes.txt\n\nLook at this'), ['shots/one.png']);
+  assert.deepEqual(attachedImagePaths('No header here\n- shots/one.png'), []);
+});

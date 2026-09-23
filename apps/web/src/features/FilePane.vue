@@ -149,7 +149,7 @@ onBeforeUnmount(() => { revision++; watcher?.disconnect(); });
     <div v-if="success" class="inline-success" role="status">{{ t(success) }}</div>
     <div v-if="confirmReload" class="confirmation-bar">{{ t('Reloading discards this unsaved draft.') }}<button class="small-button danger" @click="read">{{ t('Discard draft & reload') }}</button><button class="small-button" @click="confirmReload = false">{{ t('Keep draft') }}</button></div>
     <div v-if="loading" class="pane-empty"><p>{{ t('Reading file from host…') }}</p></div>
-    <div v-else-if="kind === 'text' && draft.loaded && isMarkdown && !showSource" class="markdown-preview"><MarkdownContent :text="draft.content" /></div>
+    <div v-else-if="kind === 'text' && draft.loaded && isMarkdown && !showSource" class="markdown-preview"><MarkdownContent :text="draft.content" :image-url="(p: string) => assetUrl(workspaceId, p)" :base="path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''" /></div>
     <div v-else-if="kind === 'text' && draft.loaded" class="code-surface" :class="{ 'is-wrapped': wrapped }">
       <pre v-if="highlighted !== undefined" ref="highlightLayer" class="code-highlight" :style="{ right: gutter + 'px' }" aria-hidden="true"><code v-html="highlighted" /></pre>
       <textarea ref="editor" v-model="draft.content" :class="['code-editor', { 'is-overlaid': highlighted !== undefined, 'is-composing': composing }]" :aria-label="t('Edit {path}', { path })" spellcheck="false" autocapitalize="off" autocomplete="off" @input="success = ''" @scroll="syncScroll" @compositionstart="composing = true" @compositionend="composing = false" />

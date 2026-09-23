@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import type { EndpointProfile, ProviderKind, Session } from '@agentdock/protocol';
-import { ApiConnectionError, errorMessage, json, providerLabel, request, workspacePath } from './api';
+import { ApiConnectionError, assetUrl, errorMessage, json, providerLabel, request, workspacePath } from './api';
 import { backendCapabilities } from './backend-capabilities';
 import { sessionConnections } from './session-connection';
 import { createSessionStream, type SessionStreamState } from './session-stream';
@@ -17,6 +17,8 @@ import { applyCommand, matchCommands, moveHighlight, slashQuery, unsupportedComm
 import { MarkdownContent } from './MarkdownContent';
 import { handoffArrivals, handoffTranscript } from './handoff';
 import { messageQueue } from './message-queue';
+import { attachedImagePaths } from './chat-model';
+import { openLightbox } from './image-lightbox';
 import { toolRuns, toolRunNames, toolRunStatus, type ToolRun } from './tool-runs';
 import { mentionQuery, applyMention } from './file-mentions';
 import { createFileSearch } from './file-search';
@@ -52,6 +54,8 @@ const draft = computed(() => reactive((isPreview.value ? previewDrafts : chatDra
 const view = computed(() => conversationView(events.value, running.value));
 /** Tool calls made back to back read as one card; see tool-runs.ts. */
 const displayItems = computed(() => toolRuns(view.value.items));
+/** Images load from this session's workspace, through the server, and nowhere else. */
+const workspaceImage = (path: string) => assetUrl(props.session.workspace_id, path);
 /** While a run is going, its summary names the call in progress. */
 function runningLine(run: ToolRun) {
   const current = [...run.tools].reverse().find(tool => tool.status === 'running');
@@ -798,7 +802,7 @@ function keydown(event: KeyboardEvent) {
       <p v-if="truncated" class="chat-history-notice">{{ t('Earlier display history was trimmed. Native history remains managed by the official client.') }}</p>
       <div v-if="!view.items.length" class="chat-welcome"><span class="chat-welcome-mark"><ProviderIcon :provider="session.provider" :size="32" /></span><h3>{{ t('What shall we build?') }}</h3><p>{{ t('A real conversation with your native agent, with room for tools, changes and your next idea.') }}</p><span class="chat-context-chip" :title="activeProfile?(activeProfile.native_config?t('Uses the sign-in and settings in {path}',{path:activeProfile.native_config.config_dir}):undefined):t('A fresh, empty client home: no host sign-in or settings, so it may ask you to log in.')"><ProviderIcon :provider="session.provider" :size="12"/>{{ endpointName }}</span><Transition name="chat-boot" :duration="240"><p v-if="booting" class="chat-boot" role="status"><span class="chat-boot-bar"><i/></span>{{ t('Starting {provider}… models and commands arrive with it.',{provider:providerLabel(session.provider)}) }}</p></Transition><div v-if="startersAvailable" class="chat-starters"><button v-for="(starter,index) in STARTERS" :key="starter.title" type="button" :style="{'--starter-delay':index*60+'ms'}" @click="useStarter(starter.prompt)"><span class="chat-starter-icon" :data-tone="starter.icon"><Icon :name="starter.icon" :size="16"/></span><span><strong>{{ t(starter.title) }}</strong><small>{{ t(starter.note) }}</small></span></button></div><p v-if="session.provider==='claude_code'" class="chat-trust-note">{{ t('Claude headless mode skips the interactive workspace-trust prompt. Send messages only for directories you trust; supported tool approvals still come from the native client.') }}</p></div>
       <template v-for="(item,index) in displayItems" :key="item.type+':'+index+':'+item.id">
-        <article v-if="item.type==='message'" :class="['chat-message',item.role]"><div class="chat-message-label"><ProviderIcon v-if="item.role==='assistant'" :provider="session.provider" :size="15" /><span>{{ item.role==='user'?t('You'):providerLabel(session.provider) }}</span></div><MarkdownContent :text="item.text" /></article>
+        <article v-if="item.type==='message'" :class="['chat-message',item.role]"><div class="chat-message-label"><ProviderIcon v-if="item.role==='assistant'" :provider="session.provider" :size="15" /><span>{{ item.role==='user'?t('You'):providerLabel(session.provider) }}</span></div><div v-if="item.role==='user'&&attachedImagePaths(item.text).length" class="chat-attached-images"><img v-for="path in attachedImagePaths(item.text)" :key="path" :src="workspaceImage(path)" :alt="path" :title="path" loading="lazy" @click="openLightbox(workspaceImage(path), path)" /></div><MarkdownContent :text="item.text" :image-url="workspaceImage" /></article>
         <component :is="item.type==='tool_run'&&item.tools.length>1?'details':'div'" v-else-if="item.type==='tool_run'" :class="item.tools.length>1?['chat-tool-run',toolRunStatus(item)]:'chat-tool-solo'"><summary v-if="item.tools.length>1"><span :class="['tool-indicator',toolRunStatus(item)]">{{ toolRunStatus(item)==='completed'?'✓':toolRunStatus(item)==='failed'?'!':'↻' }}</span><strong>{{ t('{count} tool calls',{count:item.tools.length}) }}</strong><small>{{ toolRunStatus(item)==='running' ? runningLine(item) : toolRunNames(item) }}</small><Icon class="chat-tool-chevron" name="chevron" :size="14" /></summary><details v-for="tool in item.tools" :key="tool.id" class="chat-tool"><summary><span :class="['tool-indicator',tool.status]">{{ tool.status==='completed'?'✓':tool.status==='failed'?'!':'↻' }}</span><strong>{{ tool.name }}</strong><small>{{ tool.activity && tool.status==='running' ? lastLine(tool.activity) : t(tool.status==='running'?(running?'Working…':'Session ended'):tool.status==='failed'?'Failed':'Completed') }}</small><Icon class="chat-tool-chevron" name="chevron" :size="14" /></summary><pre v-if="tool.activity" class="tool-activity">{{ tool.activity }}</pre><pre v-if="tool.text">{{ tool.text }}</pre><p v-else-if="!tool.activity">{{ t('The client did not provide tool output.') }}</p></details></component>
         <article v-else-if="item.type==='approval'" :class="['chat-approval',{resolved:item.resolved}]"><header><Icon name="info" :size="18" /><strong>{{ item.title }}</strong><span v-if="item.resolved">{{ t('Resolved') }}</span></header><MarkdownContent :text="item.text" /><template v-if="!item.resolved">
           <div v-for="question in item.questions" :key="question.id" class="chat-question"><label :for="'answer-'+session.id+'-'+item.id+'-'+question.id">{{ question.header }} {{ question.question }}</label>
@@ -1077,4 +1081,7 @@ function keydown(event: KeyboardEvent) {
 .chat-queued .chat-queued-remove{color:var(--muted);font-size:15px;line-height:1}
 .chat-queue-send{margin-left:auto;background:var(--violet)}
 .chat-queue-send+.chat-stop{margin-left:6px}
+
+.chat-attached-images{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+.chat-attached-images img{width:96px;height:72px;object-fit:cover;border-radius:8px;border:1px solid var(--teal-line);background:var(--surface);cursor:zoom-in}
 </style>

@@ -246,14 +246,21 @@ export function sessionConfigurationPayload(
   };
 }
 
-export type MarkdownInline = { type: 'text' | 'strong' | 'em' | 'code'; text: string } | { type: 'link'; text: string; href: string };
+export type MarkdownInline = { type: 'text' | 'strong' | 'em' | 'code'; text: string } | { type: 'link'; text: string; href: string } | { type: 'image'; alt: string; src: string };
 export type MarkdownBlock = { type: 'paragraph' | 'heading' | 'quote'; text: string; level?: number } | { type: 'code'; text: string; language: string } | { type: 'list'; ordered: boolean; items: string[] };
-/** No HTML, image loading or executable URL schemes. The renderer uses Vue text nodes. */
+/**
+ * No HTML or executable URL schemes. The renderer uses Vue text nodes.
+ *
+ * Images are parsed but only ever loaded from the workspace, through this
+ * server; whoever renders them decides that (see workspaceImagePath). A remote
+ * image in text a model wrote would otherwise make the browser fetch any URL
+ * it named.
+ */
 export function safeWebUrl(value: string): string | undefined {
   try { const url = new URL(value); return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url.href : undefined; } catch { return undefined; }
 }
 export function markdownInline(text: string): MarkdownInline[] {
-  const result: MarkdownInline[] = [], pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\*[^*\n]+\*|\[[^\]\n]+\]\([^\s)]+\))/g;
+  const result: MarkdownInline[] = [], pattern = /(`[^`\n]+`|!\[[^\]\n]*\]\([^\s)]+\)|\*\*[^*\n]+\*\*|\*[^*\n]+\*|\[[^\]\n]+\]\([^\s)]+\))/g;
   let cursor = 0;
   for (const match of text.matchAll(pattern)) {
     const start = match.index ?? 0, token = match[0];
@@ -261,6 +268,12 @@ export function markdownInline(text: string): MarkdownInline[] {
     if (token.startsWith('`')) result.push({ type: 'code', text: token.slice(1, -1) });
     else if (token.startsWith('**')) result.push({ type: 'strong', text: token.slice(2, -2) });
     else if (token.startsWith('*')) result.push({ type: 'em', text: token.slice(1, -1) });
+    else if (token.startsWith('![')) {
+      // Only a path inside the workspace becomes an image. A remote one is
+      // offered as a link to follow, never fetched on its own.
+      const bracket = token.indexOf(']('), alt = token.slice(2, bracket), src = token.slice(bracket + 2, -1), href = safeWebUrl(src);
+      result.push(isLocalImageReference(src) ? { type: 'image', alt, src } : href ? { type: 'link', text: alt || href, href } : { type: 'text', text: token });
+    }
     else {
       const bracket = token.indexOf(']('), href = safeWebUrl(token.slice(bracket + 2, -1));
       result.push(href ? { type: 'link', text: token.slice(1, bracket), href } : { type: 'text', text: token });
@@ -291,4 +304,37 @@ export function markdownBlocks(text: string): MarkdownBlock[] {
     blocks.push({ type: 'paragraph', text: body.join('\n') });
   }
   return blocks;
+}
+
+const IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i;
+/**
+ * A workspace-relative path for an image reference, or undefined when it is
+ * not one: a URL with a scheme, an absolute path, or one that climbs out of
+ * the workspace. `base` is the directory of the file it appears in, so
+ * `![](img/a.png)` in docs/readme.md means docs/img/a.png, as on GitHub.
+ */
+export function workspaceImagePath(src: string, base = ''): string | undefined {
+  let value = src.trim();
+  try { value = decodeURIComponent(value); } catch { return undefined; }
+  value = value.split(/[?#]/)[0];
+  if (!value || /^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith('//') || !IMAGE_EXTENSION.test(value)) return undefined;
+  const parts: string[] = [];
+  for (const part of (value.startsWith('/') ? value.slice(1) : `${base ? base + '/' : ''}${value}`).split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') { if (!parts.length) return undefined; parts.pop(); continue; }
+    parts.push(part);
+  }
+  return parts.length ? parts.join('/') : undefined;
+}
+/** A reference to an image on disk rather than on the web. Where it points is
+ * settled when rendering, against the file it appears in. */
+export function isLocalImageReference(src: string): boolean {
+  const value = src.trim().split(/[?#]/)[0];
+  return !!value && !/^[a-z][a-z0-9+.-]*:/i.test(value) && !value.startsWith('//') && IMAGE_EXTENSION.test(value);
+}
+/** Image files a message says it attached, from composeMessage's header. */
+export function attachedImagePaths(text: string): string[] {
+  const match = text.match(/^Attached files? in this workspace:\n((?:- .+\n?)+)/);
+  if (!match) return [];
+  return match[1].split('\n').map(line => line.replace(/^- /, '').trim()).filter(path => IMAGE_EXTENSION.test(path) && workspaceImagePath(path) === path);
 }

@@ -224,3 +224,6 @@ svg { flex-shrink: 0; vertical-align: middle; }
 @supports (scrollbar-width: thin) and (not selector(::-webkit-scrollbar)) {
   * { scrollbar-width: thin; scrollbar-color: #c3ccd3 transparent; }
 }
+
+/* Workspace images inside rendered markdown, in chat and in files alike. */
+.chat-inline-image { display: block; max-width: min(100%, 520px); max-height: 360px; margin: 8px 0; border-radius: 8px; border: 1px solid #e4e9ed; background: #fff; cursor: zoom-in; }
