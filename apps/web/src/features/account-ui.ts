@@ -201,3 +201,9 @@ export function untilLabel(ms: number): { soon: boolean; key: string; values: Re
   if (hours) return { soon: false, key: rest ? '{h}h {m}m' : '{h}h', values: { h: hours, m: rest } };
   return { soon: false, key: '{m}m', values: { m: rest } };
 }
+
+/** The window's name in the few characters a list row has room for. */
+export function quotaShortTitle(slot: 'primary' | 'secondary', limit?: AccountLimit): { key: string; values: Record<string, number> } {
+  const full = quotaWindowTitle(slot, limit);
+  return { key: ({ '5-hour window': '5h', 'Weekly window': 'Week', '{count}-day window': '{count}d', '{count}-hour window': '{count}h', 'Primary window': 'Main', 'Secondary window': 'Other' } as Record<string, string>)[full.key] ?? full.key, values: full.values };
+}
