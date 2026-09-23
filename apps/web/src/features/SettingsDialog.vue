@@ -46,7 +46,7 @@ function select(next: SettingsSection) { if (next !== section.value) leave(() =>
       </nav>
       <div class="settings-page">
         <AgentClientsPanel v-if="section==='agents'"/>
-        <ProfilesDialog v-else-if="section==='endpoints'" ref="profilesPage" embedded :profiles="profiles" @close="emit('close')" @changed="emit('changed', $event)"/>
+        <ProfilesDialog v-else-if="section==='endpoints'" ref="profilesPage" embedded :profiles="profiles" @close="emit('close')" @changed="emit('changed', $event)" @accounts="section='accounts'"/>
         <AccountsDialog v-else embedded @close="emit('close')" @changed="emit('changed', $event)"/>
       </div>
     </div>

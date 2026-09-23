@@ -170,3 +170,34 @@ export function createQuotaResetStore(uuid: () => string = randomId, storage?: R
   };
 }
 export const quotaResetAttempts = createQuotaResetStore(randomId, () => typeof window === 'undefined' ? undefined : window.sessionStorage, true);
+
+/** How close a window is to running out, for its colour: amber from 70%, red from 90%. */
+export function quotaLevel(percent?: number): 'ok' | 'warn' | 'danger' | 'unknown' {
+  if (percent === undefined) return 'unknown';
+  return percent >= 90 ? 'danger' : percent >= 70 ? 'warn' : 'ok';
+}
+
+/**
+ * The window's name as a person would say it. A known kind wins; otherwise an
+ * exact duration is named in days or hours rather than "10080 minutes", and a
+ * window that reported nothing keeps its native slot name.
+ */
+export function quotaWindowTitle(slot: 'primary' | 'secondary', limit?: AccountLimit): { key: string; values: Record<string, number> } {
+  if (limit?.window_kind === 'five_hour') return { key: '5-hour window', values: {} };
+  if (limit?.window_kind === 'weekly') return { key: 'Weekly window', values: {} };
+  const minutes = limit?.window_minutes;
+  if (minutes === 10080) return { key: 'Weekly window', values: {} };
+  if (minutes === 300) return { key: '5-hour window', values: {} };
+  if (minutes && minutes % 1440 === 0) return { key: '{count}-day window', values: { count: minutes / 1440 } };
+  if (minutes && minutes % 60 === 0) return { key: '{count}-hour window', values: { count: minutes / 60 } };
+  return { key: slot === 'primary' ? 'Primary window' : 'Secondary window', values: {} };
+}
+
+/** Time until a reset as a translation key and its values, coarsest units first. */
+export function untilLabel(ms: number): { soon: boolean; key: string; values: Record<string, number> } {
+  if (!Number.isFinite(ms) || ms < 60_000) return { soon: true, key: '', values: {} };
+  const minutes = Math.floor(ms / 60_000), days = Math.floor(minutes / 1440), hours = Math.floor((minutes % 1440) / 60), rest = minutes % 60;
+  if (days) return { soon: false, key: hours ? '{d}d {h}h' : '{d}d', values: { d: days, h: hours } };
+  if (hours) return { soon: false, key: rest ? '{h}h {m}m' : '{h}h', values: { h: hours, m: rest } };
+  return { soon: false, key: '{m}m', values: { m: rest } };
+}

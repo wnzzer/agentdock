@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
-import type { AgentProviderKind, EndpointProfile, ModelCatalog, NativeHistorySource } from "@agentdock/protocol";
+import type { AgentProviderKind, EndpointProfile, ModelCatalog } from "@agentdock/protocol";
 import { errorMessage, json, providerLabel, request } from "./api";
 import { parseModelAliases, formatModelAliases } from "./endpoint-models";
-import { isSameNativeSource, nativeProfileImportPayload, sharesHostConfig, nativeProfileRenamePayload, nativeProfileUpdatePayload, profileEnvironmentPayload, profileEnvironmentDraftChanged } from "./native-profiles";
+import { sharesHostConfig, nativeProfileRenamePayload, nativeProfileUpdatePayload, profileEnvironmentPayload, profileEnvironmentDraftChanged } from "./native-profiles";
 import { environmentRows, type EnvironmentRow } from "./environment-model";
 import EnvironmentEditor from "./EnvironmentEditor.vue";
-import { rememberProfileSelection } from "./profile-preferences";
 import { effortLabel, modelEfforts } from "./reasoning-effort";
 import { useI18n } from "../i18n";
 import { backendCapabilities } from "./backend-capabilities";
@@ -17,7 +16,7 @@ import ModelPicker from "./ModelPicker.vue";
 const { t } = useI18n();
 const props = defineProps<{ profiles: EndpointProfile[]; embedded?: boolean }>();
 const embedded = computed(() => props.embedded === true);
-const emit = defineEmits<{ close: []; changed: [profile?: EndpointProfile] }>();
+const emit = defineEmits<{ close: []; changed: [profile?: EndpointProfile]; accounts: [] }>();
 // The settings shell owns the outer close, so it needs this page's unsaved guard.
 defineExpose({ requestLeave: (action: () => void) => requestLeave(action) });
 const editing = ref<string>(), deleteId = ref<string>();
@@ -26,10 +25,6 @@ const editingProfile = computed(() => props.profiles.find(profile => profile.id 
 const editingNative = computed(() => editingProfile.value?.native_config);
 const editingManaged = computed(() => editingNative.value?.source_id.startsWith('account:'));
 const formVisible = ref(true), busy = ref(false), discovering = ref(false);
-const importVisible = ref(false), loadingSources = ref(false), sourcesLoaded = ref(false), sharedConfirmed = ref(false);
-const nativeSources = ref<NativeHistorySource[]>([]), nativeSourceId = ref(""), nativeName = ref("");
-const selectedSource = computed(() => nativeSources.value.find(source => source.id === nativeSourceId.value));
-const existingNativeProfile = computed(() => props.profiles.find(profile => isSameNativeSource(profile, selectedSource.value)));
 const error = ref(""), notice = ref(""), modelError = ref("");
 const models = ref<ModelCatalog>(), aliasesText = ref("");
 const environmentDraft = ref<EnvironmentRow[]>([]), initialEnvironment = ref<EnvironmentRow[]>([]);
@@ -44,10 +39,9 @@ const resolved = computed(() => aliases.value.value[form.model] ?? form.model);
 const choices = computed(() => [...Object.entries(aliases.value.value).map(([id, actual]) => ({id,name:id + " → " + actual})), ...(models.value?.models ?? [])]);
 const effortOptions = computed(() => modelEfforts(form.provider, resolved.value || undefined, models.value, form.effort));
 const canSave = computed(() => !!form.name.trim() && !environmentError.value && (!!editingNative.value || (secretValid.value && !aliases.value.error)));
-let discoveryRevision = 0, nativeRevision = 0, disposed = false;
+let discoveryRevision = 0;
 function resetDiscovery() { discoveryRevision++; models.value = undefined; modelError.value = ""; discovering.value = false; }
 watch(() => [form.provider, form.endpoint_url, form.proxy_url, form.secret_ref], resetDiscovery);
-watch(nativeSourceId, () => { sharedConfirmed.value = false; nativeName.value = existingNativeProfile.value?.name ?? selectedSource.value?.label ?? ""; }, { flush: "sync" });
 function payload(includeEnvironment = true) {
   if (editingNative.value) return includeEnvironment ? nativeProfileUpdatePayload(form.name, environmentDraft.value, backendCapabilities.environment, initialEnvironment.value) : nativeProfileRenamePayload(form.name);
   const environment = includeEnvironment ? profileEnvironmentPayload(environmentDraft.value, backendCapabilities.environment, initialEnvironment.value) : {};
@@ -67,13 +61,13 @@ function edit(p?: EndpointProfile) {
   pendingNavigation.value = undefined;
   environmentDraft.value = environmentRows(p?.environment);
   initialEnvironment.value = environmentDraft.value.map(row => ({ ...row }));
-  nativeRevision++;loadingSources.value=false;importVisible.value=false;sharedConfirmed.value=false;resetDiscovery();editingRecord.value=p;
+  resetDiscovery();editingRecord.value=p;
   editing.value=p?.id; formVisible.value=true; error.value=""; notice.value=""; deleteId.value=undefined;
   Object.assign(form,{name:p?.name??"",provider:p?.provider??"claude_code",endpoint_url:p?.endpoint_url??"",model:p?.model??"",effort:p?.effort??"",permission_mode:p?.permission_mode??"native",secret_ref:p?.secret_ref??"",proxy_url:p?.proxy_url??""});
   aliasesText.value=formatModelAliases(p?.model_aliases); models.value=undefined; modelError.value="";
 }
 async function discover() {
-  if (!backendCapabilities.models || editingNative.value || importVisible.value || discovering.value || !secretValid.value || aliases.value.error) return;
+  if (!backendCapabilities.models || editingNative.value || discovering.value || !secretValid.value || aliases.value.error) return;
   const revision=++discoveryRevision; discovering.value=true; modelError.value="";
   // Model discovery is not a child-process launch: never send draft environment
   // values or secret references to that endpoint.
@@ -96,33 +90,6 @@ async function remove(){
   try{await request("/endpoint-profiles/"+encodeURIComponent(id),json("DELETE"));deleteId.value=undefined;if(editing.value===id){formVisible.value=false;editing.value=undefined;editingRecord.value=undefined;}notice.value=native?"Profile reference removed. Native settings, credentials and history remain on the host.":"Profile deleted; no credentials were deleted from the host.";emit("changed");}
   catch(cause){error.value=errorMessage(cause);}finally{busy.value=false;}
 }
-async function loadNativeSources() {
-  const own=++nativeRevision;loadingSources.value=true;sourcesLoaded.value=false;error.value="";sharedConfirmed.value=false;nativeSources.value=[];nativeSourceId.value="";
-  try {
-    const sources=await request<NativeHistorySource[]>("/host/native-configurations");
-    if(disposed||own!==nativeRevision||!importVisible.value)return;
-    nativeSources.value=sources;sourcesLoaded.value=true;
-    nativeSourceId.value=sources.find(source=>source.available&&!props.profiles.some(profile=>isSameNativeSource(profile,source)))?.id??sources.find(source=>source.available)?.id??"";
-  }catch(cause){if(!disposed&&own===nativeRevision)error.value=errorMessage(cause);}
-  finally{if(!disposed&&own===nativeRevision)loadingSources.value=false;}
-}
-function openImport() {
-  if(busy.value||!backendCapabilities.nativeConfig)return;resetDiscovery();importVisible.value=true;formVisible.value=false;editing.value=undefined;editingRecord.value=undefined;deleteId.value=undefined;notice.value="";
-  void loadNativeSources();
-}
-function closeImport() {nativeRevision++;importVisible.value=false;loadingSources.value=false;sharedConfirmed.value=false;}
-async function importNative() {
-  const data=nativeProfileImportPayload(selectedSource.value,existingNativeProfile.value?"":nativeName.value,sharedConfirmed.value);
-  if(!data||busy.value||loadingSources.value)return;
-  busy.value=true;error.value="";notice.value="";
-  try {
-    const profile=await request<EndpointProfile>("/endpoint-profiles/import-native",json("POST",data));
-    if(disposed)return;
-    rememberProfileSelection(profile.provider,profile.id);
-    edit(profile);notice.value="Host configuration imported and selected for future new sessions in this browser. Existing sessions are unchanged.";emit("changed",profile);
-  }catch(cause){if(!disposed)error.value=errorMessage(cause);}
-  finally{if(!disposed)busy.value=false;}
-}
 /** One line per profile: the provider is already its icon, and the directory
  * is shown once the profile is opened. */
 function profileSummary(p: EndpointProfile) {
@@ -140,12 +107,11 @@ function cancelForm() {
 }
 // Open on something to read rather than on a blank page that asks for a click.
 if (props.profiles.length) edit(props.profiles[0]);
-onBeforeUnmount(()=>{disposed=true;nativeRevision++;discoveryRevision++;});
+onBeforeUnmount(()=>{discoveryRevision++;});
 </script>
 
 <template>
   <ModalDialog :title="t('Endpoint profiles')" wide :closable="!busy" :embedded="embedded" @close="requestLeave(() => emit('close'))">
-    <p v-if="!backendCapabilities.nativeConfig" class="inline-notice">{{ t('Native configuration import and history loading require an updated backend.') }}</p>
     <div class="profiles-layout">
       <section class="profiles-list">
         <button class="secondary-button" :disabled="busy" @click="requestLeave(() => edit())"><Icon name="plus" :size="14" />{{ t('New profile') }}</button>
@@ -154,26 +120,13 @@ onBeforeUnmount(()=>{disposed=true;nativeRevision++;discoveryRevision++;});
           <span><strong>{{ p.name }}</strong><small :class="{'shared-profile-label':!!p.native_config}">{{ profileSummary(p) }}</small></span>
         </button>
         <p v-if="!profiles.length" class="small-empty">{{ t('No profiles yet. Native, isolated sessions also work without one.') }}</p>
+        <p v-if="embedded" class="small-empty profiles-accounts-hint">{{ t('Already signed in to Claude Code or Codex on this host?') }} <button type="button" class="profiles-accounts-link" @click="requestLeave(() => emit('accounts'))">{{ t('Link it in Official accounts') }} →</button></p>
       </section>
       <div class="profile-details">
         <div v-if="notice" class="inline-success" role="status">{{ t(notice) }}</div>
         <div v-if="error" class="inline-error" role="alert">{{ error }}</div>
         <div v-if="pendingNavigation" class="confirmation-bar" role="alert">{{ t('Discard unsaved environment changes?') }}<div class="toolbar-buttons"><button type="button" class="small-button danger" @click="discardEnvironmentDraft">{{ t('Discard environment changes') }}</button><button type="button" class="small-button" @click="pendingNavigation=undefined">{{ t('Keep editing') }}</button></div></div>
-        <form v-if="importVisible" class="form-stack" @submit.prevent="importNative">
-          <h3>{{ t('Import existing configuration') }}</h3>
-          <p class="form-help">{{ t('Reuse the sign-in and settings of a Claude Code or Codex already set up on this host.') }}</p>
-          <div class="native-source-controls"><label>{{ t('Host configuration source') }}<select v-model="nativeSourceId" :disabled="busy||loadingSources"><option value="" disabled>{{ t('Select a host configuration') }}</option><option v-for="source in nativeSources" :key="source.id" :value="source.id" :disabled="!source.available">{{ source.label }} · {{ t(source.available?'Directory available':'Not found on this host') }}</option></select></label><button type="button" class="icon-button" :aria-label="t('Refresh host configurations')" :disabled="busy||loadingSources" @click="loadNativeSources"><Icon name="refresh" :size="16" /></button></div>
-          <p v-if="loadingSources" class="form-help" role="status">{{ t('Loading host configurations…') }}</p>
-          <p v-else-if="sourcesLoaded&&!nativeSources.some(source=>source.available)" class="form-help">{{ t('No usable native configuration directories were found. Configure the native client on this host, then refresh.') }}</p>
-          <template v-if="selectedSource">
-            <div class="shared-config-panel"><strong><ProviderIcon :provider="selectedSource.provider" :size="17" />{{ t('Host configuration · shared sign-in') }}</strong><code>{{ selectedSource.path }}</code></div>
-            <label>{{ t('Name') }}<input v-model="nativeName" :disabled="busy||!!existingNativeProfile" :placeholder="selectedSource.label" maxlength="120" /></label>
-            <p v-if="existingNativeProfile" class="form-help">{{ t('This source is already linked. Importing reuses the existing profile; you can rename it afterwards.') }}</p>
-            <div class="shared-config-consent"><p>{{ t('Sessions will share this directory with the host: its sign-in, model and permissions. AgentDock only references it and never copies or rewrites anything; the directory being there does not mean it is signed in.') }}</p><label><input v-model="sharedConfirmed" type="checkbox" :disabled="busy" />{{ t('I agree to reuse this shared host configuration for new sessions.') }}</label></div>
-          </template>
-          <div class="dialog-actions"><button type="button" class="secondary-button" :disabled="busy" @click="closeImport">{{ t('Cancel') }}</button><button class="primary-button" :disabled="busy||loadingSources||!selectedSource?.available||!sharedConfirmed">{{ t(busy?'Importing…':'Import configuration') }}</button></div>
-        </form>
-        <form v-else-if="formVisible" class="form-stack" @submit.prevent="save">
+        <form v-if="formVisible" class="form-stack" @submit.prevent="save">
           <h3>{{ editing ? t('Edit profile') : t('Create profile') }}</h3>
           <div class="form-columns">
             <label>{{ t('Name') }}<input v-model="form.name" required :disabled="busy" :placeholder="t('Personal {client}', { client: providerLabel(form.provider) })" maxlength="120" /></label>
@@ -214,7 +167,7 @@ onBeforeUnmount(()=>{disposed=true;nativeRevision++;discoveryRevision++;});
 <style scoped>
 .model-fetch {display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid #e7ecef;padding-top:12px;}
 .model-fetch strong {font-size:12px;}.model-effective {margin:0;color:#087e73;font-size:12px;}.form-help {overflow-wrap:anywhere;}
-.native-import-button{background:#eef8f4;border-color:#cfe6dd;color:#247f6e}.native-source-controls{display:flex;align-items:end;gap:8px}.native-source-controls>label{flex:1;min-width:0}.native-source-controls>.icon-button{margin-bottom:5px}.shared-config-panel{border:1px solid #d9e9e3;border-radius:8px;background:#f5fbf8;padding:12px}.shared-config-panel>strong{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:550;color:#3d8071}.shared-config-panel>code{display:block;margin-top:8px;font-size:10px;overflow-wrap:anywhere;color:#567e78}.shared-config-panel p{font-size:10px;line-height:18px;color:#6e8584;margin-top:8px}.shared-config-consent{padding:12px;border:1px solid #ece4c8;border-radius:8px;background:#fffaf0}.shared-config-consent p{font-size:10px;line-height:18px;color:#837e66;margin:0 0 8px}.shared-config-consent>label{flex-direction:row;align-items:flex-start;gap:8px;line-height:17px;color:#626b5b}.shared-config-consent input{width:14px;height:14px;margin-top:2px;flex-shrink:0;accent-color:#258672}.profile-card .shared-profile-label{color:#478b7d}.profile-card .profile-path{max-width:143px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#98aaa6}
+.shared-config-panel{border:1px solid #d9e9e3;border-radius:8px;background:#f5fbf8;padding:12px}.shared-config-panel>strong{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:550;color:#3d8071}.shared-config-panel>code{display:block;margin-top:8px;font-size:10px;overflow-wrap:anywhere;color:#567e78}.shared-config-panel p{font-size:10px;line-height:18px;color:#6e8584;margin-top:8px}.shared-config-consent{padding:12px;border:1px solid #ece4c8;border-radius:8px;background:#fffaf0}.shared-config-consent p{font-size:10px;line-height:18px;color:#837e66;margin:0 0 8px}.shared-config-consent>label{flex-direction:row;align-items:flex-start;gap:8px;line-height:17px;color:#626b5b}.shared-config-consent input{width:14px;height:14px;margin-top:2px;flex-shrink:0;accent-color:#258672}.profile-card .shared-profile-label{color:#478b7d}.profile-card .profile-path{max-width:143px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#98aaa6}
 
 /* Settings-page type scale: the shared form styles run from 8px to 11px in a
    pale grey, which read as faint rather than calm at this density. */
@@ -225,6 +178,9 @@ onBeforeUnmount(()=>{disposed=true;nativeRevision++;discoveryRevision++;});
 .profile-card small{font-size:10.5px;line-height:15px;color:var(--muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .profile-card>span:last-child{flex:1}
 .profiles-list>.secondary-button{font-size:12px;min-height:36px}
+.profiles-accounts-hint{margin-top:14px;font-size:11px;line-height:1.6;color:var(--muted);text-align:left}
+.profiles-accounts-link{border:0;background:none;padding:0;font:inherit;color:var(--teal);cursor:pointer}
+.profiles-accounts-link:hover{text-decoration:underline}
 .form-stack{gap:14px}
 .form-stack>h3{font-size:14px;font-weight:600;color:var(--ink)}
 .form-stack label{font-size:11.5px;color:var(--ink-soft)}

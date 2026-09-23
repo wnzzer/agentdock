@@ -115,8 +115,22 @@ test('each confirmation is a sibling of the buttons that open it, not nested in 
   for (const action of ['logout', 'reset', 'remove']) {
     assert.match(source, new RegExp(`<section v-if="confirmAction==='${action}'" class="account-confirm">`), action);
   }
-  assert.match(source, /<progress v-if="accountLimitPercent[^/]*\/><div v-else class="account-no-meter" \/>/);
+  // Each window is its own meter component, which holds nothing but the meter.
+  assert.match(source, /<QuotaMeter v-for="slot in \(\['primary','secondary'\] as const\)"/);
   // The confirmation is the only way to reach the request, so it has to be
   // wired to it: setting the state alone is what made the button do nothing.
   assert.match(source, /@click="removeAccount"/);
+});
+
+test('quota windows read as people say them, and colour as they run down', async () => {
+  const { quotaLevel, quotaWindowTitle, untilLabel } = await import('./account-ui.ts');
+  assert.equal(quotaLevel(), 'unknown'); assert.equal(quotaLevel(37), 'ok'); assert.equal(quotaLevel(70), 'warn'); assert.equal(quotaLevel(95), 'danger');
+  assert.equal(quotaWindowTitle('primary', { used_percent: 1, window_kind: 'five_hour' }).key, '5-hour window');
+  assert.equal(quotaWindowTitle('secondary', { used_percent: 1, window_minutes: 10080 }).key, 'Weekly window');
+  assert.deepEqual(quotaWindowTitle('secondary', { used_percent: 1, window_minutes: 2880 }), { key: '{count}-day window', values: { count: 2 } });
+  assert.equal(quotaWindowTitle('primary', { used_percent: 1, window_minutes: 7 }).key, 'Primary window');
+  assert.deepEqual(untilLabel(30_000), { soon: true, key: '', values: {} });
+  assert.deepEqual(untilLabel((2 * 60 + 18) * 60_000), { soon: false, key: '{h}h {m}m', values: { h: 2, m: 18 } });
+  assert.deepEqual(untilLabel((3 * 1440 + 5 * 60 + 9) * 60_000), { soon: false, key: '{d}d {h}h', values: { d: 3, h: 5 } });
+  assert.deepEqual(untilLabel(45 * 60_000), { soon: false, key: '{m}m', values: { m: 45 } });
 });
