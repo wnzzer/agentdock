@@ -354,6 +354,50 @@ pub async fn read_file(root: &Path, path: &str) -> Result<TextFile, IoError> {
     .map_err(|error| IoError::new(500, format!("file read task failed: {error}")))?
 }
 
+/// Read-only text of a file outside every workspace, for a path an agent
+/// mentioned. Held to the same boundary as the folder picker -- inside a
+/// browsing root -- and the same refusals as workspace reads: protected
+/// names, non-text, and anything over the size limit.
+pub async fn read_host_file(roots: &[PathBuf], path: &str) -> Result<TextFile, IoError> {
+    let roots = roots.to_vec();
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let requested = Path::new(&path);
+        if !requested.is_absolute() {
+            return Err(IoError::new(400, "an absolute path is required"));
+        }
+        let target = fs::canonicalize(requested).map_err(IoError::from)?;
+        let root = roots
+            .iter()
+            .find(|root| target.starts_with(root))
+            .ok_or_else(|| IoError::new(403, "path is outside the folders AgentDock may browse"))?;
+        let rel = target.strip_prefix(root).unwrap_or(&target);
+        if is_protected_path(rel) {
+            return Err(IoError::new(403, "protected path"));
+        }
+        let metadata = fs::metadata(&target).map_err(IoError::from)?;
+        if !metadata.is_file() {
+            return Err(IoError::new(400, "path is not a file"));
+        }
+        if metadata.len() > MAX_TEXT_BYTES {
+            return Err(IoError::new(413, "text file exceeds 2 MiB limit"));
+        }
+        let bytes = fs::read(&target).map_err(IoError::from)?;
+        if bytes.len() as u64 > MAX_TEXT_BYTES {
+            return Err(IoError::new(413, "text file exceeds 2 MiB limit"));
+        }
+        let content = String::from_utf8(bytes.clone())
+            .map_err(|_| IoError::new(415, "file is not valid UTF-8"))?;
+        Ok(TextFile {
+            path: target.to_string_lossy().into_owned(),
+            content,
+            version: hash_version(&bytes),
+        })
+    })
+    .await
+    .map_err(|error| IoError::new(500, format!("file read task failed: {error}")))?
+}
+
 pub async fn write_file(
     root: &Path,
     path: &str,
@@ -1841,5 +1885,35 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.status, 403);
+    }
+    #[tokio::test]
+    async fn host_files_are_read_only_inside_the_browsing_roots() {
+        let base = std::env::temp_dir().join(format!("agentdock-host-{}", uuid::Uuid::new_v4()));
+        let root = base.join("root");
+        fs::create_dir_all(root.join(".ssh")).unwrap();
+        fs::write(root.join("notes.md"), "# notes\n").unwrap();
+        fs::write(root.join(".ssh/id"), "secret").unwrap();
+        fs::write(base.join("outside.txt"), "outside").unwrap();
+        let roots = vec![fs::canonicalize(&root).unwrap()];
+        let file = read_host_file(&roots, root.join("notes.md").to_str().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(file.content, "# notes\n");
+        for (path, status) in [
+            (root.join(".ssh/id"), 403),
+            (base.join("outside.txt"), 403),
+            (root.join("missing.md"), 404),
+            (root.clone(), 400),
+        ] {
+            let error = read_host_file(&roots, path.to_str().unwrap())
+                .await
+                .unwrap_err();
+            assert_eq!(error.status, status, "{}", path.display());
+        }
+        assert_eq!(
+            read_host_file(&roots, "notes.md").await.unwrap_err().status,
+            400
+        );
+        fs::remove_dir_all(base).unwrap();
     }
 }

@@ -65,6 +65,8 @@ export const zhCN: Readonly<Record<string, string>> = {
   "{branch} has commits not merged anywhere else. Deleting it anyway loses them.": "{branch} 有尚未合并到其他分支的提交，强制删除会丢失它们。",
   "Delete branch {branch}?": "删除分支 {branch}？",
   "Delete anyway": "仍然删除",
+  "Read-only · outside every workspace": "只读 · 不在任何工作区内",
+  "Add folder as workspace": "把所在文件夹添加为工作区",
   "Agent is working — Enter steers it, ⌥/Alt+Enter queues for after": "Agent 正在工作 — Enter 引导它，⌥/Alt+Enter 排到这轮之后",
   "Hand this to the running turn; the agent reads it at its next step": "交给正在进行的这一轮，agent 下一步就会读到",
   "Steer": "引导",

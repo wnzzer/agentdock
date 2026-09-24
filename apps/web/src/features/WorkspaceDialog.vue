@@ -20,6 +20,7 @@ interface DirectoryListing {
 }
 
 const { t } = useI18n();
+const props = defineProps<{ initialPath?: string }>();
 const emit = defineEmits<{ close: []; created: [workspace: Workspace] }>();
 const name = ref(""), path = ref(""), error = ref(""), busy = ref(false);
 const listing = ref<DirectoryListing | null>(null);
@@ -101,6 +102,8 @@ async function create() {
 
 onMounted(() => {
   if (backendCapabilities.directories) void browse(); else advanced.value = true;
+  // Opened for a folder already known -- the one holding a file an agent named.
+  if (props.initialPath) selectDirectory(props.initialPath);
   void request<Workspace[]>("/workspaces").then(workspaces => {
     if (alive) recent.value = workspaces;
   }).catch(() => { /* Existing workspaces are a convenience; browsing remains available. */ });

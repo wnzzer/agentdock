@@ -591,6 +591,7 @@ fn router(state: AppState) -> Router {
             get(canvas::get_layout).put(canvas::save_layout),
         )
         .route("/api/host/directories", get(browse_directories))
+        .route("/api/host/file", get(read_host_file))
         .route(
             "/api/host/native-configurations",
             get(native_configuration_sources),
@@ -759,6 +760,19 @@ async fn health() -> Json<Value> {
 struct DirectoryQuery {
     root: Option<String>,
     path: Option<String>,
+}
+/// A file an agent mentioned outside every workspace, read-only.
+async fn read_host_file(
+    State(state): State<AppState>,
+    Query(q): Query<PathQuery>,
+) -> Result<Json<workspace_io::TextFile>> {
+    let path = q
+        .path
+        .as_deref()
+        .ok_or_else(|| ApiError::bad("Path required"))?;
+    Ok(Json(
+        workspace_io::read_host_file(&state.browse_roots, path).await?,
+    ))
 }
 async fn browse_directories(
     State(state): State<AppState>,

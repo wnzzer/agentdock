@@ -10,6 +10,7 @@ import FileExplorer from "./features/FileExplorer.vue";
 import LoadHistoryDialog from "./features/LoadHistoryDialog.vue";
 import WorkspaceDialog from "./features/WorkspaceDialog.vue";
 import SettingsDialog from "./features/SettingsDialog.vue";
+import HostFilePreview from "./features/HostFilePreview.vue";
 import HostUsage from "./features/HostUsage.vue";
 import { requestJump } from "./features/file-jumps";
 import WorkspaceBranchMenu from "./features/WorkspaceBranchMenu.vue";
@@ -59,7 +60,9 @@ const sidebarOpen = ref(false), loading = ref(true), apiOnline = ref(false), err
 const connectionError = ref(""), refreshingResources = ref(false);
 const visibleError = computed(() => error.value || connectionError.value);
 const platform = ref<string>(), instanceLabel = ref<string>(), serverVersion = ref<string>();
-const showWorkspace = ref(false), showAuth = ref(false);
+const showWorkspace = ref(false), showAuth = ref(false), workspaceInitialPath = ref<string>();
+/** A file an agent named outside every workspace, shown read-only. */
+const hostPreview = ref<{ path: string; line?: number }>();
 const settingsSection = ref<'preferences' | 'agents' | 'endpoints' | 'accounts'>();
 const archiveBusyIds = ref<string[]>([]), keepBusyIds = ref<string[]>([]), deleteBusyIds = ref<string[]>([]), quickBusy = ref(false);
 const ephemeralIds = computed(() => ephemeralSessionIds(sessions.value));
@@ -408,8 +411,19 @@ async function openReference(id: string, reference: { path: string; line?: numbe
   const workspace = workspaces.value.find(item => item.id === id); if (!workspace) return;
   let path = reference.path.replace(/^\.\//, '');
   if (path.startsWith('/')) {
-    const base = [workspace.root_path, reference.checkout].find(root => root && path.startsWith(root.replace(/\/$/, '') + '/'));
-    if (!base) { error.value = t('{path} is outside this workspace.', { path }); return; }
+    const inside = (root?: string | null) => !!root && path.startsWith(root.replace(/\/$/, '') + '/');
+    const base = [workspace.root_path, reference.checkout].find(inside);
+    if (!base) {
+      // Another workspace holds it: open it there. Otherwise it is shown
+      // read-only rather than refused -- the agent named it for a reason.
+      const other = workspaces.value.filter(item => inside(item.root_path)).sort((a, b) => b.root_path.length - a.root_path.length)[0];
+      if (other) {
+        const relative = path.slice(other.root_path.replace(/\/$/, '').length + 1);
+        if (reference.line) requestJump(other.id, relative, reference.line);
+        openFile(other.id, relative); return;
+      }
+      hostPreview.value = { path, line: reference.line }; return;
+    }
     path = path.slice(base.replace(/\/$/, '').length + 1);
   } else if (!path.includes('/')) {
     try {
@@ -648,7 +662,8 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
     </div>
     <footer class="statusbar"><span :title="contextWorkspace?.root_path"><Icon name="git" :size="13"/>{{ contextWorkspace?.name || t('No workspace') }} · <WorkspaceBranchMenu v-if="contextWorkspace&&currentGitAvailable" :workspace-id="contextWorkspace.id" :branch="currentGit.branch" @switched="branchSwitched(contextWorkspace.id)" @changed="branchSwitched(contextWorkspace.id)" /><template v-else>{{ t('Git unavailable') }}</template></span><button v-if="contextWorkspace" @click="openChanges(contextWorkspace.id)">{{ currentGitAvailable?t('{count} changes',{count:currentGit.files.length}):t('Changes') }}</button><span v-if="currentGit.ahead!==undefined">↑ {{ currentGit.ahead }}</span><span v-if="currentGit.behind!==undefined">↓ {{ currentGit.behind }}</span><span class="flex-spacer"/><span v-if="canvasReady" :class="{'danger-text':['Save failed','Save conflict','Memory only'].includes(layoutStatus)}">{{ t('Layout {status}',{status:t(layoutStatus)}) }}</span><HostUsage :sessions="sessions" /><span class="status-agent-count"><i :class="['state-dot',activeSessions.length?'running':'stopped']"/>{{ t('{count} active sessions',{count:activeSessions.length}) }}</span></footer>
   </div>
-  <WorkspaceDialog v-if="showWorkspace" @close="showWorkspace=false" @created="workspaceCreated"/>
+  <WorkspaceDialog v-if="showWorkspace" :initial-path="workspaceInitialPath" @close="showWorkspace=false;workspaceInitialPath=undefined" @created="workspaceCreated"/>
+  <HostFilePreview v-if="hostPreview" :key="hostPreview.path" :path="hostPreview.path" :line="hostPreview.line" @close="hostPreview=undefined" @add-workspace="folder=>{hostPreview=undefined;workspaceInitialPath=folder;showWorkspace=true}"/>
   <ImageLightbox />
   <SettingsDialog v-if="settingsSection" :profiles="profiles" :initial-section="settingsSection" @close="settingsSection=undefined" @changed="refreshProfiles"/>
   <CreateSessionDialog v-if="sessionWorkspace" :workspace="sessionWorkspace" :profiles="profiles" :initial-provider="sessionProvider" @close="sessionWorkspaceId=undefined" @created="sessionCreated" @profiles="sessionWorkspaceId=undefined;settingsSection='endpoints'"/>
