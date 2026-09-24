@@ -280,6 +280,24 @@ async fn workspace_file_git_layout_workflow() {
     assert_eq!(moved["checkout_path"].as_str(), Some(tree_path.as_str()));
     assert_eq!(moved["checkout_branch"], "feature/tree");
     assert_eq!(moved["configuration_revision"], 1, "a new native context");
+    // A branch renamed inside its worktree is followed: the session keeps its
+    // directory and shows the new name.
+    assert!(
+        std::process::Command::new("git")
+            .args(["branch", "-m", "feature/tree", "feature/renamed"])
+            .current_dir(f.path.join("repo"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    call(f.app(), "GET", &format!("{base}/git/branches"), Value::Null).await;
+    let (_, renamed) = call(f.app(), "GET", &format!("/api/sessions/{sid}"), Value::Null).await;
+    assert_eq!(renamed["checkout_branch"], "feature/renamed");
+    assert_eq!(renamed["checkout_path"].as_str(), Some(tree_path.as_str()));
+    assert_eq!(
+        renamed["configuration_revision"], 1,
+        "a label, not a new context"
+    );
     // Choosing the workspace's own branch brings it back to the workspace.
     let (_, home) = call(f.app(), "GET", &format!("{base}/git/branches"), Value::Null).await;
     let current = home["current"].as_str().unwrap().to_owned();

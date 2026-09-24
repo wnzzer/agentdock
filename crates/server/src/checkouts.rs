@@ -122,6 +122,36 @@ pub async fn resolve(
     })
 }
 
+/// Bring the branch each session in this workspace shows back in line with
+/// what its worktree has checked out. The path is what binds a session; the
+/// branch is a label recorded when it was chosen, and a branch renamed or
+/// switched inside the worktree afterwards would otherwise leave it stale.
+pub async fn refresh_labels(
+    state: &AppState,
+    workspace_id: WorkspaceId,
+    listed: &workspace_io::GitBranches,
+) {
+    let actual: Vec<(String, Option<String>)> = listed
+        .worktrees
+        .iter()
+        .map(|w| (w.path.clone(), w.branch.clone()))
+        .collect();
+    let _ = db(state, move |s| {
+        for session in s.list_sessions(Some(workspace_id))? {
+            let Some(path) = session.checkout_path.as_deref() else {
+                continue;
+            };
+            if let Some((_, branch)) = actual.iter().find(|(p, _)| p == path)
+                && branch.as_deref() != session.checkout_branch.as_deref()
+            {
+                s.set_session_checkout_branch(session.id, branch.as_deref())?;
+            }
+        }
+        Ok(())
+    })
+    .await;
+}
+
 /// The directory a session's client starts in.
 ///
 /// A recorded checkout is used only while it is still a worktree of the

@@ -88,5 +88,6 @@ function toggle() { open.value = !open.value; if (open.value) { if (timer) clear
 .host-usage-figure{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink-soft)}
 .host-usage-empty{margin:6px 0;color:var(--muted)}
 .host-usage-note{display:block;margin-top:8px;font-size:10px;color:var(--muted)}
+@media(max-width:520px){.host-usage-chip{gap:8px}.host-meter i{display:none}.host-meter{white-space:nowrap}}
 @media(prefers-reduced-motion:reduce){.host-meter i::after{transition:none}}
 </style>

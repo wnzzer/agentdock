@@ -247,3 +247,8 @@ svg { flex-shrink: 0; vertical-align: middle; }
 .chat-table td + td, .chat-table th + th { border-left: 1px solid #eef2f4; }
 .chat-table tbody tr:nth-child(even) td { background: #fbfcfd; }
 .chat-table td:first-child { min-width: 7em; }
+
+/* Narrow status bar: numbers, not captions and meters. */
+@media (max-width: 520px) {
+  .statusbar > span:has(+ .host-usage) { display: none; }
+}

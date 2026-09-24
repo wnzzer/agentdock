@@ -252,6 +252,15 @@ impl Store {
             [id.to_string()],
         )? > 0)
     }
+    /// Update only the branch label of a session's checkout; the path it is
+    /// bound to, and its native context, are unchanged.
+    pub fn set_session_checkout_branch(&self, id: SessionId, branch: Option<&str>) -> Result<()> {
+        self.connection.lock().expect("sqlite lock").execute(
+            "UPDATE sessions SET checkout_branch=?1 WHERE id=?2 AND checkout_path IS NOT NULL",
+            params![branch, id.to_string()],
+        )?;
+        Ok(())
+    }
     /// Promote a temporary session to a permanent one. One-way on purpose.
     pub fn keep_session(&self, id: SessionId) -> Result<Option<Session>> {
         let mut conn = self.connection.lock().expect("sqlite lock");

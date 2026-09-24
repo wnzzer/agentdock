@@ -1755,9 +1755,9 @@ async fn git_branches(
     State(state): State<AppState>,
     Path(id): Path<WorkspaceId>,
 ) -> Result<Json<workspace_io::GitBranches>> {
-    Ok(Json(
-        workspace_io::git_branches(&root(&state, id).await?).await?,
-    ))
+    let listed = workspace_io::git_branches(&root(&state, id).await?).await?;
+    checkouts::refresh_labels(&state, id, &listed).await;
+    Ok(Json(listed))
 }
 /// Switching branches rewrites the files under every session working in this
 /// checkout, so it waits until none of them is running: an agent halfway
