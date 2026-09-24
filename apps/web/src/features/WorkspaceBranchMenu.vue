@@ -111,7 +111,7 @@ onBeforeUnmount(close);
 </script>
 
 <template>
-  <button ref="anchor" type="button" :class="['ws-branch', { compact }]" :aria-expanded="open" :title="t('Branch of the workspace directory · click to switch')" @click.stop="toggle">
+  <button ref="anchor" type="button" :class="['ws-branch', { compact }]" :aria-expanded="open" :title="t('Branch of the workspace directory · click to switch')" @click.stop="toggle" @contextmenu.prevent.stop="open || toggle()">
     <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><path d="M5 3v7M5 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm0-7a2 2 0 1 0 0-.01M11 5a2 2 0 1 0 0-.01M11 7c0 2-2 3-6 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
     <span>{{ branch || t('Detached HEAD') }}</span>
   </button>
@@ -192,7 +192,7 @@ onBeforeUnmount(close);
 /* One set of buttons for the whole menu: neutral by default, filled only to
    commit a form, red only for what destroys something. */
 .ws-btn{height:28px;padding:0 10px;border:1px solid var(--line);border-radius:7px;background:var(--surface);font-size:11px;color:var(--ink-soft);cursor:pointer;white-space:nowrap}
-.ws-btn:hover:not(:disabled){background:var(--sunken);color:var(--ink)}
+.ws-btn:hover:not(:disabled){background:var(--fill);color:var(--ink)}
 .ws-btn:disabled{opacity:.45;cursor:not-allowed}
 .ws-btn.primary{background:var(--teal);border-color:var(--teal);color:#fff}
 .ws-btn.primary:hover:not(:disabled){background:var(--teal-deep);color:#fff}
@@ -201,7 +201,7 @@ onBeforeUnmount(close);
 .ws-btn.danger.solid{background:var(--danger);border-color:var(--danger);color:#fff}
 .ws-btn.danger.solid:hover:not(:disabled){background:var(--danger-ink);color:#fff}
 .ws-btn.quiet{border-color:transparent;background:none}
-.ws-btn.quiet:hover:not(:disabled){background:var(--sunken)}
+.ws-btn.quiet:hover:not(:disabled){background:var(--fill)}
 .ws-confirm{flex-basis:100%;margin:2px 6px 8px;padding:8px 10px;border:1px solid #f1dfe4;border-radius:8px;background:#fff7f8}
 .ws-confirm p{margin:0 0 8px;font-size:11px;line-height:1.5;color:var(--danger-ink)}
 .ws-confirm div{display:flex;gap:6px}

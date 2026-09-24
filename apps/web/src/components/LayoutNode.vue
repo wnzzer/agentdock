@@ -314,7 +314,7 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
 .dock-tab-menu-backdrop{position:fixed;inset:0;z-index:60}
 .dock-tab-menu{position:fixed;min-width:180px;padding:5px;background:var(--surface);border:1px solid var(--border);border-radius:11px;box-shadow:0 14px 38px #243b4c2b}
 .dock-tab-menu button{display:block;width:100%;min-height:32px;padding:7px 10px;border:0;border-radius:7px;background:none;text-align:left;font-size:12px;color:var(--ink-soft);white-space:nowrap;cursor:pointer}
-.dock-tab-menu button:hover:not(:disabled){background:var(--teal-soft);color:var(--teal)}
+.dock-tab-menu button:hover:not(:disabled){background:var(--fill);color:var(--ink)}
 .dock-tab-menu button:disabled{opacity:.4;cursor:not-allowed}
 .dock-tab-menu hr{border:0;border-top:1px solid var(--border);margin:4px 6px}
 @media(pointer:coarse){.dock-tab-menu button{min-height:44px}}

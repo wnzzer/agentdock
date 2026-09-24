@@ -456,7 +456,7 @@ defineExpose({ reveal });
 .tree-menu-backdrop{position:fixed;inset:0;z-index:60}
 .tree-menu{position:fixed;min-width:198px;padding:5px;background:var(--surface);border:1px solid var(--border);border-radius:11px;box-shadow:0 14px 38px #243b4c2b}
 .tree-menu button{display:block;width:100%;min-height:32px;padding:7px 10px;border:0;border-radius:7px;background:none;text-align:left;font-size:12px;color:var(--ink-soft);white-space:nowrap;cursor:pointer}
-.tree-menu button:hover:not(:disabled){background:var(--teal-soft);color:var(--teal)}
+.tree-menu button:hover:not(:disabled){background:var(--fill);color:var(--ink)}
 .tree-menu button:disabled{opacity:.5;cursor:not-allowed}
 .tree-menu hr{border:0;border-top:1px solid var(--border);margin:4px 6px}
 .tree-menu-danger{color:var(--danger-ink)}
