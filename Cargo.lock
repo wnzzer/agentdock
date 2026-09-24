@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "agentdock-domain"
-version = "0.1.24"
+version = "0.1.25"
 dependencies = [
  "chrono",
  "serde",
@@ -15,7 +15,7 @@ dependencies = [
 
 [[package]]
 name = "agentdock-persistence"
-version = "0.1.24"
+version = "0.1.25"
 dependencies = [
  "agentdock-domain",
  "chrono",
@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "agentdock-runtime"
-version = "0.1.24"
+version = "0.1.25"
 dependencies = [
  "libc",
  "portable-pty",
@@ -38,7 +38,7 @@ dependencies = [
 
 [[package]]
 name = "agentdock-server"
-version = "0.1.24"
+version = "0.1.25"
 dependencies = [
  "agentdock-domain",
  "agentdock-persistence",
