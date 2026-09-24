@@ -448,6 +448,13 @@ fn runtime_write_loop(
 
 fn runtime_wait_loop(mut child: Box<dyn Child + Send + Sync>, session: Arc<RuntimeSession>) {
     let status = child.wait();
+    // A Unix PTY reaches end of file once the child's side closes. ConPTY never
+    // does while the pseudoconsole is open, and the writer thread holds it, so
+    // Exited waited out the whole grace period below and anything ConPTY still
+    // flushed arrived after it. Stopping the writer closes the pseudoconsole,
+    // which flushes the rest to the reader and then ends its stream.
+    #[cfg(windows)]
+    let _ = session.inner.commands.try_send(Control::Shutdown);
     for _ in 0..100 {
         if session.inner.reader_done.load(Ordering::Acquire) {
             break;
