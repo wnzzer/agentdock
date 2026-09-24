@@ -156,7 +156,24 @@ async function readClaudeOAuthCredential(job) {
   return undefined;
 }
 
-async function fetchClaudeOAuthUsage(accessToken) {
+/**
+ * The usage endpoint answers only Claude Code: a request without its user
+ * agent is refused with 429 every time, which read as a rate limit that never
+ * cleared. The installed client's own version is sent; if it cannot be read,
+ * a recent one stands in.
+ */
+const FALLBACK_CLAUDE_VERSION = '2.1.0';
+const claudeVersions = new Map();
+async function claudeUserAgent(job) {
+  const program = job.program || 'claude';
+  if (!claudeVersions.has(program)) {
+    const output = await quietCommand(program, ['--version'], job.config_dir);
+    claudeVersions.set(program, /^\s*(\d+\.\d+\.\d+)/.exec(output ?? '')?.[1] ?? FALLBACK_CLAUDE_VERSION);
+  }
+  return `claude-code/${claudeVersions.get(program)}`;
+}
+
+async function fetchClaudeOAuthUsage(accessToken, userAgent) {
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 12000);
   try {
     const response = await fetch(CLAUDE_OAUTH_USAGE_URL, {
@@ -168,6 +185,7 @@ async function fetchClaudeOAuthUsage(accessToken) {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
         'anthropic-beta': 'oauth-2025-04-20',
+        'User-Agent': userAgent,
       },
     });
     if (!response.ok) throw new UsageQueryError(response.status, response.headers?.get?.('retry-after'));
@@ -318,7 +336,7 @@ async function claudeUsage(job) {
   let failure;
   if (credential?.accessToken && view.status === 'signed_in') {
     try {
-      const limits = normalizeClaudeLimits(await fetchClaudeOAuthUsage(credential.accessToken), 'oauth_usage');
+      const limits = normalizeClaudeLimits(await fetchClaudeOAuthUsage(credential.accessToken, await claudeUserAgent(job)), 'oauth_usage');
       return {
         ...view,
         limits,

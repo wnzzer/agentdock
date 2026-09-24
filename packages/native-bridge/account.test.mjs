@@ -201,6 +201,8 @@ test('Claude usage query uses the native OAuth credential only after an explicit
     assert.equal(request.url, 'https://api.anthropic.com/api/oauth/usage');
     assert.equal(request.init.headers.Authorization, 'Bearer fixture-oauth-token');
     assert.equal(request.init.headers['anthropic-beta'], 'oauth-2025-04-20');
+    // Without Claude Code's user agent the endpoint answers 429 every time.
+    assert.match(request.init.headers['User-Agent'], /^claude-code\/\d+\.\d+\.\d+$/);
   } finally { globalThis.fetch = originalFetch; await rm(directory, { recursive: true, force: true }); }
 });
 
