@@ -47,6 +47,14 @@ Every session is the official `claude` or `codex` you already have installed, dr
   <img src="docs/assets/screenshot-models.png" alt="The model menu, listing what the installed Claude Code reports, with a field for any other model ID." width="80%">
 </p>
 
+### Any screen, full workspace
+
+The same workspace works from a phone to an ultrawide monitor, with nothing cut down on the small end. Splits fold into tabs when a window or pane gets too small and open back up when there is room, without touching the saved layout. Controls adapt to the pane they sit in, so a narrow split on a big screen gets the compact layout too. On a phone the sidebar becomes a drawer, the layout makes room for the keyboard, menus open as bottom sheets, touch targets are finger-sized and a long press stands in for right-click. Check on a long task, answer an approval or steer the agent from the couch.
+
+<p align="center">
+  <img src="docs/assets/screenshot-mobile.png" alt="AgentDock on a phone: the conversation and composer." width="36%">
+</p>
+
 ### Correct the agent while it works
 
 A message typed while the agent is busy doesn't have to wait. **Enter steers**: the agent reads it at its next step, without stopping, and the transcript marks it. **⌥/Alt+Enter queues** it as the next turn instead, and **Interrupt and send** stops the turn when you need to change course completely. If the client can't take a message mid-turn, it waits in the queue rather than being lost.
@@ -74,14 +82,6 @@ Sign in to official Claude Code or Codex accounts, or import the ones already on
 ### Set it once
 
 Preferences choose the default endpoint, thinking depth and permission mode per client, stored on the server so every device starts sessions the same way.
-
-### From your phone
-
-The whole workspace works on a phone: check on a long-running agent, answer an approval, or steer it from the couch.
-
-<p align="center">
-  <img src="docs/assets/screenshot-mobile.png" alt="AgentDock on a phone: the conversation and composer." width="36%">
-</p>
 
 ## Install
 
@@ -209,7 +209,8 @@ See [Security and boundaries](docs/security.md#private-remote-access) for detail
 **Host and access**
 
 - Host CPU and memory in the status bar.
-- Responsive layout for phones; English and Chinese UI.
+- Works at every size: splits fold into tabs and back as space allows, controls adapt to their pane, and phones get a drawer sidebar, keyboard-aware layout, bottom-sheet menus, touch-sized targets and long-press menus.
+- English and Chinese UI.
 
 ## Architecture
 
