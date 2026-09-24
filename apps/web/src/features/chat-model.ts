@@ -246,7 +246,7 @@ export function sessionConfigurationPayload(
   };
 }
 
-export type MarkdownInline = { type: 'text' | 'strong' | 'em' | 'code'; text: string } | { type: 'link'; text: string; href: string } | { type: 'image'; alt: string; src: string };
+export type MarkdownInline = { type: 'text' | 'strong' | 'em' | 'code'; text: string } | { type: 'link'; text: string; href: string } | { type: 'image'; alt: string; src: string } | { type: 'file'; text: string; path: string; line?: number; code: boolean };
 export type MarkdownBlock = { type: 'paragraph' | 'heading' | 'quote'; text: string; level?: number } | { type: 'code'; text: string; language: string } | { type: 'list'; ordered: boolean; items: string[] } | { type: 'table'; header: string[]; align: Array<'left' | 'center' | 'right' | undefined>; rows: string[][] };
 /**
  * No HTML or executable URL schemes. The renderer uses Vue text nodes.
@@ -264,8 +264,8 @@ export function markdownInline(text: string): MarkdownInline[] {
   let cursor = 0;
   for (const match of text.matchAll(pattern)) {
     const start = match.index ?? 0, token = match[0];
-    if (start > cursor) result.push({ type: 'text', text: text.slice(cursor, start) });
-    if (token.startsWith('`')) result.push({ type: 'code', text: token.slice(1, -1) });
+    if (start > cursor) result.push(...linkProse(text.slice(cursor, start)));
+    if (token.startsWith('`')) { const code = token.slice(1, -1), reference = fileReference(code); result.push(reference ? { type: 'file', text: code, path: reference.path, line: reference.line, code: true } : { type: 'code', text: code }); }
     else if (token.startsWith('**')) result.push({ type: 'strong', text: token.slice(2, -2) });
     else if (token.startsWith('*')) result.push({ type: 'em', text: token.slice(1, -1) });
     else if (token.startsWith('![')) {
@@ -275,12 +275,12 @@ export function markdownInline(text: string): MarkdownInline[] {
       result.push(isLocalImageReference(src) ? { type: 'image', alt, src } : href ? { type: 'link', text: alt || href, href } : { type: 'text', text: token });
     }
     else {
-      const bracket = token.indexOf(']('), href = safeWebUrl(token.slice(bracket + 2, -1));
-      result.push(href ? { type: 'link', text: token.slice(1, bracket), href } : { type: 'text', text: token });
+      const bracket = token.indexOf(']('), target = token.slice(bracket + 2, -1), href = safeWebUrl(target), reference = href ? undefined : fileReference(target);
+      result.push(href ? { type: 'link', text: token.slice(1, bracket), href } : reference ? { type: 'file', text: token.slice(1, bracket), path: reference.path, line: reference.line, code: false } : { type: 'text', text: token });
     }
     cursor = start + token.length;
   }
-  if (cursor < text.length) result.push({ type: 'text', text: text.slice(cursor) });
+  if (cursor < text.length) result.push(...linkProse(text.slice(cursor)));
   return result;
 }
 /** Cells of a `| a | b |` row. A `|` inside backticks or escaped as `\\|` is text. */
@@ -362,4 +362,40 @@ export function attachedImagePaths(text: string): string[] {
   const match = text.match(/^Attached files? in this workspace:\n((?:- .+\n?)+)/);
   if (!match) return [];
   return match[1].split('\n').map(line => line.replace(/^- /, '').trim()).filter(path => IMAGE_EXTENSION.test(path) && workspaceImagePath(path) === path);
+}
+
+/** A place in a file a message points at. */
+export interface FileReference { path: string; line?: number }
+const FILE_PATTERN = /^(?:file:\/\/)?((?:\/|\.{1,2}\/)?(?:[\w.@+-]+\/)*[\w@+-][\w.@+-]*\.[A-Za-z][A-Za-z0-9]{0,9})(?:(?::|#L)(\d{1,7})(?::\d{1,5}|-L?\d{1,7})?)?$/;
+/**
+ * A file path, as agents write them: `src/main.rs`, `main.rs:42`,
+ * `src/main.rs:42:7`, `main.rs#L42`, an absolute path, or a `file://` URL.
+ * A bare name counts only with an extension that starts with a letter, so a
+ * version (`1.2.3`) or a number is not taken for a file.
+ */
+export function fileReference(value: string): FileReference | undefined {
+  const match = value.trim().match(FILE_PATTERN);
+  if (!match) return undefined;
+  let path = match[1];
+  try { path = decodeURIComponent(path); } catch { return undefined; }
+  if (path.includes('//') || /^\d/.test(path.split('/').pop() ?? '')) return undefined;
+  return match[2] ? { path, line: Number(match[2]) } : { path };
+}
+/** Plain prose is scanned only for paths with a directory in them, and URLs;
+ * a bare "main.rs" in a sentence stays a word. */
+const PROSE_REFERENCES = /(https?:\/\/[^\s<>()"'`]+[^\s<>()"'`.,;:!?。，；：！？)])|((?:\/|\.{1,2}\/)?(?:[\w.@+-]+\/)+[\w@+-][\w.@+-]*\.[A-Za-z][A-Za-z0-9]{0,9}(?::\d{1,7}(?::\d{1,5})?|#L\d{1,7})?)/g;
+export function linkProse(text: string): MarkdownInline[] {
+  const parts: MarkdownInline[] = [];
+  let cursor = 0;
+  for (const match of text.matchAll(PROSE_REFERENCES)) {
+    const start = match.index ?? 0, token = match[0];
+    const reference = match[2] ? fileReference(token) : undefined;
+    const href = match[1] ? safeWebUrl(token) : undefined;
+    if (!reference && !href) continue;
+    if (start > cursor) parts.push({ type: 'text', text: text.slice(cursor, start) });
+    parts.push(reference ? { type: 'file', text: token, path: reference.path, line: reference.line, code: false } : { type: 'link', text: token, href: href! });
+    cursor = start + token.length;
+  }
+  if (cursor < text.length) parts.push({ type: 'text', text: text.slice(cursor) });
+  return parts.length ? parts : [{ type: 'text', text }];
 }

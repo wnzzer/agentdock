@@ -418,3 +418,21 @@ test('GFM tables become table blocks, with alignment, code pipes and ragged rows
   // Pipes without a divider row stay prose.
   assert.equal(markdownBlocks('a | b\nc | d')[0].type, 'paragraph');
 });
+
+test('file references are found where agents write them, and ordinary words are not', async () => {
+  const { fileReference, markdownInline } = await import('./chat-model.ts');
+  assert.deepEqual(fileReference('crates/server/src/main.rs:42'), { path: 'crates/server/src/main.rs', line: 42 });
+  assert.deepEqual(fileReference('chat-claude.mjs:17'), { path: 'chat-claude.mjs', line: 17 });
+  assert.deepEqual(fileReference('src/App.vue#L12'), { path: 'src/App.vue', line: 12 });
+  assert.deepEqual(fileReference('/Users/kl/repo/a.ts:3:9'), { path: '/Users/kl/repo/a.ts', line: 3 });
+  assert.deepEqual(fileReference('file:///Users/kl/repo/README.md'), { path: '/Users/kl/repo/README.md' });
+  for (const word of ['set_model', '1.2.3', 'v0.1.20', 'turn/start', 'e.g.', 'https://example.com/a.js']) assert.equal(fileReference(word), undefined, word);
+  // Inline code, markdown links and prose paths with a directory all link;
+  // a bare name in a sentence stays text.
+  assert.deepEqual(markdownInline('see `chat-common.mjs:53` now').find(p => p.type === 'file'), { type: 'file', text: 'chat-common.mjs:53', path: 'chat-common.mjs', line: 53, code: true });
+  assert.equal(markdownInline('[the entry](src/main.ts#L4)')[0].type, 'file');
+  assert.deepEqual(markdownInline('edit apps/web/src/App.vue:12, then').filter(p => p.type === 'file').map(p => [p.path, p.line]), [['apps/web/src/App.vue', 12]]);
+  assert.ok(markdownInline('open main.rs please').every(p => p.type === 'text'));
+  assert.deepEqual(markdownInline('docs at https://example.com/x. Done').find(p => p.type === 'link'), { type: 'link', text: 'https://example.com/x', href: 'https://example.com/x' });
+  assert.ok(markdownInline('`set_model`').every(p => p.type === 'code'));
+});

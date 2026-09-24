@@ -11,6 +11,7 @@ import LoadHistoryDialog from "./features/LoadHistoryDialog.vue";
 import WorkspaceDialog from "./features/WorkspaceDialog.vue";
 import SettingsDialog from "./features/SettingsDialog.vue";
 import HostUsage from "./features/HostUsage.vue";
+import { requestJump } from "./features/file-jumps";
 import WorkspaceBranchMenu from "./features/WorkspaceBranchMenu.vue";
 import ImageLightbox from "./features/ImageLightbox.vue";
 import CreateSessionDialog from "./features/CreateSessionDialog.vue";
@@ -366,6 +367,31 @@ function openFile(id: string, file: FileEntry | string) {
   canvas.value?.openPane(filePane(id, typeof file === "string" ? file : file.path));
   if (window.innerWidth <= 1100) explorerOpen.value = false;
 }
+/**
+ * Open a file a chat message pointed at: an absolute path inside the
+ * workspace (or the session's worktree) becomes relative, a path with a
+ * directory opens as it is, and a bare name is looked up in the workspace
+ * index -- an exact name match, the shallowest if several. A line is kept for
+ * the file pane to show.
+ */
+async function openReference(id: string, reference: { path: string; line?: number; checkout?: string | null }) {
+  const workspace = workspaces.value.find(item => item.id === id); if (!workspace) return;
+  let path = reference.path.replace(/^\.\//, '');
+  if (path.startsWith('/')) {
+    const base = [workspace.root_path, reference.checkout].find(root => root && path.startsWith(root.replace(/\/$/, '') + '/'));
+    if (!base) { error.value = t('{path} is outside this workspace.', { path }); return; }
+    path = path.slice(base.replace(/\/$/, '').length + 1);
+  } else if (!path.includes('/')) {
+    try {
+      const found = await request<{ files: { path: string; name: string; kind: string }[] }>(`${workspacePath(id)}/files/search?${new URLSearchParams({ q: path, limit: '20' })}`);
+      const exact = found.files.filter(hit => hit.kind === 'file' && hit.name === path).sort((a, b) => a.path.split('/').length - b.path.split('/').length || a.path.length - b.path.length);
+      if (!exact.length) { error.value = t('Could not find {name} in this workspace.', { name: path }); return; }
+      path = exact[0].path;
+    } catch (cause) { report(cause); return; }
+  }
+  if (reference.line) requestJump(id, path, reference.line);
+  openFile(id, path);
+}
 function openChanges(id = contextWorkspace.value?.id) {
   if (!id || !workspaces.value.some(workspace => workspace.id === id)) return;
   canvas.value?.openPane(changesPane(id)); sidebarOpen.value = false;
@@ -576,7 +602,7 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
         <div v-if="localRecovery" class="canvas-compat-notice"><span>{{ t('A local recovery layout is available.') }}</span><button class="text-button" @click="restoreLocalRecovery">{{ t('Restore local layout') }}</button><button class="icon-button" :aria-label="t('Dismiss error')" @click="localRecovery=undefined"><Icon name="close" :size="13"/></button></div>
         <template v-if="workspaces.length">
           <Canvas v-if="canvasReady" ref="canvas" v-model="layout" :selected-pane-id="selectedPaneId" :default-workspace-id="contextWorkspace?.id" :accept-pane="acceptDroppedPane" :confirm-close-pane="confirmClosePane" :ephemeral-session-ids="ephemeralIds" :ephemeral-supported="backendCapabilities.ephemeralSessions" @create-session="createSessionInPane" @reveal-session="revealSession" :workspace-labels="Object.fromEntries(workspaces.map(workspace=>[workspace.id,workspace.name]))" :session-branches="Object.fromEntries(sessions.flatMap(session=>session.checkout_path&&session.checkout_branch?[[session.id,session.checkout_branch]]:[]))" :workspace-branches="Object.fromEntries(Object.entries(gitStatuses).flatMap(([id,status])=>status.branch?[[id,status.branch]]:[]))" :session-providers="sessionProviders" @select-pane="selectPane" @open-pane="sessionPaneDropped">
-            <template #pane="{ pane }"><WorkspacePane :key="pane.id" :pane="pane" :workspaces="workspaces" :sessions="sessions" :profiles="profiles" :git-refresh="gitRefresh" @session-changed="refreshSessions" @new-session="(id,provider)=>newSession(id??selectedWorkspaceId,provider)" @open-session="openSession" @reveal-session="revealSession" @keep-session="keepSessionById" @rename-request="requestRenameSession" @session-environment="environmentSessionId=$event" @structured-session="enableChat" @profiles="settingsSection='endpoints'" @git-changed="gitChanged" @open-file="openFile" @files-saved="filesSaved" @browse="id=>openFiles(id??selectedWorkspaceId)" @reveal="revealFile"/></template>
+            <template #pane="{ pane }"><WorkspacePane :key="pane.id" :pane="pane" :workspaces="workspaces" :sessions="sessions" :profiles="profiles" :git-refresh="gitRefresh" @session-changed="refreshSessions" @new-session="(id,provider)=>newSession(id??selectedWorkspaceId,provider)" @open-session="openSession" @reveal-session="revealSession" @keep-session="keepSessionById" @rename-request="requestRenameSession" @session-environment="environmentSessionId=$event" @structured-session="enableChat" @profiles="settingsSection='endpoints'" @git-changed="gitChanged" @open-file="openFile" @open-reference="openReference" @files-saved="filesSaved" @browse="id=>openFiles(id??selectedWorkspaceId)" @reveal="revealFile"/></template>
           </Canvas>
           <div v-else class="pane-empty"><p>{{ t('Opening workspace…') }}</p></div>
         </template>

@@ -18,11 +18,29 @@ export const MarkdownContent = defineComponent({
     imageUrl: { type: Function as unknown as () => (path: string) => string, required: false },
     /** Directory of the file being rendered, for relative image paths. */
     base: { type: String, default: '' },
+    /** Opens a file a message points at. Without one, references render as
+     * the text they were written as. */
+    openFile: { type: Function as unknown as () => (reference: { path: string; line?: number }) => void, required: false },
   },
   setup(props) {
     const inline = (text: string) =>
       markdownInline(text).map((part: MarkdownInline) =>
-        part.type === 'image'
+        part.type === 'file'
+          ? (props.openFile
+              ? (() => {
+                  const slash = part.path.lastIndexOf('/'), name = part.path.slice(slash + 1), dir = slash > 0 ? part.path.slice(0, slash + 1) : '';
+                  return h('button', {
+                    type: 'button', class: ['chat-file-ref', { 'is-code': part.code }], title: part.path + (part.line ? `:${part.line}` : ''),
+                    onClick: () => props.openFile!({ path: part.path, line: part.line }),
+                  }, [
+                    h('svg', { viewBox: '0 0 16 16', width: 11, height: 11, 'aria-hidden': 'true' }, [h('path', { d: 'M4 1.5h5l3 3v10H4zM9 1.5v3h3', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.3, 'stroke-linejoin': 'round' })]),
+                    dir ? h('span', { class: 'chat-file-dir' }, dir.length > 28 ? '…' + dir.slice(-27) : dir) : null,
+                    h('span', { class: 'chat-file-name' }, name),
+                    part.line ? h('span', { class: 'chat-file-line' }, `:${part.line}`) : null,
+                  ]);
+                })()
+              : part.code ? h('code', part.text) : part.text)
+          : part.type === 'image'
           ? (() => {
               const path = props.imageUrl && workspaceImagePath(part.src, props.base);
               if (!path) return part.alt || part.src;

@@ -221,6 +221,15 @@ pub async fn start_locked(state: &AppState, session: &Session) -> Result<Arc<Cha
     if let Some(existing) = state.chats.get(id) {
         if existing.running() {
             existing.ready().await?;
+            // A start whose request was dropped mid-way -- the page reloaded
+            // while the client was coming up -- leaves a running client
+            // recorded as starting. The next start or open puts that right.
+            if matches!(session.status, SessionStatus::Starting) {
+                db(state, move |s| {
+                    s.set_session_status(id, SessionStatus::Running)
+                })
+                .await?;
+            }
             return Ok(existing);
         }
         // Do not let an old supervisor append its exit after a replacement has

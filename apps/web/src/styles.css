@@ -252,3 +252,12 @@ svg { flex-shrink: 0; vertical-align: middle; }
 @media (max-width: 520px) {
   .statusbar > span:has(+ .host-usage) { display: none; }
 }
+
+/* A file a message points at: opens in the file pane, at the line. */
+.chat-file-ref { display: inline-flex; align-items: baseline; gap: 3px; max-width: 100%; margin: 0 1px; padding: 1px 6px 1px 5px; border: 1px solid #d9e9e3; border-radius: 6px; background: #f3faf7; color: #1f6f63; font: 0.88em ui-monospace, SFMono-Regular, Menlo, monospace; line-height: 1.5; vertical-align: baseline; cursor: pointer; text-align: left; overflow-wrap: anywhere; transition: background .15s ease, border-color .15s ease; }
+.chat-file-ref svg { flex-shrink: 0; align-self: center; color: #4b9a8b; }
+.chat-file-ref:hover { background: #e4f4ee; border-color: #b5d6c8; }
+.chat-file-ref:focus-visible { outline: 2px solid #51b4a3; outline-offset: 1px; }
+.chat-file-dir { color: #7f9a95; }
+.chat-file-name { font-weight: 600; }
+.chat-file-line { color: #7760b5; }

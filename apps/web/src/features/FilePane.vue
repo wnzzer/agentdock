@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import type { TextFile } from "@agentdock/protocol";
 import { ApiError, assetUrl, errorMessage, json, request, workspacePath } from "./api";
 import { fileDraft } from "./file-drafts";
+import { lineRange, pendingJump, takeJump } from "./file-jumps";
 import { escapeHtml, languageFor, loadHighlighter, MAX_HIGHLIGHT_BYTES, wrapsProse } from "./highlighting";
 import { MarkdownContent } from "./MarkdownContent";
 import Icon from "./Icon.vue";
@@ -110,6 +111,26 @@ const wrapped = computed(() => wrapsProse(language.value));
 /** Markdown is shown rendered by default, with the source one click away. */
 const isMarkdown = computed(() => language.value === "markdown");
 const showSource = ref(false);
+/**
+ * Show a line another pane asked for -- a file reference clicked in chat. The
+ * line is selected, which is also its highlight, and scrolled to a third of
+ * the way down. Rendered Markdown has no lines, so its source is shown.
+ */
+watch(() => [draft.value.loaded, editor.value, pendingJump(props.workspaceId, props.path ?? '')?.at] as const, async ([loaded]) => {
+  if (!loaded || !props.path || !pendingJump(props.workspaceId, props.path)) return;
+  if (isMarkdown.value && !showSource.value) { showSource.value = true; await nextTick(); }
+  const input = editor.value; if (!input) return;
+  const line = takeJump(props.workspaceId, props.path); if (!line) return;
+  const [start, end] = lineRange(draft.value.content, line);
+  input.focus({ preventScroll: true });
+  input.setSelectionRange(start, end);
+  const height = parseFloat(getComputedStyle(input).lineHeight) || 20;
+  input.scrollTop = Math.max(0, (line - 1) * height - input.clientHeight / 3);
+  // The highlighted layer beneath follows scroll events only; a scroll set
+  // from code has to move it too, now and once highlighting has drawn.
+  syncScroll({ target: input } as unknown as Event);
+  requestAnimationFrame(() => syncScroll({ target: input } as unknown as Event));
+}, { immediate: true });
 watch(() => props.path, () => { showSource.value = false; });
 
 let revision = 0;

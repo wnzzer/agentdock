@@ -57,7 +57,7 @@
   position: relative; background: transparent; color: transparent;
   caret-color: #2c4c5e; -webkit-text-fill-color: transparent;
 }
-.code-editor.is-overlaid::selection { background: #cfe6f5; -webkit-text-fill-color: transparent; }
+.code-editor.is-overlaid::selection { background: #3b8fd940; -webkit-text-fill-color: transparent; } /* translucent: the text beneath must show through */
 /* An input method draws its candidate text in the textarea, and the overlay
    below has not been told about it yet. For that moment the textarea inks
    itself and covers the overlay, so what is being typed can be seen. */

@@ -25,6 +25,7 @@ const emit = defineEmits<{
   select: [session: Session];
   reveal: [id: string];
   keep: [id: string];
+  openFile: [reference: { path: string; line?: number; checkout?: string | null }];
 }>();
 
 const { t } = useI18n();
@@ -82,6 +83,7 @@ function renameSession(id: string): void { emit("renameRequest", id); }
         @profiles="emit('profiles')"
         @legacy="openNative"
         @open-session="emit('select', $event)"
+        @open-file="emit('openFile', $event)"
       >
         <template #session-actions="{ closeMenu }">
           <button type="button" class="session-shell-action" @click="closeMenu(); renameSession(session.id)"><Icon name="edit" :size="14" />{{ t('Rename session') }}</button>

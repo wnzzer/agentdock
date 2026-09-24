@@ -54,6 +54,8 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Loading conversation…": "正在加载对话…",
   "Waiting for your approval": "等待你的确认",
   "Agent is working": "Agent 正在工作",
+  "{path} is outside this workspace.": "{path} 不在这个工作区里。",
+  "Could not find {name} in this workspace.": "在这个工作区里找不到 {name}。",
   "Switches the directory every session here shares. A session in its own worktree is not affected. Right-click a branch or worktree for more.": "切换的是这里所有会话共用的目录；在自己 worktree 里的会话不受影响。右键分支或 worktree 可进行更多操作。",
   "New name for {branch}": "{branch} 的新名称",
   "More actions for {name}": "{name} 的更多操作",
