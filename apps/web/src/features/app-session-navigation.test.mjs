@@ -98,37 +98,6 @@ async function harness(t, { fetch: respond, sessions = [first, second], workspac
   return { state, html, requests, openIntents, opened, focused, revealed };
 }
 
-test('locate follows metadata-bound existing view IDs, even when sidebar workspace and supplied metadata are stale', async t => {
-  const { state, requests, openIntents, opened, focused } = await harness(t);
-  const before = clone(state.layout.value);
-  await state.locateSession({ ...first, workspace_id: 'stale-workspace', title: 'Stale title' });
-  assert.deepEqual(focused, ['legacy-view-id']);
-  assert.deepEqual(opened, []);
-  assert.deepEqual(openIntents, []);
-  assert.deepEqual(requests, []);
-  assert.deepEqual(state.layout.value, before);
-  assert.equal(state.sessions.value[0].title, first.title);
-});
-
-test('locate creates only a canonical view when absent and never requests a stopped structured agent to start', async t => {
-  const { state, requests, openIntents, opened, focused } = await harness(t, { layout: { version: 1, root: filePane } });
-  await state.locateSession({ ...first, provider: 'terminal', title: 'Stale title' });
-  assert.deepEqual(opened, [{ type: 'pane', id: `session-${first.id}`, kind: 'agent_chat', title: first.title, metadata: { workspace_id: alpha.id, session_id: first.id, provider: first.provider } }]);
-  assert.deepEqual(focused, [`session-${first.id}`]);
-  assert.deepEqual(openIntents, []);
-  assert.deepEqual(requests, []);
-  assert.equal(state.sessions.value[0].status, 'stopped');
-});
-
-test('locate rejects missing sessions or workspaces instead of creating a guessed view', async t => {
-  const orphan = session('orphan', { workspace_id: 'unavailable' });
-  const { state, requests, openIntents, opened, focused } = await harness(t, { sessions: [first, orphan] });
-  await state.locateSession(session('missing'));
-  await state.locateSession(orphan);
-  assert.deepEqual(opened, []); assert.deepEqual(focused, []); assert.deepEqual(openIntents, []); assert.deepEqual(requests, []);
-  assert.equal(state.error.value, 'Pane source unavailable');
-});
-
 test('reveal uses the sidebar and mobile drawer, allowing only a read-only Git status refresh', async t => {
   const { state, requests, openIntents, opened, focused, revealed } = await harness(t, { fetch: request => {
     assert.deepEqual(request, { url: '/api/workspaces/alpha/git/status', method: 'GET', body: undefined });

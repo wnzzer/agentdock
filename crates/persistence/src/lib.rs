@@ -246,9 +246,12 @@ impl Store {
     }
     /// Discard a temporary session outright. Refusing anything else keeps the
     /// destructive path reachable only for sessions created as throwaway.
-    pub fn delete_ephemeral_session(&self, id: SessionId) -> Result<bool> {
+    /// Remove a session record. Only a temporary session, or a permanent one
+    /// that has already been archived, can go: deleting is never one step away
+    /// from a session still listed in its workspace.
+    pub fn delete_session(&self, id: SessionId) -> Result<bool> {
         Ok(self.connection.lock().expect("sqlite lock").execute(
-            "DELETE FROM sessions WHERE id=?1 AND ephemeral=1",
+            "DELETE FROM sessions WHERE id=?1 AND (ephemeral=1 OR archived_at IS NOT NULL)",
             [id.to_string()],
         )? > 0)
     }

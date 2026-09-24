@@ -378,7 +378,7 @@ function useStarter(prompt: string) {
  * box (see handoff.ts). Nothing is sent until the user has read it and said
  * what to do next, and this session is left exactly as it is.
  */
-type HandoffChoice = { provider: ProviderKind; profileId: string | null; name: string; note: string };
+type HandoffChoice = { provider: ProviderKind; profileId: string | null; name: string; note: string; workspaceId?: string; branch?: string };
 const handoffChoices = computed<HandoffChoice[]>(() => {
   if (props.session.provider === 'terminal' || !view.value.items.some(item => item.type === 'message')) return [];
   return (['claude_code', 'codex'] as const).filter(provider => provider !== props.session.provider).flatMap(provider => [
@@ -398,8 +398,9 @@ async function confirmHandoff() {
   try {
     const messages = view.value.items.flatMap(item => item.type === 'message' ? [{ role: item.role, text: item.text }] : []);
     const transcript = handoffTranscript(messages, { user: t('You'), assistant: providerLabel(source.provider), omitted: t('Earlier messages did not fit and were left out') });
-    const created = await request<Session>(`${workspacePath(source.workspace_id)}/sessions`, json('POST', { title: t('{title} · {provider}', { title: source.title, provider: providerLabel(choice.provider) }), provider: choice.provider, endpoint_profile_id: choice.profileId, interaction_mode: 'structured' }));
-    chatDrafts.get(created.id).text = t('Here is a conversation I had with {agent}. Pick up the work where it left off: read it first, and do not redo what is already done.', { agent: providerLabel(source.provider) })
+    const created = await request<Session>(`${workspacePath(choice.workspaceId ?? source.workspace_id)}/sessions`, json('POST', { title: choice.branch ? t('{title} · {provider}', { title: source.title, provider: choice.branch }) : t('{title} · {provider}', { title: source.title, provider: providerLabel(choice.provider) }), provider: choice.provider, endpoint_profile_id: choice.profileId, interaction_mode: 'structured' }));
+    // Nothing said yet means nothing to carry: the new session starts clean.
+    if (messages.length) chatDrafts.get(created.id).text = (choice.branch ? t('Here is a conversation I had in another checkout. This session works on branch {branch} in its own worktree; continue the work here, and do not redo what is already done.', { branch: choice.branch }) : t('Here is a conversation I had with {agent}. Pick up the work where it left off: read it first, and do not redo what is already done.', { agent: providerLabel(source.provider) }))
       + '\n\n<conversation>\n' + transcript.text + '\n</conversation>\n\n' + t('Next:') + ' ';
     handoffTarget.value = undefined; handoffArrivals.add(created.id);
     emit('changed'); emit('openSession', created);

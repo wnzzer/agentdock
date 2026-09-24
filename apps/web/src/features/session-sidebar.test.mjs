@@ -108,8 +108,9 @@ test('session environment and Escape stay accessible from the row menu without o
   const environment = [], opened = [];
   const { html, state } = await render(SessionRow, { session: current, archiveSupported: true, onEnvironment: id => environment.push(id), onOpen: value => opened.push(value) }, state => state.toggleMenu());
   assert.ok(html.includes('Session actions for Fixture current'));
-  // Locating in the canvas moved into this menu so it costs the row no width.
-  assert.ok(html.includes('Locate in canvas'));
+  // Clicking the row already brings its view forward, so the menu no longer
+  // repeats it as a separate "locate" item.
+  assert.ok(!html.includes('Locate in canvas'));
   assert.ok(html.includes('Session environment'));
   state.environment();
   assert.deepEqual(environment, [current.id]);
@@ -168,4 +169,33 @@ test('bilingual row actions translate application text but preserve session titl
     assert.ok(html.includes(label)); assert.ok(html.includes(title));
   }
   i18n.setLocale('en');
+});
+
+test('delete is offered only for archived or temporary sessions and asks before emitting', async () => {
+  const { html: currentHtml } = await render(SessionRow, { session: current, archiveSupported: true }, state => state.toggleMenu());
+  assert.doesNotMatch(currentHtml, /session-delete-action/);
+  const deleted = [];
+  const { html, state } = await render(SessionRow, { session: archived, archiveSupported: true, onDelete: value => deleted.push(value) }, state => state.toggleMenu());
+  assert.ok(html.includes('Delete session…'));
+  state.confirmDelete.value = true;
+  state.deleteSession();
+  assert.deepEqual(deleted, [archived]);
+});
+
+test('select mode archives, restores and deletes only the ticked rows that allow it', async () => {
+  const events = [];
+  const { state } = await render(Sidebar, sidebarProps({ onArchiveSessions: (...args) => events.push(['archive', ...args]), onDeleteSessions: list => events.push(['delete', list]) }), state => {
+    state.allSessionsExpanded.value = true; state.sessionArchive.value = 'all';
+  });
+  state.setSelecting(true);
+  state.checkAll();
+  assert.deepEqual(state.checkedIds.value.sort(), [archived.id, current.id].sort());
+  state.invertChecked();
+  assert.deepEqual(state.checkedIds.value, []);
+  state.checkAll();
+  state.archiveChecked(true);
+  assert.deepEqual(events.shift(), ['archive', [current], true]);
+  state.checkAll();
+  state.deleteChecked();
+  assert.deepEqual(events.shift(), ['delete', [archived]]);
 });

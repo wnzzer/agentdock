@@ -6,6 +6,7 @@ import { isChangedFile, isStagedFile, parseUnifiedDiff, pathsForGitFiles } from 
 import { gitViewState } from "./git-view-state";
 import Icon from "./Icon.vue";
 import WorkspaceBranchMenu from "./WorkspaceBranchMenu.vue";
+import ContextMenu from "./ContextMenu.vue";
 import { useI18n } from "../i18n";
 const { t } = useI18n();
 const props = defineProps<{ workspaceId: string; refreshToken?: number }>();
@@ -91,6 +92,14 @@ async function commit() {
   } catch (cause) { if (alive && epoch === mutationEpoch) error.value = errorMessage(cause); }
   finally { if (alive && epoch === mutationEpoch) busy.value = false; }
 }
+/** Right-click on a changed file, or on a group of them. */
+const fileMenu = ref<{ x: number; y: number; staged: boolean; file?: GitFile }>();
+function openFileMenu(event: MouseEvent, staged: boolean, file?: GitFile) { event.preventDefault(); event.stopPropagation(); fileMenu.value = { x: event.clientX, y: event.clientY, staged, file }; }
+function menuAction(run: () => unknown) { fileMenu.value = undefined; void run(); }
+async function copyPath(path: string) {
+  fileMenu.value = undefined;
+  try { await navigator.clipboard.writeText(path); } catch { error.value = t("Could not copy to the clipboard in this browser."); }
+}
 watch(() => props.workspaceId, () => { revision++; diffRevision++; mutationEpoch++; busy.value = false; status.value = { branch: null, files: [] }; notice.value = undefined; diff.value = undefined; void refresh(); }, { immediate: true, flush: "sync" });
 watch(() => props.refreshToken, () => { if (!busy.value) void refresh(); });
 onBeforeUnmount(() => { alive = false; revision++; diffRevision++; mutationEpoch++; });
@@ -103,7 +112,7 @@ onBeforeUnmount(() => { alive = false; revision++; diffRevision++; mutationEpoch
       <div class="git-sidebar">
         <form class="commit-form" @submit.prevent="commit"><textarea v-model="message" :aria-label="t('Commit message')" :placeholder="t('Commit message…')" rows="2" :disabled="busy" /><button class="primary-button" :disabled="busy || !message.trim() || !stagedFiles.length"><Icon name="check" :size="14" />{{ busy ? t('Working…') : t('Commit staged ({count})', { count: stagedFiles.length }) }}</button></form>
         <div v-if="discardTarget" class="confirmation-bar git-discard-confirm" role="alertdialog"><span>{{ discardTarget.length===1 ? t('Discard changes to {path}? This cannot be undone.', { path: discardTarget[0].path }) : t('Discard changes to {count} files? This cannot be undone.', { count: discardTarget.length }) }}<template v-if="discardNew"> {{ t('{count} new files will be deleted.', { count: discardNew }) }}</template></span><div class="toolbar-buttons"><button type="button" class="small-button danger" :disabled="busy" @click="discard">{{ t(busy ? 'Working…' : 'Discard') }}</button><button type="button" class="small-button" :disabled="busy" @click="discardTarget=undefined">{{ t('Cancel') }}</button></div></div>
-        <div class="git-groups"><section v-for="group in groups" :key="group.title" class="git-group"><header><strong>{{ t(group.title) }} <span>{{ group.files.length }}</span></strong><span class="git-group-actions"><button v-if="!group.staged" class="text-button danger-text" :disabled="busy || !group.files.length" @click="discardTarget=group.files">{{ t('Discard all') }}</button><button class="text-button" :disabled="busy || !group.files.length" @click="stage(group.files, group.staged)">{{ t(group.staged ? 'Unstage all' : 'Stage all') }}</button></span></header><div v-for="file in group.files" :key="file.path" :class="['git-file', { selected: selected?.path === file.path && selected.staged === group.staged }]"><button class="git-file-open" :title="file.original_path ? `${file.original_path} → ${file.path}` : file.path" @click="openDiff(file.path, group.staged)"><span :class="['git-file-code', { staged: group.staged }]">{{ group.staged ? file.index : file.worktree }}</span><span>{{ file.path }}</span></button><button v-if="!group.staged" class="icon-button git-discard" :aria-label="t('Discard changes to {path}', { path: file.path })" :title="t('Discard changes')" :disabled="busy" @click="discardTarget=[file]">↺</button><button class="icon-button" :aria-label="t(group.staged ? 'Unstage {path}' : 'Stage {path}', { path: file.path })" :disabled="busy" @click="stage([file], group.staged)">{{ group.staged ? '−' : '+' }}</button></div><p v-if="!group.files.length" class="group-empty">{{ t(error ? 'Git unavailable' : loading ? 'Checking…' : group.staged ? 'Nothing staged' : 'Working tree clean') }}</p></section></div>
+        <div class="git-groups"><section v-for="group in groups" :key="group.title" class="git-group" @contextmenu="openFileMenu($event, group.staged)"><header><strong>{{ t(group.title) }} <span>{{ group.files.length }}</span></strong><span class="git-group-actions"><button v-if="!group.staged" class="text-button danger-text" :disabled="busy || !group.files.length" @click="discardTarget=group.files">{{ t('Discard all') }}</button><button class="text-button" :disabled="busy || !group.files.length" @click="stage(group.files, group.staged)">{{ t(group.staged ? 'Unstage all' : 'Stage all') }}</button></span></header><div v-for="file in group.files" :key="file.path" :class="['git-file', { selected: selected?.path === file.path && selected.staged === group.staged }]" @contextmenu="openFileMenu($event, group.staged, file)"><button class="git-file-open" :title="file.original_path ? `${file.original_path} → ${file.path}` : file.path" @click="openDiff(file.path, group.staged)"><span :class="['git-file-code', { staged: group.staged }]">{{ group.staged ? file.index : file.worktree }}</span><span>{{ file.path }}</span></button><button v-if="!group.staged" class="icon-button git-discard" :aria-label="t('Discard changes to {path}', { path: file.path })" :title="t('Discard changes')" :disabled="busy" @click="discardTarget=[file]">↺</button><button class="icon-button" :aria-label="t(group.staged ? 'Unstage {path}' : 'Stage {path}', { path: file.path })" :disabled="busy" @click="stage([file], group.staged)">{{ group.staged ? '−' : '+' }}</button></div><p v-if="!group.files.length" class="group-empty">{{ t(error ? 'Git unavailable' : loading ? 'Checking…' : group.staged ? 'Nothing staged' : 'Working tree clean') }}</p></section></div>
       </div>
       <div class="diff-view">
         <div v-if="selected" class="diff-title"><span class="truncate" :title="selected.path">{{ selected.path }}</span><span class="diff-badge">{{ t(selected.staged ? 'Staged' : 'Working tree') }}</span><button class="icon-button" :aria-label="t('Open changed file in editor')" @click="emit('openFile', selected.path)"><Icon name="file" :size="14" /></button></div>
@@ -113,6 +122,22 @@ onBeforeUnmount(() => { alive = false; revision++; diffRevision++; mutationEpoch
         <template v-else-if="diff"><div v-if="diff.binary" class="inline-notice">{{ t('Binary file changed. Open it in Explorer for a preview.') }}</div><div v-if="diff.truncated" class="inline-notice">{{ t('This diff was truncated by the server output limit.') }}</div><div v-if="diff.diff" class="diff-lines" tabindex="0" :aria-label="t('Unified Git diff')"><div v-for="(line, index) in diffLines" :key="index" :class="['diff-line', line.kind]"><span class="line-number">{{ line.before }}</span><span class="line-number">{{ line.after }}</span><code>{{ line.text || ' ' }}</code></div></div><div v-else class="pane-empty"><p>{{ t('No textual diff for this change.') }}</p></div></template>
       </div>
     </div>
+    <ContextMenu v-if="fileMenu" :x="fileMenu.x" :y="fileMenu.y" :label="t('Change actions')" @close="fileMenu = undefined">
+      <template v-if="fileMenu.file">
+        <button role="menuitem" @click="menuAction(() => openDiff(fileMenu!.file!.path, fileMenu!.staged))">{{ t('Show diff') }}</button>
+        <button role="menuitem" @click="menuAction(() => emit('openFile', fileMenu!.file!.path))"><Icon name="file" :size="13" />{{ t('Open changed file in editor') }}</button>
+        <button role="menuitem" @click="copyPath(fileMenu.file.path)">{{ t('Copy path') }}</button>
+        <hr />
+        <button role="menuitem" :disabled="busy" @click="menuAction(() => stage([fileMenu!.file!], fileMenu!.staged))">{{ t(fileMenu.staged ? 'Unstage' : 'Stage') }}</button>
+        <button v-if="!fileMenu.staged" role="menuitem" class="danger" :disabled="busy" @click="menuAction(() => { discardTarget = [fileMenu!.file!]; })">{{ t('Discard changes…') }}</button>
+      </template>
+      <template v-else>
+        <button role="menuitem" :disabled="busy || !(fileMenu.staged ? stagedFiles : changedFiles).length" @click="menuAction(() => stage(fileMenu!.staged ? stagedFiles : changedFiles, fileMenu!.staged))">{{ t(fileMenu.staged ? 'Unstage all' : 'Stage all') }}</button>
+        <button v-if="!fileMenu.staged" role="menuitem" class="danger" :disabled="busy || !changedFiles.length" @click="menuAction(() => { discardTarget = changedFiles; })">{{ t('Discard all') }}…</button>
+      </template>
+      <hr />
+      <button role="menuitem" :disabled="busy || loading" @click="menuAction(refresh)"><Icon name="refresh" :size="13" />{{ t('Refresh Git changes') }}</button>
+    </ContextMenu>
   </section>
 </template>
 

@@ -572,8 +572,8 @@ async fn a_temporary_session_is_declared_at_creation_and_only_then_can_be_discar
     // Omitting the field is the ordinary, permanent case.
     assert_eq!(permanent["ephemeral"], false);
 
-    // Discarding is reachable only for a session created as throwaway; a
-    // permanent one must be archived instead of destroyed.
+    // An unarchived session cannot be deleted directly; a permanent one must
+    // be archived first.
     assert_eq!(
         call(
             f.app(),
@@ -659,6 +659,43 @@ async fn a_temporary_session_is_declared_at_creation_and_only_then_can_be_discar
         .await
         .0,
         StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn a_permanent_session_can_be_deleted_only_once_archived() {
+    let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
+    let workspace = register(&f).await;
+    let (_, permanent) = call(
+        f.app(),
+        "POST",
+        &format!("/api/workspaces/{workspace}/sessions"),
+        json!({"title":"Old work","provider":"terminal"}),
+    )
+    .await;
+    let id = permanent["id"].as_str().unwrap().to_owned();
+    let path = format!("/api/sessions/{id}");
+    assert_eq!(
+        call(f.app(), "DELETE", &path, Value::Null).await.0,
+        StatusCode::CONFLICT
+    );
+    let (status, _) = call(
+        f.app(),
+        "PATCH",
+        &format!("/api/sessions/{id}/archive"),
+        json!({"archived":true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, deleted) = call(f.app(), "DELETE", &path, Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(deleted["id"], id);
+    assert!(
+        f.state
+            .store
+            .get_session(id.parse().unwrap())
+            .unwrap()
+            .is_none()
     );
 }
 

@@ -6,6 +6,7 @@ import { isPaneNode, normalizeRatio, snapRatio, SPLIT_GAP, type DockPosition } f
 import { useI18n } from "../i18n";
 import TabIcon from "../features/TabIcon.vue";
 import Icon from "../features/Icon.vue";
+import ContextMenu from "../features/ContextMenu.vue";
 const { t } = useI18n();
 
 const props = defineProps<{ node: LayoutNode; selected?: string | null; maximized?: string | null; locatedPaneId?: string | null; workspaceLabels?: Record<string, string>; workspaceBranches?: Record<string, string>; sessionBranches?: Record<string, string>; sessionProviders?: Record<string, ProviderKind>; ephemeralSessionIds?: string[]; ephemeralSupported?: boolean }>();
@@ -51,6 +52,16 @@ const menuRight = computed(() => {
   const index = tabs.value.findIndex(pane => pane.id === current.pane.id);
   return index < 0 ? [] : tabs.value.slice(index + 1);
 });
+/** Right-click on a pane's empty space: the tab strip beside the tabs, or an
+ * empty pane. Offers what the "+" menu and the header buttons do. */
+const paneMenu = ref<{ x: number; y: number } | null>(null);
+function openPaneMenu(event: MouseEvent) {
+  // A tab's own right-click has already opened the tab menu.
+  if (event.defaultPrevented) return;
+  event.preventDefault();
+  paneMenu.value = { x: event.clientX, y: event.clientY };
+}
+function paneAction(run: () => void) { paneMenu.value = null; run(); }
 function closePanes(panes: PaneNode[]) {
   closeTabMenu();
   for (const pane of [...panes]) emit("close", pane.id);
@@ -234,13 +245,13 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
     </div>
   </div>
   <section v-else ref="paneElement" class="dock-pane" :class="{ 'is-selected': activePane?.id === selected, 'is-collapsed': node.type === 'stack' && node.collapsedFrom, 'is-located': !!locatedPaneId && activePane?.id === locatedPaneId }" :data-pane-id="activePane?.id" :data-node-id="targetId" @pointerdown="activePane && select(activePane)" @dragover="dragOver" @dragleave="dragLeave" @drop="drop">
-    <header class="dock-header">
+    <header class="dock-header" @contextmenu="openPaneMenu">
       <div class="dock-tabs" role="tablist" :aria-label="t('Pane tabs')">
         <div v-for="pane in tabs" :key="pane.id" :id="`dock-tab-${pane.id}`" :data-pane-tab-id="pane.id" role="tab" class="dock-tab" :class="{ 'is-active': pane.id === activePane?.id, 'is-ephemeral': isEphemeral(pane) }" :aria-selected="pane.id === activePane?.id" :aria-controls="`dock-panel-${pane.id}`" :aria-label="tabLabel(pane)" :tabindex="pane.id === activePane?.id ? 0 : -1" :title="t(isEphemeral(pane) ? '{title} · temporary window · discarded when closed' : '{title} · drag to arrange', { title: qualifiedTitle(pane) })" draggable="true" @contextmenu="openTabMenu($event, pane)" @dragstart="dragStart($event, pane)" @click.stop="select(pane)" @keydown="tabKey($event, pane)" @keydown.enter.prevent="select(pane)" @keydown.space.prevent="select(pane)">
           <TabIcon :kind="pane.kind" :metadata="pane.metadata" :session-providers="sessionProviders" />
           <span v-if="isEphemeral(pane)" class="dock-tab-ephemeral" role="img" :aria-label="t('Temporary window')" :title="t('Temporary window')" />
           <span class="dock-tab-title">{{ titleFor(pane) }}</span>
-          <span v-if="workspaceFor(pane)" class="dock-tab-workspace">{{ workspaceFor(pane) }}</span><span v-if="branchFor(pane)" class="dock-tab-branch" :title="branchFor(pane)"><svg viewBox="0 0 16 16" width="9" height="9" aria-hidden="true"><path d="M5 3v7M5 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm0-7a2 2 0 1 0 0-.01M11 5a2 2 0 1 0 0-.01M11 7c0 2-2 3-6 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>{{ branchFor(pane) }}</span>
+          <span v-if="workspaceFor(pane) && pane.id === activePane?.id" class="dock-tab-workspace">{{ workspaceFor(pane) }}</span><span v-if="branchFor(pane) && pane.id === activePane?.id" class="dock-tab-branch" :title="branchFor(pane)"><svg viewBox="0 0 16 16" width="9" height="9" aria-hidden="true"><path d="M5 3v7M5 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm0-7a2 2 0 1 0 0-.01M11 5a2 2 0 1 0 0-.01M11 7c0 2-2 3-6 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>{{ branchFor(pane) }}</span>
           <!-- The session menu is teleported here by the active session pane.
                Inactive tabs stay compact and do not reserve an empty action slot. -->
           <!-- Keep every session target mounted. A Teleport menu can outlive a
@@ -274,10 +285,23 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
       </div>
     </header>
     <div v-if="activePane" :id="`dock-panel-${activePane.id}`" :aria-labelledby="`dock-tab-${activePane.id}`" class="dock-content" role="tabpanel"><slot name="pane" :pane="activePane" /></div>
-    <div v-else class="dock-empty">
+    <div v-else class="dock-empty" @contextmenu="openPaneMenu">
       <span class="dock-empty-symbol"><Icon name="layout" :size="28" /></span><strong>{{ t('A little room for your next idea') }}</strong><p>{{ t('Drop a session here, or add a pane.') }}</p>
       <div class="dock-empty-choices"><button v-for="type in paneTypes" :key="type.kind" type="button" @click="add(type.kind)"><TabIcon :kind="type.kind" :size="14" />{{ t(type.title) }}</button></div>
     </div>
+    <ContextMenu v-if="paneMenu" :x="paneMenu.x" :y="paneMenu.y" :label="t('Pane actions')" @close="paneMenu = null">
+      <div class="context-menu-label">{{ t('New session here') }}</div>
+      <button v-for="entry in newSessionKinds" :key="entry.provider" role="menuitem" @click="paneAction(() => createSession(entry.provider))"><TabIcon :kind="entry.provider === 'terminal' ? 'terminal' : 'agent_chat'" :provider="entry.provider === 'terminal' ? undefined : entry.provider" :size="14" />{{ t(entry.title) }}</button>
+      <button v-if="ephemeralSupported" role="menuitem" @click="paneAction(() => createSession('claude_code', true))"><Icon name="clock" :size="14" />{{ t('New temporary window') }}</button>
+      <hr />
+      <button v-for="type in paneTypes" :key="type.kind" role="menuitem" @click="paneAction(() => add(type.kind))"><TabIcon :kind="type.kind" :size="14" />{{ t(type.title) }}</button>
+      <hr />
+      <button role="menuitem" @click="paneAction(() => emit('split', targetId, 'horizontal'))"><Icon name="splitHorizontal" :size="14" />{{ t('Split side by side') }}</button>
+      <button role="menuitem" @click="paneAction(() => emit('split', targetId, 'vertical'))"><Icon name="splitVertical" :size="14" />{{ t('Split top and bottom') }}</button>
+      <button v-if="activePane" role="menuitem" @click="paneAction(() => emit('maximize', activePane!.id))"><Icon :name="maximized === activePane.id ? 'minimize' : 'maximize'" :size="14" />{{ t(maximized === activePane.id ? 'Restore layout' : 'Maximize pane') }}</button>
+      <button v-if="tabs.length" role="menuitem" @click="paneAction(() => closePanes(tabs))">{{ t('Close all tabs') }}</button>
+      <button v-else role="menuitem" @click="paneAction(() => emit('close', targetId))"><Icon name="close" :size="14" />{{ t('Close empty pane') }}</button>
+    </ContextMenu>
     <div v-if="dropPosition" class="dock-drop-overlay" :class="'drop-' + dropPosition"><span>{{ t(dropPosition === 'center' ? 'Add as tab' : 'Split ' + dropPosition) }}</span></div>
   </section>
 </template>
@@ -316,9 +340,9 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
 .dock-tab { display:flex;align-items:center;gap:7px;max-width:210px;min-width:85px;flex-shrink:0;padding:0 8px 0 11px;color:#78838e;font-size:11px;cursor:grab;border-bottom:2px solid transparent;outline:none;user-select:none; }
 .dock-tab.is-active { max-width:360px;color:#243746;background:#fff;border-bottom-color:#16a398; }
 .dock-tab:focus-visible { box-shadow:inset 0 0 0 2px #53b9b0; }
-.dock-tab-title { min-width:48px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600; }
-.dock-tab-branch { display:inline-flex;align-items:center;gap:3px;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0;font-size:8px;border-radius:4px;padding:1px 4px;background:#efeafb;color:#7a66b0; }
-.dock-tab-workspace { max-width:65px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0;font-size:8px;border-radius:4px;padding:1px 4px;background:#eaf2ed;color:#789b88; }
+.dock-tab-title { min-width:48px;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600; }
+.dock-tab-branch { display:inline-flex;align-items:center;gap:3px;max-width:96px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;font-size:8px;border-radius:4px;padding:1px 4px;background:#efeafb;color:#7a66b0; }
+.dock-tab-workspace { max-width:80px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;font-size:8px;border-radius:4px;padding:1px 4px;background:#eaf2ed;color:#789b88; }
 .dock-tab.is-ephemeral { border-bottom-style:dashed; }.dock-tab.is-ephemeral.is-active { border-bottom-color:#8973b4; }
 .dock-tab-ephemeral { flex-shrink:0;width:5px;height:5px;margin-left:-3px;border-radius:50%;background:#8973b4;box-shadow:0 0 0 2px #efeaf8; }
 .dock-tab-session-actions{position:relative;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:none}

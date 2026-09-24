@@ -21,7 +21,7 @@ import AuthDialog from "./features/AuthDialog.vue";
 import Icon from "./features/Icon.vue";
 import { useI18n } from "./i18n";
 import { ApiConnectionError, ApiError, errorMessage, json, request, workspacePath } from "./features/api";
-import { paneString, paneWorkspace, paneSession, filePane, changesPane, sessionPane, findSessionPaneId, renameSessionPanes, scopeLegacyLayout, acceptsScopedPane, ephemeralSessionIds, withoutEphemeralPanes } from "./features/pane-context";
+import { paneString, paneWorkspace, paneSession, filePane, changesPane, sessionPane, renameSessionPanes, scopeLegacyLayout, acceptsScopedPane, ephemeralSessionIds, withoutEphemeralPanes } from "./features/pane-context";
 import { isEphemeralSession } from "./features/session-list";
 import { lastQuickProvider, planQuickSession, rememberQuickProvider } from "./features/quick-session";
 import { backendCapabilities, setBackendCapabilities, type BackendHealth } from "./features/backend-capabilities";
@@ -60,10 +60,10 @@ const visibleError = computed(() => error.value || connectionError.value);
 const platform = ref<string>(), instanceLabel = ref<string>(), serverVersion = ref<string>();
 const showWorkspace = ref(false), showAuth = ref(false);
 const settingsSection = ref<'agents' | 'endpoints' | 'accounts'>();
-const archiveBusyIds = ref<string[]>([]), keepBusyIds = ref<string[]>([]), quickBusy = ref(false);
+const archiveBusyIds = ref<string[]>([]), keepBusyIds = ref<string[]>([]), deleteBusyIds = ref<string[]>([]), quickBusy = ref(false);
 const ephemeralIds = computed(() => ephemeralSessionIds(sessions.value));
 const discardPrompt = ref<{ paneId: string; session: Session }>();
-const sessionNotice = ref("");
+const sessionNotice = ref(""), sessionNoticeValues = ref<Record<string, number>>();
 const enablingChat = new Set<string>();
 const sessionWorkspaceId = ref<string>(), historyWorkspaceId = ref<string>(), sessionProvider = ref<ProviderKind>();
 const environmentSessionId = ref<string>();
@@ -249,19 +249,6 @@ function sessionPaneDropped(pane: PaneNode) {
   if (session && paneWorkspace(pane, workspaces.value, sessions.value) && session.interaction_mode === "structured") sessionConnections.requestOpen(session.id);
 }
 function acceptDroppedPane(pane: PaneNode) { return acceptsScopedPane(pane, workspaces.value, sessions.value); }
-/**
- * Sidebar row -> canvas. Focus the view this session is already bound to, or
- * create its canonical one. Locating is navigation only: the stored record is
- * the source of truth for title and workspace, and no client is ever started.
- */
-async function locateSession(session: Session) {
-  const current = sessions.value.find(item => item.id === session.id);
-  if (!current || !workspaces.value.some(workspace => workspace.id === current.workspace_id)) { error.value = t("Pane source unavailable"); return; }
-  sidebarOpen.value = false;
-  const bound = findSessionPaneId(layout.value.root, current.id);
-  if (!bound) canvas.value?.openPane(sessionPane(current));
-  await canvas.value?.focusPane(bound ?? sessionPane(current).id);
-}
 async function revealSession(id: string) {
   const session = sessions.value.find(item => item.id === id);
   if (!session) return;
@@ -270,21 +257,55 @@ async function revealSession(id: string) {
   await nextTick();
   await workspaceSidebar.value?.revealSession(id);
 }
-async function archiveSession(session: Session, archived: boolean) {
-  if (!backendCapabilities.sessionArchive || archiveBusyIds.value.includes(session.id)) return;
+function notice(message: string, values?: Record<string, number>) { sessionNotice.value = message; sessionNoticeValues.value = values; }
+async function archiveSession(session: Session, archived: boolean, announce = true): Promise<boolean> {
+  if (!backendCapabilities.sessionArchive || archiveBusyIds.value.includes(session.id)) return false;
   archiveBusyIds.value = [...archiveBusyIds.value, session.id];
   sessionsRevision++;
-  sessionNotice.value = "";
+  if (announce) notice("");
   try {
     const updated = await request<Session>(`/sessions/${encodeURIComponent(session.id)}/archive`, json("PATCH", { archived }));
     sessionsRevision++;
     sessions.value = sessions.value.map(item => item.id === updated.id ? updated : item);
-    sessionNotice.value = archived ? "Session archived. History and running agents are unchanged." : "Session restored to its workspace list.";
+    if (announce) notice(archived ? "Session archived. History and running agents are unchanged." : "Session restored to its workspace list.");
+    return true;
   } catch (cause) {
-    report(cause);
+    report(cause); return false;
   } finally {
     archiveBusyIds.value = archiveBusyIds.value.filter(id => id !== session.id);
   }
+}
+async function archiveSessions(list: Session[], archived: boolean) {
+  if (list.length === 1) { await archiveSession(list[0]!, archived); return; }
+  notice("");
+  const done = (await Promise.all(list.map(session => archiveSession(session, archived, false)))).filter(Boolean).length;
+  if (done) notice(archived ? "{count} sessions archived. History and running agents are unchanged." : "{count} sessions restored to their workspace lists.", { count: done });
+}
+/**
+ * Delete sessions for good. The server accepts only temporary sessions and
+ * archived ones, and stops anything still running first. Views bound to a
+ * deleted session close with it, since there is nothing left to show.
+ */
+async function deleteSessions(list: Session[]) {
+  const targets = list.filter(session => !deleteBusyIds.value.includes(session.id) && (isEphemeralSession(session) || !!session.archived_at));
+  if (!targets.length) return;
+  deleteBusyIds.value = [...deleteBusyIds.value, ...targets.map(session => session.id)];
+  sessionsRevision++;
+  notice("");
+  const deleted: string[] = [];
+  await Promise.all(targets.map(async session => {
+    try { await request<{ id: string }>(`/sessions/${encodeURIComponent(session.id)}`, json("DELETE")); deleted.push(session.id); }
+    catch (cause) { if (cause instanceof ApiError && cause.status === 404 && !(cause instanceof ApiConnectionError)) deleted.push(session.id); else report(cause); }
+  }));
+  deleteBusyIds.value = deleteBusyIds.value.filter(id => !targets.some(session => session.id === id));
+  if (!deleted.length) return;
+  sessionsRevision++;
+  const gone = new Set(deleted);
+  sessions.value = sessions.value.filter(item => !gone.has(item.id));
+  for (const id of deleted) sessionConnections.ended(id);
+  // Removed from `sessions` first, so the close guard has no record left to discard again.
+  for (const pane of flattenPanes(layout.value.root).filter(pane => gone.has(paneString(pane, "session_id") ?? ""))) await canvas.value?.closePane(pane.id);
+  notice(deleted.length === 1 ? "Session deleted." : "{count} sessions deleted.", { count: deleted.length });
 }
 /** The one place where closing a view ends a process — allowed only because the
  * user chose "temporary window" when the session was created. */
@@ -328,13 +349,13 @@ async function keepSession(session: Session) {
   if (!isEphemeralSession(session) || keepBusyIds.value.includes(session.id)) return;
   keepBusyIds.value = [...keepBusyIds.value, session.id];
   sessionsRevision++;
-  sessionNotice.value = "";
+  notice("");
   try {
     const updated = await request<Session>(`/sessions/${encodeURIComponent(session.id)}/keep`, json("POST"));
     sessionsRevision++;
     sessions.value = sessions.value.map(item => item.id === updated.id ? updated : item);
     if (discardPrompt.value?.session.id === updated.id) discardPrompt.value = undefined;
-    sessionNotice.value = "Session kept. It stays in the session list and closing its window no longer discards it.";
+    notice("Session kept. It stays in the session list and closing its window no longer discards it.");
   } catch (cause) { report(cause); }
   finally { keepBusyIds.value = keepBusyIds.value.filter(id => id !== session.id); }
 }
@@ -350,7 +371,7 @@ async function renameSession(session: Session, title: string): Promise<boolean> 
     sessions.value = sessions.value.map(item => item.id === updated.id ? updated : item);
     const nextRoot = renameSessionPanes(layout.value.root, updated.id, updated.title);
     if (nextRoot !== layout.value.root) layout.value = { ...layout.value, root: nextRoot };
-    sessionNotice.value = "Session renamed. Its ID, history and running process are unchanged.";
+    notice("Session renamed. Its ID, history and running process are unchanged.");
     return true;
   } catch (cause) { report(cause); return false; }
 }
@@ -598,12 +619,12 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
     <div class="app-body">
       <button v-if="sidebarOpen" class="drawer-overlay sidebar-overlay" :aria-label="t('Close workspace navigation')" @click="sidebarOpen = false"/>
       <aside :class="['sidebar',{'drawer-open':sidebarOpen}]">
-        <WorkspaceSidebar ref="workspaceSidebar" :workspace-branches="Object.fromEntries(Object.entries(gitStatuses).flatMap(([id,status])=>status.branch?[[id,status.branch]]:[]))" @branch-switched="branchSwitched" :workspaces="workspaces" :sessions="sessions" :selected-workspace-id="selectedWorkspaceId" :selected-session-id="selectedSessionId" :history-supported="backendCapabilities.nativeHistory" :storage-key="storageKey" :archive-supported="backendCapabilities.sessionArchive" :ephemeral-supported="backendCapabilities.ephemeralSessions" :archive-busy-ids="archiveBusyIds" :keep-busy-ids="keepBusyIds" :sessions-loading="sessionsLoading" @select-workspace="selectWorkspace" @open-session="openSession" @locate-session="locateSession" @rename-session="renameSession" @archive-session="archiveSession" @keep-session="keepSession" @refresh-sessions="refreshSessions" @session-environment="environmentSessionId=$event;sidebarOpen=false" @open-files="openFiles" @open-changes="openChanges" @new-session="newSession" @quick-session="quickSession" @load-history="loadHistory" @add-workspace="showWorkspace=true" @canvas="sidebarOpen=false"/>
+        <WorkspaceSidebar ref="workspaceSidebar" :workspace-branches="Object.fromEntries(Object.entries(gitStatuses).flatMap(([id,status])=>status.branch?[[id,status.branch]]:[]))" @branch-switched="branchSwitched" :workspaces="workspaces" :sessions="sessions" :selected-workspace-id="selectedWorkspaceId" :selected-session-id="selectedSessionId" :history-supported="backendCapabilities.nativeHistory" :storage-key="storageKey" :archive-supported="backendCapabilities.sessionArchive" :ephemeral-supported="backendCapabilities.ephemeralSessions" :archive-busy-ids="archiveBusyIds" :keep-busy-ids="keepBusyIds" :delete-busy-ids="deleteBusyIds" :sessions-loading="sessionsLoading" @select-workspace="selectWorkspace" @open-session="openSession" @rename-session="renameSession" @archive-session="archiveSession" @archive-sessions="archiveSessions" @delete-sessions="deleteSessions" @keep-session="keepSession" @refresh-sessions="refreshSessions" @session-environment="environmentSessionId=$event;sidebarOpen=false" @open-files="openFiles" @open-changes="openChanges" @new-session="newSession" @quick-session="quickSession" @load-history="loadHistory" @add-workspace="showWorkspace=true" @canvas="sidebarOpen=false"/>
         <div class="host-card"><span class="host-symbol"><Icon name="terminal"/></span><div><strong>{{ t('Host native') }}</strong><small>{{ platform || 'macOS / Linux' }} · {{ t('no containers') }}</small></div><span :class="['state-dot',apiOnline?'running':'stopped']"/></div>
       </aside>
       <main class="main-workspace">
         <div v-if="visibleError" class="app-error" role="alert"><span>{{ visibleError }}</span><button class="text-button" :disabled="refreshingResources||loading" @click="canvasReady?refreshResources():bootstrap()">{{ t('Retry') }}</button><button class="icon-button" :aria-label="t('Dismiss error')" @click="error='';connectionError=''"><Icon name="close" :size="14"/></button></div>
-        <div v-if="sessionNotice" class="canvas-compat-notice" role="status"><Icon name="check" :size="14"/><span>{{ t(sessionNotice) }}</span><button class="icon-button" :aria-label="t('Dismiss session notice')" @click="sessionNotice=''"><Icon name="close" :size="13"/></button></div>
+        <div v-if="sessionNotice" class="canvas-compat-notice" role="status"><Icon name="check" :size="14"/><span>{{ t(sessionNotice, sessionNoticeValues) }}</span><button class="icon-button" :aria-label="t('Dismiss session notice')" @click="sessionNotice=''"><Icon name="close" :size="13"/></button></div>
         <div v-if="canvasReady && !backendCapabilities.sharedCanvas" class="canvas-compat-notice" role="status"><Icon name="info" :size="15"/><span>{{ t('This backend is older. The shared canvas is saved in this browser; running sessions and existing workspace layouts are unchanged.') }}<small>{{ t('Native configuration import and history loading require an updated backend.') }}</small></span></div>
         <div v-if="discardPrompt" class="confirmation-bar" role="alert">{{ t('“{session}” is a temporary window and is still working. Closing it discards the session and stops it.',{session:discardPrompt.session.title}) }}<button class="small-button" @click="discardPrompt=undefined">{{ t('Keep it open') }}</button><button class="small-button danger" @click="confirmDiscard">{{ t('Close and discard') }}</button></div>
         <div v-if="canvasConflict" class="confirmation-bar" role="alert">{{ t('Another page updated the shared canvas. Your current layout is kept locally.') }}<button class="small-button" @click="resolveCanvasConflict(false)">{{ t('Load server layout') }}</button><button class="small-button danger" @click="resolveCanvasConflict(true)">{{ t('Save my current layout instead') }}</button></div>

@@ -1242,9 +1242,9 @@ async fn discard_session(
 ) -> Result<Json<serde_json::Value>> {
     let _guard = state.operations.lock().await;
     let session = session_record(&state, id).await?;
-    if !session.ephemeral {
+    if !session.ephemeral && session.archived_at.is_none() {
         return Err(ApiError::conflict(
-            "Only a temporary session can be discarded. Archive a permanent session instead.",
+            "Archive this session before deleting it.",
         ));
     }
     state.chats.stop(id).await?;
@@ -1256,7 +1256,7 @@ async fn discard_session(
     }
     // Removing the record after the process is down keeps a discarded session
     // from leaving an orphaned client running with nothing bound to it.
-    if !db(&state, move |store| store.delete_ephemeral_session(id)).await? {
+    if !db(&state, move |store| store.delete_session(id)).await? {
         return Err(ApiError::missing("Session"));
     }
     Ok(Json(serde_json::json!({ "id": id })))

@@ -93,5 +93,5 @@ test('sidebar keeps compact session actions separate from opening a stopped sess
   // The row keeps only what it needs: locating in the canvas is a menu item
   // now, so a long session title gets that width instead.
   assert.equal(html.includes('session-locate-button'), false);
-  assert.equal(html.includes('Locate in canvas'), false, 'closed menus render no items');
+  assert.equal(html.includes('Rename session'), false, 'closed menus render no items');
 });
