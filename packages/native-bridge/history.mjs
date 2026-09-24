@@ -1,4 +1,4 @@
-import { spawnNative as spawn } from "./native-spawn.mjs";
+import { spawnNative as spawn, withoutAgentDockSecrets } from "./native-spawn.mjs";
 import { realpath, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,7 +34,7 @@ export async function discover(job) {
     return {items:await normalizeSessions(rows.slice(0,LIMIT),"claude_code",cwd),truncated:rows.length>LIMIT};
   }
   if(job.provider!=="codex")throw Error("Unsupported history provider");
-  const environment=Object.fromEntries(Object.entries(process.env).filter(([key])=>!key.startsWith("AGENTDOCK_SECRET_")&&key!=="AGENTDOCK_TOKEN"));
+  const environment=withoutAgentDockSecrets(process.env);
   environment.CODEX_HOME=configDir;
   const child=spawn(process.env.AGENTDOCK_CODEX_BIN||"codex",["app-server"],{cwd,env:environment,stdio:["pipe","pipe","pipe"]});
   child.stderr.on("data",()=>{}); // never echo native config/auth diagnostics to the API

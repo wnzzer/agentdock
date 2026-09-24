@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { nativeCommand, shimTarget, spawnNative } from './native-spawn.mjs';
+import { nativeCommand, shimTarget, spawnNative, withoutAgentDockSecrets } from './native-spawn.mjs';
+
+test('only AgentDock credentials are withheld from a native client', () => {
+  const env = { PATH: '/bin', AGENTDOCK_SECRET_WORK: 's', AGENTDOCK_TOKEN: 't', AGENTDOCK_HOME: '/h', AGENTDOCK_TOKEN_FILE: 'f', OPENAI_API_KEY: 'k' };
+  assert.deepEqual(withoutAgentDockSecrets(env), { PATH: '/bin', AGENTDOCK_HOME: '/h', AGENTDOCK_TOKEN_FILE: 'f', OPENAI_API_KEY: 'k' });
+});
 
 test('outside Windows a client is started exactly as named', () => {
   assert.deepEqual(nativeCommand('claude', ['--name', 'a & b'], { platform: 'linux' }), { command: 'claude', args: ['--name', 'a & b'] });

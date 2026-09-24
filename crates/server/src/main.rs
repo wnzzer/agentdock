@@ -1,6 +1,7 @@
 mod accounts;
 #[cfg(test)]
 mod api_tests;
+mod bridge;
 mod canvas;
 mod checkouts;
 mod clients;
@@ -528,9 +529,7 @@ async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         store,
         runtime: RuntimeManager::new(),
         native_bridge: installation::native_bridge(&state_dir),
-        chat_bridge: env::var_os("AGENTDOCK_CHAT_BRIDGE")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| installation::native_bridge(&state_dir).with_file_name("chat.mjs")),
+        chat_bridge: bridge::script(&state_dir, "AGENTDOCK_CHAT_BRIDGE", "chat.mjs"),
         chats: conversations::ChatManager::default(),
         accounts: accounts::AccountManager::new(),
         state_dir,

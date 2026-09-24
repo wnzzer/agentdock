@@ -303,13 +303,8 @@ fn build_base(state: &AppState, session: &Session, cwd: PathBuf) -> Result<Spawn
             return Err(ApiError::bad("This profile blocks session launch"));
         }
     }
-    let mut remove: Vec<String> = env::vars()
-        .filter_map(|(key, _)| {
-            (key.starts_with("AGENTDOCK_SECRET_")
-                || key == "AGENTDOCK_TOKEN"
-                || key == "CLAUDECODE")
-                .then_some(key)
-        })
+    let mut remove: Vec<String> = crate::bridge::agentdock_secrets()
+        .chain(env::var_os("CLAUDECODE").map(|_| "CLAUDECODE".to_owned()))
         .collect();
     let (program, config_key) = match session.provider {
         ProviderKind::Terminal => (

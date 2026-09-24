@@ -146,6 +146,44 @@ pub fn own_group(command: &mut std::process::Command) {
     }
 }
 
+/// A process group this server started with [`own_group`]. Dropping it stops
+/// whatever is left in the group, so an aborted task or an early return cannot
+/// leave a bridge or the native client beneath it running.
+pub struct OwnedGroup(Option<u32>);
+
+impl OwnedGroup {
+    pub fn new(pid: Option<u32>) -> Self {
+        Self(pid.filter(|pid| owned(*pid)))
+    }
+    pub fn pid(&self) -> Option<u32> {
+        self.0
+    }
+    /// Ask the group to stop. Returns whether there was a group to ask.
+    pub fn terminate(&self) -> bool {
+        self.0.is_some_and(terminate_group)
+    }
+    /// Stop the group without asking. Returns whether there was a group.
+    pub fn kill(&self) -> bool {
+        self.0.is_some_and(kill_group)
+    }
+    /// Kill what remains of the group and stop owning it.
+    pub fn finish(&mut self) {
+        if let Some(pid) = self.0.take() {
+            kill_group(pid);
+        }
+    }
+    /// Stop owning the group without signalling it, once it is known to be gone.
+    pub fn release(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for OwnedGroup {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
+
 /// Stop a detached child from inheriting this process's own standard handles.
 ///
 /// Windows hands every inheritable handle to a child, not only the three it is
@@ -318,6 +356,18 @@ mod tests {
             assert!(!terminate_group(pid));
             assert!(!kill_group(pid));
         }
+    }
+
+    #[test]
+    fn an_owned_group_never_holds_a_pid_that_addresses_more_than_one_tree() {
+        for pid in [None, Some(0), Some(1), Some(u32::MAX)] {
+            assert_eq!(OwnedGroup::new(pid).pid(), None, "{pid:?}");
+        }
+        let mut group = OwnedGroup::new(Some(4242));
+        assert_eq!(group.pid(), Some(4242));
+        // Released: dropping it afterwards signals nothing.
+        group.release();
+        assert_eq!(group.pid(), None);
     }
 
     #[test]

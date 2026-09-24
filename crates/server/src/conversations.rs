@@ -3,7 +3,7 @@
 use crate::{ApiError, AppState, Result, db, providers, session_record};
 use agentdock_domain::{InteractionMode, ProviderKind, Session, SessionId, SessionStatus};
 use agentdock_persistence::MessageSubmission;
-use agentdock_runtime::process;
+use agentdock_runtime::process::OwnedGroup;
 use axum::{
     Json, Router,
     extract::{
@@ -19,7 +19,6 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
-    process::Stdio,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -48,24 +47,6 @@ pub struct ChatRuntime {
     approvals: Mutex<HashMap<String, HashSet<String>>>,
     /// The bridge process; the native client runs beneath it.
     pid: Option<u32>,
-}
-struct OwnedProcessGroup(Option<u32>);
-impl OwnedProcessGroup {
-    fn terminate(&self) {
-        if let Some(pid) = self.0 {
-            process::terminate_group(pid);
-        }
-    }
-    fn finish(&mut self) {
-        if let Some(pid) = self.0.take() {
-            process::kill_group(pid);
-        }
-    }
-}
-impl Drop for OwnedProcessGroup {
-    fn drop(&mut self) {
-        self.finish();
-    }
 }
 impl ChatRuntime {
     pub fn running(&self) -> bool {
@@ -256,23 +237,11 @@ pub async fn start_locked(state: &AppState, session: &Session) -> Result<Arc<Cha
     })
     .await
     .map_err(ApiError::internal)??;
-    let runtime_bin = std::env::var_os("AGENTDOCK_JS_RUNTIME")
-        .filter(|v| !v.is_empty())
-        .or_else(|| std::env::var_os("AGENTDOCK_NODE_BIN").filter(|v| !v.is_empty()))
-        .unwrap_or_else(|| "node".into());
-    let mut command = tokio::process::Command::new(runtime_bin);
-    command
-        .arg(&state.chat_bridge)
-        .current_dir(&spec.cwd)
-        .envs(&spec.env)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
+    let mut command = crate::bridge::node_command(&[], &state.chat_bridge);
+    command.current_dir(&spec.cwd).envs(&spec.env);
     for key in &spec.env_remove {
         command.env_remove(key);
     }
-    process::own_group(command.as_std_mut());
     let mut child = command.spawn().map_err(|_| {
         ApiError::conflict("Native chat needs Node.js and the installed chat bridge")
     })?;
@@ -916,7 +885,7 @@ async fn supervise(
     mut commands: mpsc::Receiver<Value>,
     init: Value,
 ) {
-    let mut group = OwnedProcessGroup(child.id());
+    let mut group = OwnedGroup::new(child.id());
     let mut buffer = Vec::new();
     let mut bytes = [0u8; 8192];
     let mut failure = None;

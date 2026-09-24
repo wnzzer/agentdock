@@ -2,7 +2,7 @@
 use crate::{ApiError, AppState};
 use agentdock_domain::{ProviderKind, Session, WorkspaceId};
 use serde::{Deserialize, Serialize};
-use std::{env, ffi::OsString, path::PathBuf, process::Stdio, time::Duration};
+use std::{env, ffi::OsString, path::PathBuf, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[derive(Clone)]
@@ -112,16 +112,6 @@ pub fn valid_id(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-/// Node.js is the bundled bridge's default runtime. Retain the earlier Node
-/// override for existing deployments, with the runtime-neutral setting taking
-/// precedence. An empty setting is treated as absent, not as an executable.
-pub(crate) fn js_runtime(primary: Option<OsString>, legacy: Option<OsString>) -> OsString {
-    primary
-        .filter(|value| !value.is_empty())
-        .or_else(|| legacy.filter(|value| !value.is_empty()))
-        .unwrap_or_else(|| "node".into())
-}
-
 pub async fn list(
     state: &AppState,
     workspace: WorkspaceId,
@@ -139,21 +129,7 @@ pub async fn list(
         .await
         .map_err(|_| ApiError::bad("Native history directory is unavailable"))?;
     let job = serde_json::json!({"provider":source.provider,"config_dir":config_dir,"cwd":cwd});
-    let mut command = tokio::process::Command::new(js_runtime(
-        env::var_os("AGENTDOCK_JS_RUNTIME"),
-        env::var_os("AGENTDOCK_NODE_BIN"),
-    ));
-    command
-        .arg(&state.native_bridge)
-        .kill_on_drop(true)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    for (key, _) in env::vars()
-        .filter(|(key, _)| key.starts_with("AGENTDOCK_SECRET_") || key == "AGENTDOCK_TOKEN")
-    {
-        command.env_remove(key);
-    }
+    let mut command = crate::bridge::node_command(&[], &state.native_bridge);
     let mut child = command.spawn().map_err(|_| {
         ApiError::bad(
             "Native history needs Node.js and the installed native bridge; AGENTDOCK_JS_RUNTIME can override the runtime",
@@ -336,27 +312,6 @@ pub fn resume_spec(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn bridge_runtime_defaults_to_node_and_respects_both_overrides() {
-        assert_eq!(js_runtime(None, None), OsString::from("node"));
-        assert_eq!(
-            js_runtime(Some("/opt/runtime/bun".into()), Some("node".into())),
-            OsString::from("/opt/runtime/bun")
-        );
-        assert_eq!(
-            js_runtime(None, Some("/legacy/node".into())),
-            OsString::from("/legacy/node")
-        );
-        assert_eq!(
-            js_runtime(Some(OsString::new()), Some("legacy-node".into())),
-            OsString::from("legacy-node")
-        );
-        assert_eq!(
-            js_runtime(Some(OsString::new()), Some(OsString::new())),
-            OsString::from("node")
-        );
-    }
 
     #[test]
     fn native_identifiers_cannot_be_paths_flags_or_unbounded_input() {

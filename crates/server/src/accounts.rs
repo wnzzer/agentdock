@@ -2,7 +2,7 @@
 //! contents are never parsed, copied into profiles, or returned by this module.
 use crate::{ApiError, AppState, Result};
 use agentdock_domain::{EndpointProfile, NativeConfigReference, ProviderKind, SessionStatus};
-use agentdock_runtime::{SpawnSpec, process};
+use agentdock_runtime::{SpawnSpec, process::OwnedGroup};
 use axum::{
     Json, Router,
     extract::{Path as RoutePath, State},
@@ -15,7 +15,6 @@ use std::{
     env, fs,
     io::Write,
     path::{Path, PathBuf},
-    process::Stdio,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -78,40 +77,18 @@ impl AccountManager {
     }
 }
 
-/// The PID is always from a fresh child launched with process_group(0).
-/// Force group cleanup on future abort as well as normal error/timeout paths.
-struct OwnedProcessGroup {
-    pid: Option<u32>,
-    armed: bool,
-}
-impl OwnedProcessGroup {
-    fn new(pid: Option<u32>) -> Self {
-        Self {
-            pid: pid.filter(|pid| *pid > 1 && *pid <= i32::MAX as u32),
-            armed: true,
-        }
+/// Stop an account bridge and its native client. The group is always a fresh
+/// child's own, and it is also stopped on abort, when the `OwnedGroup` drops.
+async fn close_group(group: &mut OwnedGroup, child: &mut tokio::process::Child) {
+    let had_group = group.terminate();
+    let _ = tokio::time::timeout(Duration::from_millis(700), child.wait()).await;
+    if had_group {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        group.kill();
     }
-    /// Positive PID > 1 identifies only our separately-created process group.
-    /// Group zero and the AgentDock host are never targeted.
-    fn signal(&self, signal: fn(u32) -> bool) -> bool {
-        self.armed && self.pid.is_some_and(signal)
-    }
-    async fn close(&mut self, child: &mut tokio::process::Child) {
-        let had_group = self.signal(process::terminate_group);
-        let _ = tokio::time::timeout(Duration::from_millis(700), child.wait()).await;
-        if had_group {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            self.signal(process::kill_group);
-        }
-        let _ = child.start_kill();
-        let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
-        self.armed = false;
-    }
-}
-impl Drop for OwnedProcessGroup {
-    fn drop(&mut self) {
-        self.signal(process::kill_group);
-    }
+    let _ = child.start_kill();
+    let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
+    group.release();
 }
 
 struct Maintenance {
@@ -1937,11 +1914,11 @@ mod tests {
     #[tokio::test]
     async fn account_group_cleanup_kills_term_ignoring_descendants() {
         let (mut child, descendant) = process_group_fixture().await;
-        let mut group = OwnedProcessGroup::new(child.id());
-        group.close(&mut child).await;
+        let mut group = OwnedGroup::new(child.id());
+        close_group(&mut group, &mut child).await;
         assert_fixture_exited(descendant).await;
         for pid in [None, Some(0), Some(1)] {
-            assert!(OwnedProcessGroup::new(pid).pid.is_none());
+            assert!(OwnedGroup::new(pid).pid().is_none());
         }
     }
     #[cfg(unix)]
@@ -1951,7 +1928,7 @@ mod tests {
         let (ready, sent) = oneshot::channel();
         let task = tokio::spawn(async move {
             let _child = child;
-            let _group = OwnedProcessGroup::new(_child.id());
+            let _group = OwnedGroup::new(_child.id());
             let _ = ready.send(());
             std::future::pending::<()>().await;
         });
@@ -2496,14 +2473,12 @@ async fn bridge(
         job["config_dir"] = json!(reference.config_dir);
         job["config_env"] = json!(reference.config_env);
         job["program"] = json!(spec.program);
-        let runtime = env::var_os("AGENTDOCK_JS_RUNTIME").filter(|value| !value.is_empty()).or_else(|| env::var_os("AGENTDOCK_NODE_BIN").filter(|value| !value.is_empty())).unwrap_or_else(|| "node".into());
-        let script = env::var_os("AGENTDOCK_ACCOUNT_BRIDGE").map(PathBuf::from).unwrap_or_else(|| crate::installation::native_bridge(&state.state_dir).with_file_name("account.mjs"));
-        let mut command = tokio::process::Command::new(runtime);
+        let script = crate::bridge::script(&state.state_dir, "AGENTDOCK_ACCOUNT_BRIDGE", "account.mjs");
         // --use-env-proxy makes the bridge's own fetch (the usage query) honour
         // the proxy; the same variables reach the native CLIs it spawns.
-        if record.proxy_url.is_some() { command.arg("--use-env-proxy"); }
-        command.arg(script).current_dir(&reference.config_dir).kill_on_drop(true).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
-        process::own_group(command.as_std_mut());
+        let node_options: &[&str] = if record.proxy_url.is_some() { &["--use-env-proxy"] } else { &[] };
+        let mut command = crate::bridge::node_command(node_options, script);
+        command.current_dir(&reference.config_dir);
         for key in spec.env_remove { command.env_remove(key); } command.envs(spec.env);
         if let Some(proxy) = record.proxy_url.as_deref() {
             command.envs(proxy_environment(proxy));
@@ -2513,7 +2488,7 @@ async fn bridge(
             for (key, _) in proxy_environment("") { command.env_remove(key); }
         }
         let mut child = command.spawn().map_err(|_| ApiError::bad("Account management needs Node.js and the installed official native client bridge"))?;
-        let mut group = OwnedProcessGroup::new(child.id());
+        let mut group = OwnedGroup::new(child.id());
         let mut input = child.stdin.take().ok_or_else(|| ApiError::bad("Account bridge input unavailable"))?;
         let io_result = async {
             tokio::time::timeout(Duration::from_secs(3), input.write_all(format!("{}\n",job).as_bytes())).await.map_err(|_|ApiError::bad("Account bridge input timed out"))?.map_err(ApiError::internal)?;
@@ -2552,7 +2527,7 @@ async fn bridge(
             Ok(())
         }.await;
         if io_result.is_err() { let _=tokio::time::timeout(Duration::from_millis(300),input.write_all(b"{\"type\":\"cancel\"}\n")).await; }
-        group.close(&mut child).await;
+        close_group(&mut group, &mut child).await;
         protect_files(Path::new(&reference.config_dir))?;
         io_result
     }.await;

@@ -196,15 +196,7 @@ pub fn claude_statusline(
     if !script.is_file() {
         return (Vec::new(), BTreeMap::new());
     }
-    let runtime = env::var("AGENTDOCK_JS_RUNTIME")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            env::var("AGENTDOCK_NODE_BIN")
-                .ok()
-                .filter(|value| !value.is_empty())
-        })
-        .unwrap_or_else(|| "node".into());
+    let runtime = crate::bridge::js_runtime().to_string_lossy().into_owned();
     let command = format!("{} {}", quote(&runtime), quote(&script.to_string_lossy()));
     let overlay = json!({"statusLine": {"type": "command", "command": command}});
     let mut environment = BTreeMap::new();
@@ -237,13 +229,8 @@ pub fn launch_environment(
     // Preserve the host's native environment and config precedence. AgentDock's
     // own secret references/access token never become native client overrides.
     // Shell aliases/functions and interactive shell startup files are not loaded.
-    let mut remove: Vec<String> = env::vars()
-        .filter_map(|(key, _)| {
-            (key.starts_with("AGENTDOCK_SECRET_")
-                || key == "AGENTDOCK_TOKEN"
-                || key == "CLAUDECODE")
-                .then_some(key)
-        })
+    let mut remove: Vec<String> = crate::bridge::agentdock_secrets()
+        .chain(env::var_os("CLAUDECODE").map(|_| "CLAUDECODE".to_owned()))
         .collect();
     if config_env.is_none() {
         // In particular, CLAUDE_CONFIG_DIR=<default path> can select a different

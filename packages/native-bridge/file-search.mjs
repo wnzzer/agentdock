@@ -8,7 +8,7 @@
 // where the search still returns results. So this runs with a config directory
 // that holds no credentials and no history, and cannot read or alter the user's
 // own Codex state — unlike the history bridge, which must use the real one.
-import { spawnNative as spawn } from "./native-spawn.mjs";
+import { spawnNative as spawn, withoutAgentDockSecrets } from "./native-spawn.mjs";
 import { StringDecoder } from "node:string_decoder";
 
 const MAX_LIMIT = 50;
@@ -38,9 +38,7 @@ const query = typeof job.query === "string" ? job.query.trim() : "";
 if (!query) { output({ files: [], truncated: false }); process.exit(0); }
 const limit = Math.min(Number.isInteger(job.limit) && job.limit > 0 ? job.limit : 20, MAX_LIMIT);
 
-const environment = Object.fromEntries(
-  Object.entries(process.env).filter(([key]) => !key.startsWith("AGENTDOCK_SECRET_") && key !== "AGENTDOCK_TOKEN"),
-);
+const environment = withoutAgentDockSecrets(process.env);
 if (job.config_dir) environment.CODEX_HOME = job.config_dir;
 
 const child = spawn(process.env.AGENTDOCK_CODEX_BIN || "codex", ["app-server"], {

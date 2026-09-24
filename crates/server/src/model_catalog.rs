@@ -187,8 +187,7 @@ async fn native_codex_models(
         k.starts_with("OPENAI_")
             || k.starts_with("CODEX_")
             || k.starts_with("ANTHROPIC_")
-            || k.starts_with("AGENTDOCK_SECRET_")
-            || k == "AGENTDOCK_TOKEN"
+            || crate::bridge::is_agentdock_secret(k)
     }) {
         command.env_remove(key);
     }

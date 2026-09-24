@@ -7,10 +7,10 @@
 //!
 //! When Codex is absent the endpoint reports that plainly and the client keeps
 //! filtering the entries it has already loaded, which is what it did before.
-use crate::{ApiError, AppState, Result, installation, root};
+use crate::{ApiError, AppState, Result, root};
 use agentdock_domain::WorkspaceId;
 use serde::{Deserialize, Serialize};
-use std::{env, path::PathBuf, process::Stdio, time::Duration};
+use std::{path::PathBuf, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Above the app-server's own deadline, so its degraded answer is preferred to
@@ -84,11 +84,11 @@ pub async fn search(
         )))
     })?;
 
-    let script = env::var_os("AGENTDOCK_SEARCH_BRIDGE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            installation::native_bridge(&state.state_dir).with_file_name("file-search.mjs")
-        });
+    let script = crate::bridge::script(
+        &state.state_dir,
+        "AGENTDOCK_SEARCH_BRIDGE",
+        "file-search.mjs",
+    );
     let job = serde_json::json!({
         "cwd": cwd,
         "query": query,
@@ -96,22 +96,7 @@ pub async fn search(
         "config_dir": home,
     });
 
-    let mut command = tokio::process::Command::new(crate::native_history::js_runtime(
-        env::var_os("AGENTDOCK_JS_RUNTIME"),
-        env::var_os("AGENTDOCK_NODE_BIN"),
-    ));
-    command
-        .arg(&script)
-        .kill_on_drop(true)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    for (key, _) in env::vars()
-        .filter(|(key, _)| key.starts_with("AGENTDOCK_SECRET_") || key == "AGENTDOCK_TOKEN")
-    {
-        command.env_remove(key);
-    }
-
+    let mut command = crate::bridge::node_command(&[], &script);
     let Ok(mut child) = command.spawn() else {
         return Ok(SearchResults::default());
     };
