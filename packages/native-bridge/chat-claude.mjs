@@ -89,6 +89,8 @@ export function keepsSelection(models,selected,reported){
   return reported.toLowerCase().includes(selected.replace(/\[.*\]$/,'').toLowerCase());
 }
 export class ClaudeChat extends ChatBase {
+  /** Steered message ids Claude Code has not read back yet. @type {Set<string> | undefined} */
+  unconsumed;
   async initialize() {
     this.launch=claudeLaunch(this.job);this.tools=new Map();
     this.port=new NativeProcess(this.job.program,this.launch.args,this.job.cwd,message=>this.notification(message),message=>this.fatal(message),()=>this.fatal('Claude Code exited.'),this.options);

@@ -19,7 +19,7 @@ importers:
         version: link:../../packages/protocol
       '@vitejs/plugin-vue':
         specifier: 6.0.8
-        version: 6.0.8(vite@8.2.2(esbuild@0.28.2)(tsx@4.23.13))(vue@3.5.42(typescript@5.9.3))
+        version: 6.0.8(vite@8.2.2(@types/node@24.13.6)(esbuild@0.28.2)(tsx@4.23.13))(vue@3.5.42(typescript@5.9.3))
       '@xterm/addon-fit':
         specifier: 0.11.0
         version: 0.11.0
@@ -34,7 +34,7 @@ importers:
         version: 5.9.3
       vite:
         specifier: 8.2.2
-        version: 8.2.2(esbuild@0.28.2)(tsx@4.23.13)
+        version: 8.2.2(@types/node@24.13.6)(esbuild@0.28.2)(tsx@4.23.13)
       vue:
         specifier: 3.5.42
         version: 3.5.42(typescript@5.9.3)
@@ -48,6 +48,13 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: 0.3.266
         version: 0.3.266(@anthropic-ai/sdk@0.124.0(zod@4.5.4))(@modelcontextprotocol/sdk@1.30.0(zod@4.5.4))(zod@4.5.4)
+    devDependencies:
+      '@types/node':
+        specifier: 24.13.6
+        version: 24.13.6
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
 
   packages/protocol: {}
 
@@ -414,6 +421,9 @@ packages:
 
   '@stablelib/base64@1.0.1':
     resolution: {integrity: sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ==}
+
+  '@types/node@24.13.6':
+    resolution: {integrity: sha512-SGrw/h3KPFshy3OE6ZL53LMBG5vGQQ8/gIpiqz/kRZhPJ7HgwCEs8LBuNtWLa8dvGZVpSF7+Bf+c11HUrCb/yg==}
 
   '@vitejs/plugin-vue@6.0.8':
     resolution: {integrity: sha512-0ZjgOg7oO6farnNGup7yvoM/YXZV84OZxHAwtflItNa/6zzQyVb5LNxyea3FEKEX2XlagIKzrlH7wwxkKgtiew==}
@@ -972,6 +982,9 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
+  undici-types@7.18.2:
+    resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
+
   unpipe@1.0.0:
     resolution: {integrity: sha512-pjy2bYhSsufwWlKwPc+l3cN7+wuJlK6uz0YdJEOlQDbl6jo/YlPi4mb8agUkVC8BF7V8NuzeyPNqRksA3hztKQ==}
     engines: {node: '>= 0.8'}
@@ -1276,10 +1289,14 @@ snapshots:
 
   '@stablelib/base64@1.0.1': {}
 
-  '@vitejs/plugin-vue@6.0.8(vite@8.2.2(esbuild@0.28.2)(tsx@4.23.13))(vue@3.5.42(typescript@5.9.3))':
+  '@types/node@24.13.6':
+    dependencies:
+      undici-types: 7.18.2
+
+  '@vitejs/plugin-vue@6.0.8(vite@8.2.2(@types/node@24.13.6)(esbuild@0.28.2)(tsx@4.23.13))(vue@3.5.42(typescript@5.9.3))':
     dependencies:
       '@rolldown/pluginutils': 1.0.1
-      vite: 8.2.2(esbuild@0.28.2)(tsx@4.23.13)
+      vite: 8.2.2(@types/node@24.13.6)(esbuild@0.28.2)(tsx@4.23.13)
       vue: 3.5.42(typescript@5.9.3)
 
   '@volar/language-core@2.4.28':
@@ -1886,11 +1903,13 @@ snapshots:
 
   typescript@5.9.3: {}
 
+  undici-types@7.18.2: {}
+
   unpipe@1.0.0: {}
 
   vary@1.1.2: {}
 
-  vite@8.2.2(esbuild@0.28.2)(tsx@4.23.13):
+  vite@8.2.2(@types/node@24.13.6)(esbuild@0.28.2)(tsx@4.23.13):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.7
@@ -1898,6 +1917,7 @@ snapshots:
       rolldown: 1.2.8
       tinyglobby: 0.2.17
     optionalDependencies:
+      '@types/node': 24.13.6
       esbuild: 0.28.2
       fsevents: 2.3.3
       tsx: 4.23.13

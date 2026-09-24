@@ -120,8 +120,27 @@ export class NativeProcess {
   }
 }
 
+/**
+ * The turn a chat is running. `early`, `nativeTurn` and `interruptSent` are
+ * Codex's: steers that arrived before its turn had an id, that id, and whether
+ * an interrupt already went out.
+ * @typedef {{ id: string, interrupted: boolean, early?: any[], nativeTurn?: any, interruptSent?: boolean }} Turn
+ */
+
 export class ChatBase {
-  constructor(job, emit, options = {}) { this.job=job;this.emit=emit;this.options=options;this.seen=new Map();this.approvals=new Map();this.ready=false;this.active=undefined;this.closed=false;this.deferred=[]; }
+  constructor(job, emit, options = {}) {
+    this.job=job;this.emit=emit;this.options=options;this.seen=new Map();this.approvals=new Map();this.ready=false;this.closed=false;this.deferred=[];
+    /** @type {Turn | undefined} */ this.active=undefined;
+    // Set by each client's chat once it is known.
+    /** @type {NativeProcess | undefined} */ this.port=undefined;
+    /** @type {string | undefined} */ this.permissionMode=undefined;
+  }
+  /**
+   * The permission modes the client accepts, when it says. Each client's chat
+   * overrides this getter; assigning the property instead would throw there.
+   * @returns {string[] | undefined}
+   */
+  get permissionModes() { return undefined; }
   error(message) { this.emit({type:'error',message:clip(message,2048)}); }
   begin(message) {
     if (!this.ready || this.closed) { this.error('The native client is not ready.');return; }

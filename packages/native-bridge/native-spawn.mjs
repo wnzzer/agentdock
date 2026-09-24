@@ -54,6 +54,12 @@ export function shimTarget(shim) {
 
 const SCRIPT = new Set(['.js', '.mjs', '.cjs']);
 
+/**
+ * @param {string} program
+ * @param {string[]} args
+ * @param {{ platform?: NodeJS.Platform, env?: NodeJS.ProcessEnv, node?: string }} [options]
+ * @returns {{ command: string, args: string[] }}
+ */
 export function nativeCommand(program, args, { platform = process.platform, env = process.env, node = process.execPath } = {}) {
   if (platform !== 'win32') return { command: program, args };
   const path = findProgram(program, env, platform) || program;
@@ -71,13 +77,20 @@ export function nativeCommand(program, args, { platform = process.platform, env 
 
 // A client that cannot be launched fails the way a missing one does: through the
 // child's 'error' event, which every caller already turns into its own message.
+/** @param {unknown} error @returns {import('node:child_process').ChildProcess} */
 function unlaunchable(error) {
-  const child = new EventEmitter();
-  Object.assign(child, { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), pid: undefined, exitCode: null, signalCode: null, kill: () => false });
-  process.nextTick(() => { child.emit('error', error); child.stdout.end(); child.stderr.end(); });
-  return child;
+  const stdout = new PassThrough(), stderr = new PassThrough();
+  const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout, stderr, pid: undefined, exitCode: null, signalCode: null, kill: () => false });
+  process.nextTick(() => { child.emit('error', error); stdout.end(); stderr.end(); });
+  return /** @type {any} */ (child);
 }
 
+/**
+ * @param {string} program
+ * @param {string[]} args
+ * @param {import('node:child_process').SpawnOptions} [options]
+ * @returns {import('node:child_process').ChildProcess}
+ */
 export function spawnNative(program, args, options = {}) {
   let launch;
   try { launch = nativeCommand(program, args); } catch (error) { return unlaunchable(error); }

@@ -59,6 +59,10 @@ export function normalizeLimits(response) {
 export function normalizeClaudeLimits(payload, mappingBasis = 'status_line_window') {
   const limits = payload?.rate_limits ?? payload;
   if (!limits || typeof limits !== 'object' || Array.isArray(limits)) return {};
+  /**
+   * @param {any} value
+   * @returns {{ used_percent: number, resets_at?: any, window_minutes?: number, window_kind?: string, mapping_basis?: string } | undefined}
+   */
   const window = value => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
     const explicitPercent = numeric(value.used_percentage);
@@ -373,6 +377,19 @@ async function claudeUsage(job) {
   };
 }
 
+/**
+ * What an account operation needs from its app-server connection; tests pass a
+ * fake with the same shape.
+ * @typedef {object} AccountClient
+ * @property {(method: string, params?: object, signal?: AbortSignal) => Promise<any>} request
+ * @property {(method: string) => void} notify
+ * @property {(id: string, signal?: AbortSignal) => Promise<any>} waitLogin
+ * @property {() => Promise<void>} close
+ */
+/**
+ * @param {any} job
+ * @param {{ emit?: (event: object) => void, clientFactory?: (job: any) => AccountClient, signal?: AbortSignal, authorizeReset?: (key: string) => Promise<void> }} [options]
+ */
 export async function executeAccount(job, { emit = () => {}, clientFactory = value => new RpcClient(value), signal, authorizeReset = async () => {} } = {}) {
   if (!job || !['codex', 'claude_code'].includes(job.provider) || !['read', 'usage', 'login', 'logout', 'reset_quota'].includes(job.action)) throw new Error('Invalid account operation.');
   if (job.provider === 'claude_code') { const view = await (job.action === 'usage' ? claudeUsage(job) : claudeStatus(job)); emit({ type: 'view', view }); return view; }

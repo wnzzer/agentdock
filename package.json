@@ -17,8 +17,9 @@
     "dev:web": "pnpm --dir apps/web dev",
     "build:web": "pnpm --dir apps/web build",
     "typecheck:web": "pnpm --dir apps/web typecheck",
+    "typecheck:bridge": "pnpm --dir packages/native-bridge typecheck",
     "test": "node --no-experimental-webstorage --import tsx --test --test-timeout=30000 \"apps/web/src/**/*.test.mjs\" \"packages/native-bridge/**/*.test.mjs\" \"npm/**/*.test.mjs\"",
-    "check": "pnpm typecheck:web && pnpm test",
+    "check": "pnpm typecheck:web && pnpm typecheck:bridge && pnpm test",
     "init": "cargo run -p agentdock-server -- init"
   },
   "devDependencies": {

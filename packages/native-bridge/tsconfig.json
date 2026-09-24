@@ -1,0 +1,19 @@
+{
+  // Type-checks the bridge as it ships: plain ES modules run directly by Node,
+  // with no build step. Types come from JSDoc; nothing is emitted. Tests and
+  // their fixtures stand in fakes for real processes and are left out.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["*.mjs"],
+  "exclude": ["*.test.mjs"]
+}
