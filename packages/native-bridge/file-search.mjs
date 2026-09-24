@@ -8,8 +8,8 @@
 // where the search still returns results. So this runs with a config directory
 // that holds no credentials and no history, and cannot read or alter the user's
 // own Codex state — unlike the history bridge, which must use the real one.
-import { spawnNative as spawn, withoutAgentDockSecrets } from "./native-spawn.mjs";
-import { StringDecoder } from "node:string_decoder";
+import { withoutAgentDockSecrets } from "./native-spawn.mjs";
+import { AppServerClient, NOT_STARTED } from "./app-server.mjs";
 
 const MAX_LIMIT = 50;
 // The app-server accepts `limit` and ignores it: asking for 3 still returned 26.
@@ -41,52 +41,29 @@ const limit = Math.min(Number.isInteger(job.limit) && job.limit > 0 ? job.limit 
 const environment = withoutAgentDockSecrets(process.env);
 if (job.config_dir) environment.CODEX_HOME = job.config_dir;
 
-const child = spawn(process.env.AGENTDOCK_CODEX_BIN || "codex", ["app-server"], {
-  cwd: job.cwd, env: environment, stdio: ["pipe", "pipe", "pipe"],
-});
-child.stderr.on("data", () => {}); // never echo native diagnostics into an API response
-
 let settled = false;
 const finish = value => {
   if (settled) return;
   settled = true;
-  child.kill("SIGTERM");
+  server.child.kill("SIGTERM");
   output(value);
   process.exit(0);
 };
+// A launch failure and an early exit each get their own answer: the first means
+// Codex is missing, which the UI treats differently from a search that failed.
+const server = new AppServerClient(process.env.AGENTDOCK_CODEX_BIN || "codex", ["app-server"], {
+  cwd: job.cwd, env: environment,
+  onClose: reason => finish({ error: reason === NOT_STARTED ? "Codex is not installed or could not start" : "Codex app-server exited before answering" }),
+});
 const timer = setTimeout(() => finish({ files: [], truncated: true, timed_out: true }), DEADLINE_MS);
 timer.unref?.();
-for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => { child.kill("SIGTERM"); process.exit(0); });
-child.once("error", () => finish({ error: "Codex is not installed or could not start" }));
-child.once("exit", () => finish({ error: "Codex app-server exited before answering" }));
-
-let sequence = 0, buffer = "", total = 0;
-const pending = new Map();
-const decoder = new StringDecoder("utf8");
-child.stdout.on("data", chunk => {
-  total += chunk.length;
-  if (total > 4 * 1024 * 1024) finish({ error: "Search response exceeds limit" });
-  buffer += decoder.write(chunk);
-  let index;
-  while ((index = buffer.indexOf("\n")) !== -1) {
-    const line = buffer.slice(0, index); buffer = buffer.slice(index + 1);
-    let message; try { message = JSON.parse(line); } catch { continue; }
-    const waiter = pending.get(message.id);
-    if (waiter) { pending.delete(message.id); message.error ? waiter.reject(new Error("rejected")) : waiter.resolve(message.result); }
-  }
-});
-const rpc = (method, params) => new Promise((resolve, reject) => {
-  const id = ++sequence;
-  pending.set(id, { resolve, reject });
-  child.stdin.write(`${JSON.stringify({ id, method, params })}\n`, error => { if (error) reject(new Error("input closed")); });
-});
+for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => { server.child.kill("SIGTERM"); process.exit(0); });
 
 try {
-  await rpc("initialize", { clientInfo: { name: "agentdock", version: "0.1.0" } });
-  child.stdin.write(`${JSON.stringify({ method: "initialized", params: {} })}\n`);
+  await server.initialize({ name: "agentdock", version: "0.1.0" });
   // Confirmed against codex 0.154.0: `roots` is required and must be an array;
   // `root` and `cwd` are both rejected with "missing field `roots`".
-  const result = await rpc("fuzzyFileSearch", { query, roots: [job.cwd], limit });
+  const result = await server.request("fuzzyFileSearch", { query, roots: [job.cwd], limit });
   const rows = Array.isArray(result?.files) ? result.files : [];
   finish({
     files: rows.slice(0, limit).map(row => ({

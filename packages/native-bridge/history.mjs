@@ -1,4 +1,5 @@
-import { spawnNative as spawn, withoutAgentDockSecrets } from "./native-spawn.mjs";
+import { withoutAgentDockSecrets } from "./native-spawn.mjs";
+import { AppServerClient, AppServerError } from "./app-server.mjs";
 import { realpath, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,34 +37,20 @@ export async function discover(job) {
   if(job.provider!=="codex")throw Error("Unsupported history provider");
   const environment=withoutAgentDockSecrets(process.env);
   environment.CODEX_HOME=configDir;
-  const child=spawn(process.env.AGENTDOCK_CODEX_BIN||"codex",["app-server"],{cwd,env:environment,stdio:["pipe","pipe","pipe"]});
-  child.stderr.on("data",()=>{}); // never echo native config/auth diagnostics to the API
-  let sequence=0,buffer="",total=0;const decoder=new StringDecoder("utf8");
-  const pending=new Map();
-  const fail=(message)=>{for(const p of pending.values())p.reject(new Error(message));pending.clear();};
-  child.stdin.on("error",()=>fail("Native history input closed"));
+  const server=new AppServerClient(process.env.AGENTDOCK_CODEX_BIN||"codex",["app-server"],{cwd,env:environment});
   // A cancelled bridge must not leave its metadata-only app-server behind.
-  const cancel=()=>{fail("Native history query cancelled");child.kill("SIGTERM");};
+  const cancel=()=>{server.fail("Native history query cancelled");void server.close();};
   process.once("SIGTERM",cancel);process.once("SIGINT",cancel);
-  child.once("error",()=>fail("Could not start Codex app-server"));
-  child.once("exit",()=>fail("Codex history process exited"));
-  child.stdout.on("data",chunk=>{
-    total+=chunk.length;if(total>4*1024*1024){fail("History response exceeds limit");child.kill();return;}
-    buffer+=decoder.write(chunk);
-    let index;
-    while((index=buffer.indexOf("\n"))!==-1) {
-      const line=buffer.slice(0,index);buffer=buffer.slice(index+1);let message;
-      try{message=JSON.parse(line);}catch{continue;}
-      const p=pending.get(message.id);if(p){pending.delete(message.id);message.error?p.reject(new Error("Native history API rejected the request; check client version.")):p.resolve(message.result);}
-    }
-  });
-  const rpc=(method,params)=>new Promise((resolve,reject)=>{const id=++sequence;pending.set(id,{resolve,reject});child.stdin.write(JSON.stringify({id,method,params})+"\n",err=>{if(err)fail("Native history input closed");});});
+  const rpc=async(method,params)=>{
+    try{return await server.request(method,params);}
+    catch(error){throw error instanceof AppServerError?new Error("Native history API rejected the request; check client version."):error;}
+  };
   let timer;
   try {
     return await Promise.race([
       (async()=>{
         await rpc("initialize",{clientInfo:{name:"agentdock_history",title:"AgentDock history",version:"0.1.0"}});
-        child.stdin.write(JSON.stringify({method:"initialized",params:{}})+"\n");
+        server.notify("initialized");
         const items=[],seenIds=new Set(),seenCursors=new Set();let cursor=null,pages=0;
         do{
           const page=await rpc("thread/list",{cwd,limit:100,cursor,sortKey:"updated_at",modelProviders:[],sourceKinds:["cli","vscode","exec","appServer","unknown"],useStateDbOnly:true});
@@ -80,8 +67,7 @@ export async function discover(job) {
       new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error("Native history query timed out")),12000);}),
     ]);
   }finally{
-    clearTimeout(timer);child.stdin.end();child.kill("SIGTERM");
-    await new Promise(resolve=>{if(child.exitCode!==null||child.signalCode){resolve();return;}const timer=setTimeout(()=>{child.kill("SIGKILL");resolve();},1500);child.once("exit",()=>{clearTimeout(timer);resolve();});});
+    clearTimeout(timer);await server.close();
     process.removeListener("SIGTERM",cancel);process.removeListener("SIGINT",cancel);
   }
 }

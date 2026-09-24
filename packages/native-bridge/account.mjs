@@ -3,6 +3,7 @@
 // official client's OAuth credential from its native store in memory so it can
 // call the provider's own usage endpoint; the credential never leaves here.
 import { spawnNative as spawn } from './native-spawn.mjs';
+import { AppServerCancelled, AppServerClient, AppServerError, AppServerTimeout } from './app-server.mjs';
 import { realpath, stat, readFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -232,48 +233,34 @@ export function usageFailure(cause) {
 export class RpcError extends Error {
   constructor(code) { super(code === -32601 ? 'Installed client does not support this official account operation.' : 'Official account operation failed.'); this.code = code; }
 }
+// The app-server connection for account management. Only the RPC error a
+// client states is shown to the user (as RpcError); every other failure keeps
+// the account wording it always had.
 class RpcClient {
   constructor(job) {
-    this.child = spawn(job.program || 'codex', ['app-server'], { cwd: job.config_dir, env: isolatedEnvironment(process.env, 'codex', job.config_dir, job.config_env), stdio: ['pipe', 'pipe', 'pipe'] });
-    this.pending = new Map(); this.notifications = []; this.waiters = new Set(); this.sequence = 0; this.closed = false;
-    this.child.stderr.on('data', () => {}); // Never reflect native auth diagnostics.
-    this.child.stdin.on('error', () => this.fail());
-    this.child.once('error', () => this.fail()); this.child.once('exit', () => this.fail());
-    let buffer = '', total = 0;
-    this.child.stdout.setEncoding('utf8');
-    this.child.stdout.on('data', chunk => {
-      total += Buffer.byteLength(chunk); buffer += chunk;
-      if (total > 4 * 1024 * 1024 || buffer.length > 1024 * 1024) { this.fail(); this.child.kill(); return; }
-      let newline;
-      while ((newline = buffer.indexOf('\n')) >= 0) {
-        const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
-        let message; try { message = JSON.parse(line); } catch { continue; }
-        if (message.id !== undefined && this.pending.has(message.id)) {
-          const pending = this.pending.get(message.id); this.pending.delete(message.id);
-          message.error ? pending.reject(new RpcError(message.error.code)) : pending.resolve(message.result);
-        } else if (message.method === 'account/login/completed') {
-          this.notifications.push(message.params); this.notifications = this.notifications.slice(-16);
-          for (const wake of this.waiters) wake();
-        } else if (message.id !== undefined && message.method) {
-          this.child.stdin.write(JSON.stringify({ id: message.id, error: { code: -32601, message: 'External token hosting is not supported' } }) + '\n');
-        }
-      }
+    this.notifications = []; this.waiters = new Set();
+    this.server = new AppServerClient(job.program || 'codex', ['app-server'], {
+      cwd: job.config_dir, env: isolatedEnvironment(process.env, 'codex', job.config_dir, job.config_env),
+      onNotification: message => {
+        if (message.method !== 'account/login/completed') return;
+        this.notifications.push(message.params); this.notifications = this.notifications.slice(-16);
+        for (const wake of this.waiters) wake();
+      },
+      onClose: () => { for (const wake of this.waiters) wake(); },
     });
   }
-  fail() { for (const value of this.pending.values()) value.reject(new Error('Native account process closed.')); this.pending.clear(); this.closed = true; for (const wake of this.waiters) wake(); }
-  request(method, params = {}, signal) {
-    if (signal?.aborted || this.closed) return Promise.reject(new Error('Account operation cancelled.'));
-    return new Promise((resolveRequest, rejectRequest) => {
-      const id = ++this.sequence;
-      const finish = (callback, value) => { clearTimeout(timer); signal?.removeEventListener('abort', abort); this.pending.delete(id); callback(value); };
-      const abort = () => finish(rejectRequest, new Error('Account operation cancelled.'));
-      const timer = setTimeout(() => finish(rejectRequest, new Error('Official account request timed out.')), 20000);
-      this.pending.set(id, { resolve: value => finish(resolveRequest, value), reject: error => finish(rejectRequest, error) });
-      signal?.addEventListener('abort', abort, { once: true });
-      this.child.stdin.write(JSON.stringify({ id, method, params }) + '\n', error => { if (error) finish(rejectRequest, new Error('Native account input closed.')); });
-    });
+  get closed() { return this.server.closed; }
+  async request(method, params = {}, signal) {
+    if (this.closed) throw new Error('Account operation cancelled.');
+    try { return await this.server.request(method, params, { signal }); }
+    catch (error) {
+      if (error instanceof AppServerError) throw new RpcError(error.code);
+      if (error instanceof AppServerCancelled) throw new Error('Account operation cancelled.');
+      if (error instanceof AppServerTimeout) throw new Error('Official account request timed out.');
+      throw new Error('Native account process closed.');
+    }
   }
-  notify(method) { this.child.stdin.write(JSON.stringify({ method, params: {} }) + '\n'); }
+  notify(method) { this.server.notify(method); }
   waitLogin(id, signal) {
     return new Promise((resolveWait, rejectWait) => {
       const finish = (callback, value) => { clearTimeout(timer); this.waiters.delete(check); signal?.removeEventListener('abort', check); callback(value); };
@@ -287,14 +274,7 @@ class RpcClient {
       this.waiters.add(check); signal?.addEventListener('abort', check, { once: true }); check();
     });
   }
-  async close() {
-    this.child.stdin.end(); this.child.kill('SIGTERM');
-    await new Promise(resolveClose => {
-      if (this.child.exitCode !== null || this.child.signalCode) { resolveClose(); return; }
-      const timer = setTimeout(() => { this.child.kill('SIGKILL'); resolveClose(); }, 1000);
-      this.child.once('exit', () => { clearTimeout(timer); resolveClose(); });
-    });
-  }
+  close() { return this.server.close(); }
 }
 
 async function readCodex(client, refresh, signal) {

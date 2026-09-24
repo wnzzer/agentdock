@@ -172,6 +172,7 @@ mod tests {
             "chat-codex.mjs",
             "chat-common.mjs",
             "native-spawn.mjs",
+            "app-server.mjs",
         ] {
             assert!(
                 names.iter().any(|name| name == imported),

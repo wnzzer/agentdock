@@ -21,8 +21,12 @@ export function redactEvents(environment, output) {
   };
 }
 
-/** Bounded UTF-8 JSONL, including a fixed deadline for incomplete lines. */
-export function jsonLines(readable, onMessage, onFailure, { maxLine = MAX_NATIVE_LINE, maxTotal = 128 * 1024 * 1024, lineTimeout = 10_000 } = {}) {
+/**
+ * Bounded UTF-8 JSONL, including a fixed deadline for incomplete lines.
+ * `skipInvalid` passes over a line that is not JSON instead of failing the
+ * stream, for protocols that only care about the answers they asked for.
+ */
+export function jsonLines(readable, onMessage, onFailure, { maxLine = MAX_NATIVE_LINE, maxTotal = 128 * 1024 * 1024, lineTimeout = 10_000, skipInvalid = false } = {}) {
   const decoder = new StringDecoder('utf8'); let buffer = '', total = 0, timer, stopped = false;
   const clear = () => { clearTimeout(timer); timer = undefined; };
   const fail = message => { if (!stopped) { stopped = true; clear(); onFailure(message); } };
@@ -35,7 +39,9 @@ export function jsonLines(readable, onMessage, onFailure, { maxLine = MAX_NATIVE
       clear(); const line = buffer.slice(0,index); buffer = buffer.slice(index+1);
       if (Buffer.byteLength(line) > maxLine) { fail('Structured message exceeded its size limit.'); return; }
       if (!line.trim()) continue;
-      try { onMessage(JSON.parse(line)); } catch { fail('Invalid structured message received.'); return; }
+      let message;
+      try { message = JSON.parse(line); } catch { if (skipInvalid) continue; fail('Invalid structured message received.'); return; }
+      try { onMessage(message); } catch { fail('Invalid structured message received.'); return; }
       if (stopped) return;
     }
     if (Buffer.byteLength(buffer) > maxLine) { fail('Structured message exceeded its size limit.'); return; }
