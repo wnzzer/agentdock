@@ -31,9 +31,7 @@ onMounted(() => { void poll(); });
 onBeforeUnmount(() => { disposed = true; if (timer) clearTimeout(timer); });
 
 const memoryPercent = computed(() => usage.value && usage.value.memory_total_bytes ? usage.value.memory_used_bytes / usage.value.memory_total_bytes * 100 : 0);
-/** Colour is for trouble only. Memory runs high as a matter of course -- the
- * system counts its cache as used -- so it takes more before it warns. */
-const level = (percent: number, warn = 85, danger = 95) => percent >= danger ? 'danger' : percent >= warn ? 'warn' : 'ok';
+const level = (percent: number) => percent >= 90 ? 'danger' : percent >= 70 ? 'warn' : 'ok';
 function bytes(value: number) {
   const gb = value / 1024 ** 3;
   return gb >= 1 ? `${gb.toFixed(gb >= 10 ? 0 : 1)} GB` : `${Math.round(value / 1024 ** 2)} MB`;
@@ -51,7 +49,7 @@ function toggle() { open.value = !open.value; if (open.value) { if (timer) clear
   <div v-if="usage&&!unsupported" class="host-usage">
     <button type="button" class="host-usage-chip" :aria-expanded="open" :title="t('CPU and memory on this host')" @click="toggle">
       <span :class="['host-meter', level(usage.cpu_percent)]"><b>CPU</b><i :style="{ '--fill': Math.min(100, usage.cpu_percent) + '%' }" />{{ Math.round(usage.cpu_percent) }}%</span>
-      <span :class="['host-meter', level(memoryPercent, 92, 97)]"><b>{{ t('Mem') }}</b><i :style="{ '--fill': memoryPercent + '%' }" />{{ bytes(usage.memory_used_bytes) }}</span>
+      <span :class="['host-meter', level(memoryPercent)]"><b>{{ t('Mem') }}</b><i :style="{ '--fill': memoryPercent + '%' }" />{{ bytes(usage.memory_used_bytes) }}</span>
     </button>
     <div v-if="open" class="host-usage-panel" role="dialog" :aria-label="t('CPU and memory on this host')">
       <header><strong>{{ t('This host') }}</strong><small>{{ t('{count} cores', { count: usage.cpu_count }) }} · {{ bytes(usage.memory_used_bytes) }} / {{ bytes(usage.memory_total_bytes) }}</small></header>
@@ -75,7 +73,7 @@ function toggle() { open.value = !open.value; if (open.value) { if (timer) clear
 .host-usage-chip:hover{background:var(--fill)}
 .host-meter{display:flex;align-items:center;gap:5px;font-variant-numeric:tabular-nums;color:var(--ink-soft)}
 .host-meter b{font-weight:600;color:var(--muted)}
-.host-meter i{--bar:#a9b6bf;position:relative;width:34px;height:4px;border-radius:3px;background:var(--fill);overflow:hidden}
+.host-meter i{--bar:var(--teal);position:relative;width:34px;height:4px;border-radius:3px;background:var(--fill);overflow:hidden}
 .host-meter i::after{content:"";position:absolute;inset:0 auto 0 0;width:var(--fill);background:var(--bar);border-radius:3px;transition:width .6s ease}
 .host-meter.warn i{--bar:#c88a1c}.host-meter.danger i{--bar:#c2415a}
 .host-meter.danger{color:#c2415a}

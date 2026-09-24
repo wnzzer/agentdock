@@ -35,15 +35,22 @@ const tapSelect = ref(false);
 let terminal: Terminal | undefined;
 let fit: FitAddon | undefined;
 let observer: ResizeObserver | undefined;
-let resizeFrame = 0;
+let resizeFrame = 0, sized = false;
 let disposed = false;
 const subscriptions: Array<{ dispose: () => void }> = [];
 const stream = createSessionStream({
   createSocket: url => new WebSocket(url),
   onState(next, message) { state.value = next; notice.value = message; nativeNotice.value = false; emit("status", next === "connected"); },
-  onOpen: resize,
+  onOpen() { sized = false; resize(); },
   onMessage(data) {
-    if (data instanceof ArrayBuffer) { terminal?.write(new Uint8Array(data)); return; }
+    if (data instanceof ArrayBuffer) {
+      terminal?.write(new Uint8Array(data));
+      // A size sent as the socket opens can reach the server before a reopened
+      // session's process exists, leaving the shell at the size it started
+      // with. Its first output proves the process is there; say the size again.
+      if (!sized) { sized = true; resize(); }
+      return;
+    }
     if (typeof data !== "string") return;
     let control: { type: string; message?: string; code?: number };
     try {
