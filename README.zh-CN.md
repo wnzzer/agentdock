@@ -11,7 +11,7 @@
   <a href="https://github.com/wnzzer/agentdock/actions/workflows/check.yml"><img src="https://github.com/wnzzer/agentdock/actions/workflows/check.yml/badge.svg" alt="CI 状态"></a>
   <a href="https://www.npmjs.com/package/@wnzzer/agentdock"><img src="https://img.shields.io/npm/v/%40wnzzer%2Fagentdock?style=flat-square&label=npm&color=0c8376" alt="npm 版本"></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A5%2024-0c8376?style=flat-square" alt="Node.js 24 及以上">
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-7760b5?style=flat-square" alt="平台：macOS 与 Linux">
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-7760b5?style=flat-square" alt="平台：macOS、Linux 与 Windows">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="许可证：MIT"></a>
 </p>
 
@@ -114,7 +114,10 @@ npm install -g @wnzzer/agentdock
 | ----- | ------------------------ |
 | macOS | arm64、x64               |
 | Linux | x64、arm64（静态 musl）  |
+| Windows | x64                    |
 | 其他  | [从源码构建](#开发)      |
+
+在 Windows 上，终端会话默认打开 PowerShell（已安装 `pwsh` 时优先使用；可用 `AGENTDOCK_SHELL` 指定其他 shell）。`agentdock stop` 会直接结束网关及其 Agent 进程，因为 Windows 没有可以发给后台控制台程序的温和终止信号。
 
 每个 [release](https://github.com/wnzzer/agentdock/releases) 也附带 tarball 和 `SHA256SUMS`。
 

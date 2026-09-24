@@ -106,7 +106,7 @@ pub struct GitDiff {
 /// escapes. Existing paths are canonicalised; for a new path the canonical
 /// parent is checked and the original (non-existent) path is returned.
 pub fn safe_path(root: &Path, relative: &str) -> Result<PathBuf, IoError> {
-    let canonical_root = fs::canonicalize(root).map_err(IoError::from)?;
+    let canonical_root = dunce::canonicalize(root).map_err(IoError::from)?;
     if !canonical_root.is_dir() {
         return Err(IoError::new(400, "workspace root is not a directory"));
     }
@@ -114,7 +114,7 @@ pub fn safe_path(root: &Path, relative: &str) -> Result<PathBuf, IoError> {
     let candidate = canonical_root.join(&rel);
     match fs::symlink_metadata(&candidate) {
         Ok(_) => {
-            let canonical = fs::canonicalize(&candidate).map_err(IoError::from)?;
+            let canonical = dunce::canonicalize(&candidate).map_err(IoError::from)?;
             if !canonical.starts_with(&canonical_root) {
                 return Err(IoError::new(403, "path escapes workspace root"));
             }
@@ -133,7 +133,7 @@ pub fn safe_path(root: &Path, relative: &str) -> Result<PathBuf, IoError> {
                     .parent()
                     .ok_or_else(|| IoError::new(400, "invalid path"))?;
             }
-            let canonical_parent = fs::canonicalize(parent).map_err(IoError::from)?;
+            let canonical_parent = dunce::canonicalize(parent).map_err(IoError::from)?;
             if !canonical_parent.starts_with(&canonical_root)
                 || is_protected_path(
                     canonical_parent
@@ -252,7 +252,7 @@ pub async fn list_files(root: &Path, relative: &str) -> Result<Vec<FileEntry>, I
     let root = root.to_path_buf();
     let relative = relative.to_owned();
     tokio::task::spawn_blocking(move || {
-        let canonical_root = fs::canonicalize(&root).map_err(IoError::from)?;
+        let canonical_root = dunce::canonicalize(&root).map_err(IoError::from)?;
         let directory = safe_path(&canonical_root, &relative)?;
         let metadata = fs::metadata(&directory).map_err(IoError::from)?;
         if !metadata.is_dir() {
@@ -325,7 +325,7 @@ pub async fn read_file(root: &Path, path: &str) -> Result<TextFile, IoError> {
     let root = root.to_path_buf();
     let path = path.to_owned();
     tokio::task::spawn_blocking(move || {
-        let canonical_root = fs::canonicalize(&root).map_err(IoError::from)?;
+        let canonical_root = dunce::canonicalize(&root).map_err(IoError::from)?;
         let rel = safe_relative(&path)?;
         let target = asset_path(&canonical_root, &path)?;
         if is_protected_path(&rel) {
@@ -366,7 +366,7 @@ pub async fn read_host_file(roots: &[PathBuf], path: &str) -> Result<TextFile, I
         if !requested.is_absolute() {
             return Err(IoError::new(400, "an absolute path is required"));
         }
-        let target = fs::canonicalize(requested).map_err(IoError::from)?;
+        let target = dunce::canonicalize(requested).map_err(IoError::from)?;
         let root = roots
             .iter()
             .find(|root| target.starts_with(root))
@@ -412,7 +412,7 @@ pub async fn write_file(
     let content = content.to_owned();
     let expected_version = expected_version.map(str::to_owned);
     tokio::task::spawn_blocking(move || {
-        let canonical_root = fs::canonicalize(&root).map_err(IoError::from)?;
+        let canonical_root = dunce::canonicalize(&root).map_err(IoError::from)?;
         let rel = safe_relative(&path)?;
         if rel.as_os_str().is_empty() {
             return Err(IoError::new(400, "file path is required"));
@@ -563,7 +563,7 @@ async fn run_git(
 }
 
 pub async fn git_status(root: &Path) -> Result<GitStatus, IoError> {
-    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    let root = dunce::canonicalize(root).map_err(IoError::from)?;
     let (stdout, stderr, success) = run_git(
         root.as_path(),
         vec![
@@ -660,7 +660,7 @@ fn git_error(stderr: &[u8]) -> String {
 }
 
 pub async fn git_diff(root: &Path, path: Option<&str>, staged: bool) -> Result<GitDiff, IoError> {
-    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    let root = dunce::canonicalize(root).map_err(IoError::from)?;
     let safe = if let Some(path) = path {
         let rel = safe_relative(path)?;
         if is_protected_path(&rel) {
@@ -761,7 +761,7 @@ pub async fn git_diff(root: &Path, path: Option<&str>, staged: bool) -> Result<G
 
 /// Shared guard for media and text reads. Both lexical and resolved paths matter.
 pub fn asset_path(root: &Path, relative: &str) -> Result<PathBuf, IoError> {
-    let canonical = fs::canonicalize(root)?;
+    let canonical = dunce::canonicalize(root)?;
     let rel = safe_relative(relative)?;
     if is_protected_path(&rel) {
         return Err(IoError::new(403, "protected path"));
@@ -789,7 +789,7 @@ pub async fn git_unstage(root: &Path, paths: &[String]) -> Result<(), IoError> {
 }
 
 async fn git_index_op(root: &Path, operation: &str, paths: &[String]) -> Result<(), IoError> {
-    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    let root = dunce::canonicalize(root).map_err(IoError::from)?;
     if paths.is_empty() {
         return Ok(());
     }
@@ -841,7 +841,7 @@ async fn git_index_op(root: &Path, operation: &str, paths: &[String]) -> Result<
 /// the file explorer uses, which never follows a link out of the workspace.
 /// Paths are named one by one: there is no "discard everything" spelling.
 pub async fn git_discard(root: &Path, paths: &[String]) -> Result<(), IoError> {
-    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    let root = dunce::canonicalize(root).map_err(IoError::from)?;
     if paths.is_empty() {
         return Ok(());
     }
@@ -918,7 +918,7 @@ async fn git_text(root: &Path, args: &[&str]) -> Result<Option<String>, IoError>
 
 /// Local branches and the worktrees of this repository.
 pub async fn git_branches(root: &Path) -> Result<GitBranches, IoError> {
-    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    let root = dunce::canonicalize(root).map_err(IoError::from)?;
     let branches = git_text(&root, &["branch", "--format=%(refname:short)"])
         .await?
         .ok_or_else(|| IoError::new(400, "Not a Git repository"))?;
@@ -949,7 +949,10 @@ fn parse_worktrees(listing: &str) -> Vec<GitWorktree> {
             let mut bare = false;
             for line in block.lines() {
                 if let Some(value) = line.strip_prefix("worktree ") {
-                    path = Some(value.to_owned());
+                    // Git for Windows prints `C:/…`; rebuilding from components
+                    // gives the native form every other path here is in.
+                    let native: PathBuf = Path::new(value).components().collect();
+                    path = Some(native.to_string_lossy().into_owned());
                 } else if let Some(value) = line.strip_prefix("branch ") {
                     branch = Some(value.trim_start_matches("refs/heads/").to_owned());
                 } else if line == "bare" {
@@ -986,7 +989,7 @@ async fn valid_branch(root: &Path, branch: &str) -> Result<(), IoError> {
 /// Git refuses a switch that would overwrite uncommitted work, and that
 /// refusal is passed on rather than forced through.
 pub async fn git_switch(root: &Path, branch: &str, create: bool) -> Result<(), IoError> {
-    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    let root = dunce::canonicalize(root).map_err(IoError::from)?;
     valid_branch(&root, branch).await?;
     let mut args: Vec<String> = vec!["switch".into()];
     if create {
@@ -1004,7 +1007,7 @@ pub async fn git_switch(root: &Path, branch: &str, create: bool) -> Result<(), I
 /// Rename a local branch. A worktree that has it checked out follows the new
 /// name -- Git updates it -- so no checkout has to move.
 pub async fn git_branch_rename(root: &Path, from: &str, to: &str) -> Result<(), IoError> {
-    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    let root = dunce::canonicalize(root).map_err(IoError::from)?;
     valid_branch(&root, from).await?;
     valid_branch(&root, to).await?;
     let args = vec!["branch".into(), "-m".into(), from.to_owned(), to.to_owned()];
@@ -1019,7 +1022,7 @@ pub async fn git_branch_rename(root: &Path, from: &str, to: &str) -> Result<(), 
 /// Delete a local branch. Git refuses one that is checked out anywhere, and
 /// -- unless `force` -- one whose commits are not merged; both are passed on.
 pub async fn git_branch_delete(root: &Path, branch: &str, force: bool) -> Result<(), IoError> {
-    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    let root = dunce::canonicalize(root).map_err(IoError::from)?;
     valid_branch(&root, branch).await?;
     let args = vec![
         "branch".into(),
@@ -1038,7 +1041,7 @@ pub async fn git_branch_delete(root: &Path, branch: &str, force: bool) -> Result
 /// Git refuses one with uncommitted changes unless `force`; the repository's
 /// own checkout can never be removed this way.
 pub async fn git_worktree_remove(root: &Path, path: &str, force: bool) -> Result<(), IoError> {
-    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    let root = dunce::canonicalize(root).map_err(IoError::from)?;
     let listing = git_text(&root, &["worktree", "list", "--porcelain"])
         .await?
         .ok_or_else(|| IoError::new(400, "Not a Git repository"))?;
@@ -1097,7 +1100,7 @@ pub fn worktree_path(main_checkout: &Path, branch: &str) -> Result<PathBuf, IoEr
 /// Add a worktree for `branch` (created from HEAD when `create`), returning
 /// its directory. An existing directory is never reused or overwritten.
 pub async fn git_worktree_add(root: &Path, branch: &str, create: bool) -> Result<PathBuf, IoError> {
-    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    let root = dunce::canonicalize(root).map_err(IoError::from)?;
     valid_branch(&root, branch).await?;
     let listing = git_text(&root, &["worktree", "list", "--porcelain"])
         .await?
@@ -1137,7 +1140,7 @@ pub async fn git_commit(root: &Path, message: &str) -> Result<String, IoError> {
     if message.trim().is_empty() {
         return Err(IoError::new(400, "commit message is required"));
     }
-    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    let root = dunce::canonicalize(root).map_err(IoError::from)?;
     let args = vec!["commit".into(), "-m".into(), message.to_owned()];
     let (_stdout, stderr, success) = run_git(&root, args, COMMIT_TIMEOUT).await?;
     if !success {
@@ -1249,7 +1252,7 @@ pub async fn write_attachment(
     let payload = bytes.to_vec();
     let size = payload.len() as u64;
     tokio::task::spawn_blocking(move || {
-        let canonical_root = fs::canonicalize(&root).map_err(IoError::from)?;
+        let canonical_root = dunce::canonicalize(&root).map_err(IoError::from)?;
         let rel = safe_relative(&relative)?;
         if is_protected_path(&rel) {
             return Err(IoError::new(403, "protected path cannot be written"));
@@ -1302,7 +1305,7 @@ pub async fn create_file(root: &Path, relative: &str) -> Result<FileEntry, IoErr
     let root = root.to_path_buf();
     let relative = relative.to_owned();
     tokio::task::spawn_blocking(move || {
-        let canonical_root = fs::canonicalize(&root).map_err(IoError::from)?;
+        let canonical_root = dunce::canonicalize(&root).map_err(IoError::from)?;
         let rel = safe_relative(&relative)?;
         if rel.as_os_str().is_empty() {
             return Err(IoError::new(400, "file name is required"));
@@ -1359,7 +1362,7 @@ pub async fn rename_entry(root: &Path, from: &str, to: &str) -> Result<FileEntry
     let from = from.to_owned();
     let to = to.to_owned();
     tokio::task::spawn_blocking(move || {
-        let canonical_root = fs::canonicalize(&root).map_err(IoError::from)?;
+        let canonical_root = dunce::canonicalize(&root).map_err(IoError::from)?;
         let source = safe_relative(&from)?;
         let destination = safe_relative(&to)?;
         if source.as_os_str().is_empty() || destination.as_os_str().is_empty() {
@@ -1415,7 +1418,7 @@ pub async fn rename_entry(root: &Path, from: &str, to: &str) -> Result<FileEntry
 
 pub async fn delete_entry(root: &Path, relative: &str) -> Result<(), IoError> {
     let canonical = safe_path(root, relative)?;
-    let canonical_root = fs::canonicalize(root).map_err(IoError::from)?;
+    let canonical_root = dunce::canonicalize(root).map_err(IoError::from)?;
     if canonical == canonical_root {
         return Err(IoError::new(400, "the workspace root cannot be deleted"));
     }
@@ -1627,6 +1630,9 @@ mod tests {
                 vec!["init"],
                 vec!["config", "user.email", "agentdock@example.com"],
                 vec!["config", "user.name", "AgentDock"],
+                // Git for Windows commonly defaults this on, which rewrites the
+                // fixtures' line endings on checkout.
+                vec!["config", "core.autocrlf", "false"],
             ] {
                 let mut cmd = StdCommand::new("git");
                 cmd.args(args).current_dir(&path);
@@ -1741,7 +1747,7 @@ mod tests {
         let tree = git_worktree_add(&repo.path, "feature/y", true)
             .await
             .unwrap();
-        let canonical = fs::canonicalize(&repo.path).unwrap();
+        let canonical = dunce::canonicalize(&repo.path).unwrap();
         let expected = canonical.parent().unwrap().join(format!(
             "{}.worktrees",
             canonical.file_name().unwrap().to_string_lossy()
@@ -1816,7 +1822,7 @@ mod tests {
                 .branches
                 .contains(&"renamed".to_owned())
         );
-        let main = fs::canonicalize(&repo.path)
+        let main = dunce::canonicalize(&repo.path)
             .unwrap()
             .to_string_lossy()
             .into_owned();
@@ -1894,7 +1900,7 @@ mod tests {
         fs::write(root.join("notes.md"), "# notes\n").unwrap();
         fs::write(root.join(".ssh/id"), "secret").unwrap();
         fs::write(base.join("outside.txt"), "outside").unwrap();
-        let roots = vec![fs::canonicalize(&root).unwrap()];
+        let roots = vec![dunce::canonicalize(&root).unwrap()];
         let file = read_host_file(&roots, root.join("notes.md").to_str().unwrap())
             .await
             .unwrap();

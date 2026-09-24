@@ -13,6 +13,31 @@ use tokio_tungstenite::{
     tungstenite::{Message as WsMessage, client::IntoClientRequest},
 };
 
+/// A native process that stays alive until it is stopped: `/bin/sh` with
+/// `unix_args`, or on Windows an interactive `cmd.exe` waiting for input.
+fn waiting_process(unix_args: &[&str]) -> (String, Vec<String>) {
+    if cfg!(windows) {
+        ("cmd.exe".into(), vec!["/Q".into()])
+    } else {
+        (
+            "/bin/sh".into(),
+            unix_args.iter().map(|arg| (*arg).to_owned()).collect(),
+        )
+    }
+}
+
+/// Terminal input that makes a [`waiting_process`] print `{first}_{second}_READY`.
+/// The typed text never contains that sentinel, so the terminal's echo of the
+/// input cannot satisfy a test. On Windows it first answers the cursor query
+/// ConPTY opens with, as xterm.js does in the app.
+fn announce(first: &str, second: &str) -> String {
+    if cfg!(windows) {
+        format!("\x1b[1;1Recho {first}_^{second}_READY\r")
+    } else {
+        format!("printf '{first}_%s_READY\\n' '{second}'\r")
+    }
+}
+
 struct Fixture {
     state: AppState,
     path: PathBuf,
@@ -40,8 +65,8 @@ impl Fixture {
             store: Arc::new(Store::open(":memory:").unwrap()),
             runtime: RuntimeManager::new(),
             state_dir: path.join("state"),
-            browse_roots: vec![std::fs::canonicalize(path.join("repo")).unwrap()],
-            workspace_roots: vec![std::fs::canonicalize(&path).unwrap()],
+            browse_roots: vec![dunce::canonicalize(path.join("repo")).unwrap()],
+            workspace_roots: vec![dunce::canonicalize(&path).unwrap()],
             native_sources: Vec::new(),
             native_bridge: PathBuf::from("packages/native-bridge/history.mjs"),
             chat_bridge: PathBuf::from("packages/native-bridge/chat.mjs"),
@@ -63,7 +88,7 @@ impl Fixture {
         let source_id = format!("fixture-native-{}", self.state.native_sources.len());
         let config = self.path.join(&source_id);
         fs::create_dir(&config).unwrap();
-        let config = fs::canonicalize(config).unwrap();
+        let config = dunce::canonicalize(config).unwrap();
         fs::write(
             config.join("history-fixture.json"),
             serde_json::to_vec(&json!({"items":items,"truncated":false})).unwrap(),
@@ -238,7 +263,7 @@ async fn workspace_file_git_layout_workflow() {
     .await;
     assert_eq!(status, StatusCode::OK, "{tree}");
     let tree_path = tree["path"].as_str().unwrap().to_owned();
-    assert!(tree_path.ends_with("repo.worktrees/feature-tree"));
+    assert!(std::path::Path::new(&tree_path).ends_with("repo.worktrees/feature-tree"));
     assert_eq!(tree["branch"], "feature/tree");
     let (_, listed) = call(f.app(), "GET", "/api/workspaces", Value::Null).await;
     assert_eq!(listed.as_array().unwrap().len(), 1, "no second workspace");
@@ -926,8 +951,8 @@ async fn websocket_detach_reconnect_retains_native_process() {
         .start(
             s.id.to_string(),
             agentdock_runtime::SpawnSpec {
-                program: "/bin/sh".into(),
-                args: vec!["-i".into()],
+                program: waiting_process(&["-i"]).0,
+                args: waiting_process(&["-i"]).1,
                 cwd: f.path.join("repo"),
                 env: BTreeMap::new(),
                 env_remove: Vec::new(),
@@ -945,7 +970,7 @@ async fn websocket_detach_reconnect_retains_native_process() {
         .insert("origin", format!("http://{addr}").parse().unwrap());
     let (mut ws, _) = connect_async(req).await.unwrap();
     ws.send(WsMessage::Text(
-        json!({"type":"input","data":"stty -echo; printf 'AD_%s_READY\\n' 'SOCKET'\r"})
+        json!({"type":"input","data":if cfg!(windows) { announce("AD", "SOCKET") } else { format!("stty -echo; {}", announce("AD", "SOCKET")) }})
             .to_string()
             .into(),
     ))
@@ -996,9 +1021,9 @@ async fn websocket_detach_reconnect_retains_native_process() {
 async fn native_history_requires_confirmation_and_filters_cross_workspace_imports() {
     let mut f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
     let workspace = register(&f).await;
-    let cwd = fs::canonicalize(f.path.join("repo")).unwrap();
+    let cwd = dunce::canonicalize(f.path.join("repo")).unwrap();
     fs::create_dir(f.path.join("other-repo")).unwrap();
-    let other_cwd = fs::canonicalize(f.path.join("other-repo")).unwrap();
+    let other_cwd = dunce::canonicalize(f.path.join("other-repo")).unwrap();
     let other = f
         .state
         .store
@@ -1074,9 +1099,9 @@ async fn native_history_requires_confirmation_and_filters_cross_workspace_import
 async fn native_history_list_is_metadata_only_and_registry_identity_is_authoritative() {
     let mut f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
     let workspace = register(&f).await;
-    let cwd = fs::canonicalize(f.path.join("repo")).unwrap();
+    let cwd = dunce::canonicalize(f.path.join("repo")).unwrap();
     fs::create_dir(f.path.join("unrelated-repo")).unwrap();
-    let unrelated = fs::canonicalize(f.path.join("unrelated-repo")).unwrap();
+    let unrelated = dunce::canonicalize(f.path.join("unrelated-repo")).unwrap();
     let (source_id, config) = f.native_source(ProviderKind::ClaudeCode, vec![
         json!({"id":"claude-thread","provider":"claude_code","title":"长".repeat(300),"cwd":cwd,"updated_at":"2026-09-09T00:00:00Z","imported_session_id":"not-authoritative","api_key":"DO_NOT_EXPOSE_FAKE_KEY","messages":[{"content":"DO_NOT_EXPOSE_FAKE_CONTENT"}],"config_dir":"DO_NOT_EXPOSE_FAKE_CONFIG"}),
         json!({"id":"unrelated-thread","provider":"claude_code","title":"other","cwd":unrelated,"updated_at":"2026-09-09T00:00:00Z"}),
@@ -1139,7 +1164,7 @@ async fn native_history_list_is_metadata_only_and_registry_identity_is_authorita
 #[test]
 fn native_history_resume_preserves_original_configuration_and_rejects_source_changes() {
     let mut f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
-    let cwd = fs::canonicalize(f.path.join("repo")).unwrap();
+    let cwd = dunce::canonicalize(f.path.join("repo")).unwrap();
     let workspace = f
         .state
         .store
@@ -1222,7 +1247,7 @@ fn native_history_resume_preserves_original_configuration_and_rejects_source_cha
 #[tokio::test]
 async fn opening_a_structured_session_in_a_terminal_resumes_its_own_configuration_home() {
     let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
-    let cwd = fs::canonicalize(f.path.join("repo")).unwrap();
+    let cwd = dunce::canonicalize(f.path.join("repo")).unwrap();
     let workspace = f
         .state
         .store
@@ -1297,6 +1322,7 @@ async fn opening_a_structured_session_in_a_terminal_resumes_its_own_configuratio
                 .join("sessions")
                 .join(source.id.to_string())
                 .canonicalize()
+                .map(|path| dunce::simplified(&path).to_path_buf())
                 .unwrap()
                 .to_str()
                 .unwrap()
@@ -1319,7 +1345,7 @@ async fn opening_a_structured_session_in_a_terminal_resumes_its_own_configuratio
 #[tokio::test]
 async fn opening_a_terminal_before_a_conversation_exists_is_refused() {
     let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
-    let cwd = fs::canonicalize(f.path.join("repo")).unwrap();
+    let cwd = dunce::canonicalize(f.path.join("repo")).unwrap();
     let workspace = f
         .state
         .store
@@ -1359,7 +1385,7 @@ async fn opening_a_terminal_before_a_conversation_exists_is_refused() {
 fn native_history_resume_rejects_original_source_retargeted_by_symlink() {
     use std::os::unix::fs::symlink;
     let mut f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
-    let cwd = fs::canonicalize(f.path.join("repo")).unwrap();
+    let cwd = dunce::canonicalize(f.path.join("repo")).unwrap();
     let workspace = f
         .state
         .store
@@ -1455,7 +1481,7 @@ async fn native_config_import_requires_confirmation_and_only_exposes_source_meta
 async fn imported_native_profiles_create_new_sessions_without_copying_or_overriding_config() {
     let mut f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
     let workspace = register(&f).await;
-    let cwd = fs::canonicalize(f.path.join("repo")).unwrap();
+    let cwd = dunce::canonicalize(f.path.join("repo")).unwrap();
     for (provider, key, config_file) in [
         (ProviderKind::Codex, "CODEX_HOME", "config.toml"),
         (
@@ -1467,6 +1493,7 @@ async fn imported_native_profiles_create_new_sessions_without_copying_or_overrid
         let (source_id, config) = f.native_source(provider.clone(), Vec::new());
         let original = b"Fixture config is intentionally not parsed: preserve these exact bytes";
         fs::write(config.join(config_file), original).unwrap();
+        #[cfg(unix)]
         let mode_before = fs::metadata(&config).unwrap().permissions();
         let body =
             json!({"source_id":source_id,"name":"Host account","confirmed_shared_config":true});
@@ -1624,7 +1651,7 @@ async fn native_profile_rename_and_unlink_preserve_existing_session_reference() 
     let spec = providers::build(
         &f.state,
         &stored,
-        fs::canonicalize(f.path.join("repo")).unwrap(),
+        dunce::canonicalize(f.path.join("repo")).unwrap(),
     )
     .unwrap();
     assert_eq!(spec.env["CODEX_HOME"], config.to_str().unwrap());
@@ -1654,7 +1681,7 @@ async fn native_profile_rejects_missing_changed_or_wrong_provider_sources() {
     )
     .await;
     let session: Session = serde_json::from_value(record).unwrap();
-    let cwd = fs::canonicalize(f.path.join("repo")).unwrap();
+    let cwd = dunce::canonicalize(f.path.join("repo")).unwrap();
     let replacement = f.path.join("other-native-account");
     fs::create_dir(&replacement).unwrap();
     f.state.native_sources[0].config_dir = replacement;
@@ -1750,7 +1777,7 @@ fn native_config_keeps_default_and_explicit_login_contexts_distinct() {
     ] {
         let mut f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
         let (source_id, config) = f.native_source(provider.clone(), Vec::new());
-        let cwd = fs::canonicalize(f.path.join("repo")).unwrap();
+        let cwd = dunce::canonicalize(f.path.join("repo")).unwrap();
         f.state.native_sources[0].config_env = None;
         let (_, reference) = native_config::pin(&f.state, &source_id).unwrap();
         assert!(reference.config_env.is_none());
@@ -1873,8 +1900,8 @@ async fn session_environment_rejects_live_runtime_even_if_database_says_stopped(
         .start(
             session.id.to_string(),
             agentdock_runtime::SpawnSpec {
-                program: "/bin/sh".into(),
-                args: vec!["-i".into()],
+                program: waiting_process(&["-i"]).0,
+                args: waiting_process(&["-i"]).1,
                 cwd: f.path.join("repo"),
                 env: Default::default(),
                 env_remove: vec![],
@@ -1972,7 +1999,7 @@ async fn native_and_history_build_apply_environment_without_mutating_native_conf
 async fn history_import_environment_conflicts_without_overwriting_existing_session() {
     let mut f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
     let workspace = register(&f).await;
-    let cwd = fs::canonicalize(f.path.join("repo")).unwrap();
+    let cwd = dunce::canonicalize(f.path.join("repo")).unwrap();
     let (source_id,_) = f.native_source(ProviderKind::Codex,vec![json!({"id":"fixture-thread","provider":"codex","cwd":cwd,"title":"fixture","updated_at":"2026-09-09T00:00:00Z"})]);
     let url = format!("/api/workspaces/{workspace}/native-history/import");
     let input = json!({"source_id":source_id,"native_id":"fixture-thread","confirmed_original_config":true,"environment":{"MODE":{"kind":"literal","value":"first"}}});
@@ -2496,7 +2523,7 @@ fn native_config_preserves_explicit_directory_spelling_and_rejects_symlink_retar
         &f.state,
         &ProviderKind::ClaudeCode,
         &reference,
-        fs::canonicalize(f.path.join("repo")).unwrap(),
+        dunce::canonicalize(f.path.join("repo")).unwrap(),
     )
     .unwrap();
     assert_eq!(spec.env["CLAUDE_CONFIG_DIR"], alias.to_str().unwrap());
@@ -2518,7 +2545,7 @@ fn native_config_preserves_explicit_directory_spelling_and_rejects_symlink_retar
 #[tokio::test]
 async fn claude_usage_capture_is_a_launch_overlay_that_preserves_an_existing_status_line() {
     let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
-    let home = fs::canonicalize(&f.path).unwrap().join("claude-home");
+    let home = dunce::canonicalize(&f.path).unwrap().join("claude-home");
     fs::create_dir_all(&home).unwrap();
     let config = home.to_str().unwrap();
 

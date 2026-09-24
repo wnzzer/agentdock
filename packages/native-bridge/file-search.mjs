@@ -8,7 +8,7 @@
 // where the search still returns results. So this runs with a config directory
 // that holds no credentials and no history, and cannot read or alter the user's
 // own Codex state — unlike the history bridge, which must use the real one.
-import { spawn } from "node:child_process";
+import { spawnNative as spawn } from "./native-spawn.mjs";
 import { StringDecoder } from "node:string_decoder";
 
 const MAX_LIMIT = 50;

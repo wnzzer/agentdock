@@ -11,7 +11,7 @@
   <a href="https://github.com/wnzzer/agentdock/actions/workflows/check.yml"><img src="https://github.com/wnzzer/agentdock/actions/workflows/check.yml/badge.svg" alt="CI status"></a>
   <a href="https://www.npmjs.com/package/@wnzzer/agentdock"><img src="https://img.shields.io/npm/v/%40wnzzer%2Fagentdock?style=flat-square&label=npm&color=0c8376" alt="npm version"></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A5%2024-0c8376?style=flat-square" alt="Node.js 24 or newer">
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-7760b5?style=flat-square" alt="Platforms: macOS and Linux">
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-7760b5?style=flat-square" alt="Platforms: macOS, Linux and Windows">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -114,7 +114,10 @@ The package ships one prebuilt binary per platform, with the web client and nati
 | -------- | ------------------------- |
 | macOS    | arm64, x64                |
 | Linux    | x64, arm64 (static musl)  |
+| Windows  | x64                       |
 | Other    | [Build from source](#development) |
+
+On Windows, terminal sessions open PowerShell (`pwsh` when installed; set `AGENTDOCK_SHELL` for another shell), and `agentdock stop` ends the gateway and its agents at once, since Windows has no gentler signal to send a background console program.
 
 Tarballs with `SHA256SUMS` are also attached to every [release](https://github.com/wnzzer/agentdock/releases).
 

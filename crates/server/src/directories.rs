@@ -105,7 +105,7 @@ pub fn within_roots(roots: &[PathBuf], candidate: &Path) -> bool {
 fn canonical_roots(candidates: Vec<PathBuf>) -> Result<Vec<PathBuf>, IoError> {
     let mut result = Vec::new();
     for path in candidates {
-        let path = fs::canonicalize(path).map_err(IoError::from)?;
+        let path = dunce::canonicalize(path).map_err(IoError::from)?;
         if !path.is_dir() {
             return Err(IoError::new(400, "Browsing root must be a directory"));
         }
@@ -161,7 +161,7 @@ fn list_sync(
         .ok_or_else(|| IoError::new(404, "Host browsing root not found"))?;
     // Startup receives canonical roots. Validate again so a root replaced with
     // a symlink cannot silently grant access to a different tree.
-    if fs::canonicalize(root).map_err(IoError::from)? != *root || protected(root) {
+    if dunce::canonicalize(root).map_err(IoError::from)? != *root || protected(root) {
         return Err(IoError::new(
             403,
             "Host browsing root has changed or is protected",
@@ -182,7 +182,7 @@ fn list_sync(
             ));
         }
     }
-    let directory = fs::canonicalize(candidate).map_err(IoError::from)?;
+    let directory = dunce::canonicalize(candidate).map_err(IoError::from)?;
     if !directory.starts_with(root) || protected(&directory) {
         return Err(IoError::new(
             403,
@@ -322,7 +322,7 @@ mod tests {
         fn new() -> Self {
             let path = env::temp_dir().join(format!("agentdock-browse-test-{}", Uuid::new_v4()));
             fs::create_dir(&path).unwrap();
-            Self(fs::canonicalize(path).unwrap())
+            Self(dunce::canonicalize(path).unwrap())
         }
         fn roots(&self) -> Vec<PathBuf> {
             vec![self.0.clone()]
@@ -475,22 +475,25 @@ mod tests {
         fs::create_dir_all(allowed.join("nested/deep")).unwrap();
         fs::create_dir_all(base.join("allowed-sibling")).unwrap();
         fs::create_dir_all(base.join("elsewhere")).unwrap();
-        let roots = vec![fs::canonicalize(&allowed).unwrap()];
+        let roots = vec![dunce::canonicalize(&allowed).unwrap()];
 
-        assert!(within_roots(&roots, &fs::canonicalize(&allowed).unwrap()));
         assert!(within_roots(
             &roots,
-            &fs::canonicalize(allowed.join("nested/deep")).unwrap()
+            &dunce::canonicalize(&allowed).unwrap()
+        ));
+        assert!(within_roots(
+            &roots,
+            &dunce::canonicalize(allowed.join("nested/deep")).unwrap()
         ));
         // A sibling whose name merely starts the same is a different directory,
         // which a plain string prefix would have accepted.
         assert!(!within_roots(
             &roots,
-            &fs::canonicalize(base.join("allowed-sibling")).unwrap()
+            &dunce::canonicalize(base.join("allowed-sibling")).unwrap()
         ));
         assert!(!within_roots(
             &roots,
-            &fs::canonicalize(base.join("elsewhere")).unwrap()
+            &dunce::canonicalize(base.join("elsewhere")).unwrap()
         ));
         assert!(!within_roots(&roots, Path::new("/")));
 

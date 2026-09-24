@@ -2,7 +2,7 @@
 // manufactured rate-limit resets. A user-triggered usage check may read the
 // official client's OAuth credential from its native store in memory so it can
 // call the provider's own usage endpoint; the credential never leaves here.
-import { spawn } from 'node:child_process';
+import { spawnNative as spawn } from './native-spawn.mjs';
 import { realpath, stat, readFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { homedir } from 'node:os';

@@ -20,9 +20,10 @@ const PACKAGES = {
   'darwin-x64': '@wnzzer/agentdock-darwin-x64',
   'linux-x64': '@wnzzer/agentdock-linux-x64',
   'linux-arm64': '@wnzzer/agentdock-linux-arm64',
+  'win32-x64': '@wnzzer/agentdock-win32-x64',
 };
 
-const BINARY = 'agentdock-server';
+const BINARY = process.platform === 'win32' ? 'agentdock-server.exe' : 'agentdock-server';
 
 function fail(message) {
   process.stderr.write(`agentdock: ${message}\n`);

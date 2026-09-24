@@ -76,7 +76,7 @@ impl Drop for OwnershipLock {
 
 impl OwnershipLocks {
     fn acquire(state_dir: &Path, database: &Path) -> io::Result<Self> {
-        let state_dir = fs::canonicalize(state_dir)?;
+        let state_dir = dunce::canonicalize(state_dir)?;
         let state = lock_file(&state_dir.join("server.lock"), "state directory")?;
         // In-memory SQLite databases have no shared file identity, but the
         // state directory still has a single owner for processes and profiles.
@@ -106,7 +106,7 @@ fn canonical_database(database: &Path) -> io::Result<PathBuf> {
     } else {
         env::current_dir()?.join(database)
     };
-    match fs::canonicalize(&absolute) {
+    match dunce::canonicalize(&absolute) {
         Ok(path) => Ok(path),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             // Resolve the existing parent for a new DB as well, so alternate
@@ -126,7 +126,7 @@ fn canonical_database(database: &Path) -> io::Result<PathBuf> {
             let name = absolute.file_name().ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidInput, "Invalid database filename")
             })?;
-            Ok(fs::canonicalize(parent)?.join(name))
+            Ok(dunce::canonicalize(parent)?.join(name))
         }
         Err(error) => Err(error),
     }

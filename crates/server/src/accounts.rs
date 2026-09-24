@@ -2,7 +2,7 @@
 //! contents are never parsed, copied into profiles, or returned by this module.
 use crate::{ApiError, AppState, Result};
 use agentdock_domain::{EndpointProfile, NativeConfigReference, ProviderKind, SessionStatus};
-use agentdock_runtime::SpawnSpec;
+use agentdock_runtime::{SpawnSpec, process};
 use axum::{
     Json, Router,
     extract::{Path as RoutePath, State},
@@ -91,27 +91,17 @@ impl OwnedProcessGroup {
             armed: true,
         }
     }
-    #[cfg(unix)]
-    fn signal(&self, signal: i32) -> bool {
-        self.armed
-            && self.pid.is_some_and(|pid| {
-                // SAFETY: positive PID > 1 identifies only our separately-created
-                // process group. Group zero and the AgentDock host are never targeted.
-                unsafe { libc::kill(-(pid as i32), signal) == 0 }
-            })
+    /// Positive PID > 1 identifies only our separately-created process group.
+    /// Group zero and the AgentDock host are never targeted.
+    fn signal(&self, signal: fn(u32) -> bool) -> bool {
+        self.armed && self.pid.is_some_and(signal)
     }
     async fn close(&mut self, child: &mut tokio::process::Child) {
-        #[cfg(unix)]
-        let had_group = self.signal(libc::SIGTERM);
-        #[cfg(not(unix))]
-        {
-            let _ = child.start_kill();
-        }
+        let had_group = self.signal(process::terminate_group);
         let _ = tokio::time::timeout(Duration::from_millis(700), child.wait()).await;
-        #[cfg(unix)]
         if had_group {
             tokio::time::sleep(Duration::from_millis(100)).await;
-            self.signal(libc::SIGKILL);
+            self.signal(process::kill_group);
         }
         let _ = child.start_kill();
         let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
@@ -120,10 +110,7 @@ impl OwnedProcessGroup {
 }
 impl Drop for OwnedProcessGroup {
     fn drop(&mut self) {
-        #[cfg(unix)]
-        {
-            self.signal(libc::SIGKILL);
-        }
+        self.signal(process::kill_group);
     }
 }
 
@@ -424,7 +411,7 @@ fn protected_directory(path: &Path, create: bool) -> Result<PathBuf> {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(ApiError::internal)?;
     }
-    fs::canonicalize(path).map_err(ApiError::internal)
+    dunce::canonicalize(path).map_err(ApiError::internal)
 }
 fn root_directory(state: &AppState, create: bool) -> Result<PathBuf> {
     let state_dir = protected_directory(&state.state_dir, false)?;
@@ -1120,7 +1107,7 @@ mod tests {
         fn new() -> Self {
             let root = env::temp_dir().join(format!("agentdock-account-test-{}", Uuid::new_v4()));
             fs::create_dir(&root).unwrap();
-            let root = fs::canonicalize(root).unwrap();
+            let root = dunce::canonicalize(root).unwrap();
             let state = AppState {
                 store: Arc::new(Store::open(":memory:").unwrap()),
                 runtime: RuntimeManager::new(),
@@ -2516,7 +2503,7 @@ async fn bridge(
         // the proxy; the same variables reach the native CLIs it spawns.
         if record.proxy_url.is_some() { command.arg("--use-env-proxy"); }
         command.arg(script).current_dir(&reference.config_dir).kill_on_drop(true).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
-        #[cfg(unix)] command.process_group(0);
+        process::own_group(command.as_std_mut());
         for key in spec.env_remove { command.env_remove(key); } command.envs(spec.env);
         if let Some(proxy) = record.proxy_url.as_deref() {
             command.envs(proxy_environment(proxy));

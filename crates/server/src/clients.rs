@@ -8,6 +8,7 @@
 //! has been using.
 use crate::{ApiError, AppState, Result};
 use agentdock_domain::ProviderKind;
+use agentdock_runtime::process::executable_in;
 use axum::{
     Json, Router,
     extract::{Path as RoutePath, State},
@@ -79,25 +80,7 @@ pub fn managed_root(state_dir: &Path) -> PathBuf {
     state_dir.join("clients")
 }
 fn managed_program(state_dir: &Path, command: &str) -> Option<PathBuf> {
-    let path = managed_root(state_dir)
-        .join("node_modules/.bin")
-        .join(command);
-    executable(&path).then_some(path)
-}
-
-fn executable(path: &Path) -> bool {
-    match fs::metadata(path) {
-        Ok(metadata) if metadata.is_file() => {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                metadata.permissions().mode() & 0o111 != 0
-            }
-            #[cfg(not(unix))]
-            true
-        }
-        _ => false,
-    }
+    executable_in(&managed_root(state_dir).join("node_modules/.bin"), command)
 }
 
 /// Resolve a command against the server's own `PATH`, the same way spawning it
@@ -106,9 +89,7 @@ pub fn on_path(command: &str) -> Option<PathBuf> {
     on_search_path(command, env::var_os("PATH")?)
 }
 fn on_search_path(command: &str, paths: std::ffi::OsString) -> Option<PathBuf> {
-    env::split_paths(&paths)
-        .map(|directory| directory.join(command))
-        .find(|candidate| executable(candidate))
+    env::split_paths(&paths).find_map(|directory| executable_in(&directory, command))
 }
 
 /// The program a session will actually launch, and where it came from.
@@ -297,7 +278,9 @@ mod tests {
         let root = env::temp_dir().join(format!("agentdock-clients-{}", uuid::Uuid::new_v4()));
         let bin = managed_root(&root).join("node_modules/.bin");
         fs::create_dir_all(&bin).unwrap();
-        let managed = bin.join("codex");
+        // npm installs a `.cmd` shim on Windows, where a bare name is not runnable.
+        let executable = if cfg!(windows) { "codex.cmd" } else { "codex" };
+        let managed = bin.join(executable);
         fs::write(&managed, "#!/bin/sh\nexit 0\n").unwrap();
         #[cfg(unix)]
         {
@@ -329,7 +312,7 @@ mod tests {
         // A host copy on PATH wins, so an install here cannot repoint sessions.
         let host = root.join("host-bin");
         fs::create_dir_all(&host).unwrap();
-        let host_codex = host.join("codex");
+        let host_codex = host.join(executable);
         fs::write(&host_codex, "#!/bin/sh\nexit 0\n").unwrap();
         #[cfg(unix)]
         {

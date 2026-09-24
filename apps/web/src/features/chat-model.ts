@@ -367,17 +367,19 @@ export function attachedImagePaths(text: string): string[] {
 
 /** A place in a file a message points at. */
 export interface FileReference { path: string; line?: number }
-const FILE_PATTERN = /^(?:file:\/\/)?((?:\/|\.{1,2}\/)?(?:[\w.@+-]+\/)*[\w@+-][\w.@+-]*\.[A-Za-z][A-Za-z0-9]{0,9})(?:(?::|#L)(\d{1,7})(?::\d{1,5}|-L?\d{1,7})?)?$/;
+const FILE_PATTERN = /^(?:file:\/\/)?((?:\/?[A-Za-z]:[\\/]|\/|\.{1,2}[\\/])?(?:[\w.@+-]+[\\/])*[\w@+-][\w.@+-]*\.[A-Za-z][A-Za-z0-9]{0,9})(?:(?::|#L)(\d{1,7})(?::\d{1,5}|-L?\d{1,7})?)?$/;
 /**
  * A file path, as agents write them: `src/main.rs`, `main.rs:42`,
  * `src/main.rs:42:7`, `main.rs#L42`, an absolute path, or a `file://` URL.
  * A bare name counts only with an extension that starts with a letter, so a
- * version (`1.2.3`) or a number is not taken for a file.
+ * version (`1.2.3`) or a number is not taken for a file. Agents on a Windows
+ * host write `C:\repo\a.ts` or `src\a.ts`; those come back with `/` separators,
+ * which the server accepts there too, so one form flows through the UI.
  */
 export function fileReference(value: string): FileReference | undefined {
   const match = value.trim().match(FILE_PATTERN);
   if (!match) return undefined;
-  let path = match[1];
+  let path = match[1].replace(/\\/g, '/').replace(/^\/(?=[A-Za-z]:\/)/, '');
   try { path = decodeURIComponent(path); } catch { return undefined; }
   if (path.includes('//') || /^\d/.test(path.split('/').pop() ?? '')) return undefined;
   return match[2] ? { path, line: Number(match[2]) } : { path };

@@ -347,8 +347,8 @@ async fn chat_conversion_and_configuration_do_not_take_over_a_live_pty_or_change
         .unwrap();
     let id = record.id;
     let spec = agentdock_runtime::SpawnSpec {
-        program: "/bin/sh".into(),
-        args: vec!["-c".into(), "read line".into()],
+        program: waiting_process(&["-c", "read line"]).0,
+        args: waiting_process(&["-c", "read line"]).1,
         cwd: fixture.path.join("repo"),
         env: Default::default(),
         env_remove: vec![],

@@ -38,8 +38,7 @@ pub fn running(state_dir: &Path) -> Option<i32> {
     if pid <= 1 {
         return None;
     }
-    // SAFETY: signal 0 performs the permission and existence checks only.
-    (unsafe { libc::kill(pid, 0) } == 0).then_some(pid)
+    agentdock_runtime::process::alive(pid as u32).then_some(pid)
 }
 
 /// Re-execute this binary as a detached `serve`.
@@ -79,6 +78,27 @@ pub fn start(state_dir: &Path, address: SocketAddr) -> Result<i32, Box<dyn std::
             })
         };
     }
+    #[cfg(windows)]
+    {
+        use agentdock_runtime::process::{CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW};
+        use std::os::windows::process::CommandExt;
+        // No console of its own and none shared with this one, so closing the
+        // terminal that ran `start` delivers nothing to the gateway. Leaving the
+        // terminal's job keeps a host that kills its job on close from taking
+        // the gateway too; a job that forbids breakaway refuses the whole
+        // spawn, so that case retries without it.
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+        agentdock_runtime::process::keep_standard_handles_private();
+        command.creation_flags(
+            CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB,
+        );
+        if let Ok(child) = command.spawn() {
+            let pid = child.id() as i32;
+            fs::write(pid_file(state_dir), pid.to_string())?;
+            return Ok(pid);
+        }
+        command.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
+    }
     let child = command.spawn()?;
     let pid = child.id() as i32;
     fs::write(pid_file(state_dir), pid.to_string())?;
@@ -98,10 +118,11 @@ pub fn stop(
         let _ = fs::remove_file(pid_file(state_dir));
         return Ok(None);
     };
-    // SAFETY: a signal to a pid this state directory recorded.
-    if unsafe { libc::kill(pid, libc::SIGTERM) } != 0 {
-        return Err(io::Error::last_os_error().into());
-    }
+    // A pid this state directory recorded. Windows has no SIGTERM a detached
+    // console program can receive, so there this stops the gateway and the
+    // agents beneath it outright; SQLite's journal and the restart
+    // reconciliation cover what a graceful shutdown would have closed.
+    agentdock_runtime::process::terminate(pid as u32)?;
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         if running(state_dir).is_none() {

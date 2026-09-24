@@ -30,7 +30,8 @@ const confirming = ref<{ kind: 'delete' | 'remove'; key: string; force: boolean;
 const worktrees = computed(() => (repo.value?.worktrees ?? []).filter(tree => !tree.main));
 /** Git checks a branch out in one place at a time; one a worktree holds cannot come here. */
 const heldElsewhere = (name: string) => worktrees.value.some(tree => tree.branch === name);
-const shortPath = (path: string) => path.split('/').slice(-2).join('/');
+// Worktree paths are the host's own: `\`-separated on a Windows server.
+const shortPath = (path: string) => path.split(/[\\/]/).slice(-2).join('/');
 
 async function load() {
   try { repo.value = await request<Repo>(`${workspacePath(props.workspaceId)}/git/branches`); await nextTick(); position(); }

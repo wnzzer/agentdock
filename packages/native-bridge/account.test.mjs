@@ -153,8 +153,8 @@ test('Claude usage reads only the local status line capture path beside the acco
   assert.equal(claudeStatusPath('/fixture/.claude', null), join('/fixture/.claude', 'agentdock', 'statusline.json'));
   assert.equal(claudeStatusPath('/fixture/.claude', '/explicit/dir'), join('/explicit/dir', 'agentdock', 'statusline.json'));
   const directory = await mkdtemp(join(tmpdir(), 'agentdock-usage-'));
-  const program = join(directory, 'claude-fixture');
-  await writeFile(program, '#!/bin/sh\nprintf \'{"loggedIn":true,"email":"fixture@example.invalid","subscriptionType":"pro"}\'\n', { mode: 0o755 });
+  const program = join(directory, 'claude-fixture.mjs');
+  await writeFile(program, '#!/usr/bin/env node\nprocess.stdout.write(\'{"loggedIn":true,"email":"fixture@example.invalid","subscriptionType":"pro"}\');\n', { mode: 0o755 });
   const usageJob = { provider: 'claude_code', action: 'usage', config_dir: directory, config_env: directory, program };
   const missing = await executeAccount(usageJob, {});
   assert.equal(missing.usage.availability, 'capture_missing');
@@ -183,8 +183,8 @@ test('Claude usage reads only the local status line capture path beside the acco
 
 test('Claude usage query uses the native OAuth credential only after an explicit request', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agentdock-usage-oauth-'));
-  const program = join(directory, 'claude-fixture');
-  await writeFile(program, '#!/bin/sh\nprintf \'{"loggedIn":true,"email":"fixture@example.invalid","subscriptionType":"max"}\'\n', { mode: 0o755 });
+  const program = join(directory, 'claude-fixture.mjs');
+  await writeFile(program, '#!/usr/bin/env node\nprocess.stdout.write(\'{"loggedIn":true,"email":"fixture@example.invalid","subscriptionType":"max"}\');\n', { mode: 0o755 });
   await writeFile(join(directory, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'fixture-oauth-token' } }), { mode: 0o600 });
   const originalFetch = globalThis.fetch;
   let request;
@@ -208,8 +208,8 @@ test('Claude usage query uses the native OAuth credential only after an explicit
 
 test('a failed usage query reports why instead of silently showing nothing', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agentdock-usage-failure-'));
-  const program = join(directory, 'claude-fixture');
-  await writeFile(program, '#!/bin/sh\nprintf \'{"loggedIn":true,"email":"fixture@example.invalid","subscriptionType":"max"}\'\n', { mode: 0o755 });
+  const program = join(directory, 'claude-fixture.mjs');
+  await writeFile(program, '#!/usr/bin/env node\nprocess.stdout.write(\'{"loggedIn":true,"email":"fixture@example.invalid","subscriptionType":"max"}\');\n', { mode: 0o755 });
   await writeFile(join(directory, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'fixture-oauth-token' } }), { mode: 0o600 });
   const originalFetch = globalThis.fetch;
   const job = { provider: 'claude_code', action: 'usage', config_dir: directory, config_env: directory, program };
@@ -238,8 +238,8 @@ test('a failed usage query reports why instead of silently showing nothing', asy
 
 test('a rate-limited query still prefers a usable local capture over an error', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agentdock-usage-fallback-'));
-  const program = join(directory, 'claude-fixture');
-  await writeFile(program, '#!/bin/sh\nprintf \'{"loggedIn":true,"email":"fixture@example.invalid","subscriptionType":"max"}\'\n', { mode: 0o755 });
+  const program = join(directory, 'claude-fixture.mjs');
+  await writeFile(program, '#!/usr/bin/env node\nprocess.stdout.write(\'{"loggedIn":true,"email":"fixture@example.invalid","subscriptionType":"max"}\');\n', { mode: 0o755 });
   await writeFile(join(directory, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'fixture-oauth-token' } }), { mode: 0o600 });
   const capturePath = claudeStatusPath(directory, directory);
   await mkdir(join(directory, 'agentdock'), { recursive: true });

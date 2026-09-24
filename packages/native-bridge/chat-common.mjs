@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawnNative as spawn } from './native-spawn.mjs';
 import { randomUUID, createHash } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 

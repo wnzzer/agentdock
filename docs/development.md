@@ -2,7 +2,7 @@
 
 Building from source, the development loop and verification. Back to the [README](../README.md).
 
-## Build from source (macOS / Linux)
+## Build from source (macOS / Linux / Windows)
 
 Requires Rust stable (1.89+), **Node.js 24+** and **pnpm 10.30.3**. `.nvmrc` / `.node-version` and CI use Node 24; an installed newer Node is also supported by the project engine range. Install Claude Code and/or Codex separately.
 

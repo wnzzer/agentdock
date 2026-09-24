@@ -19,9 +19,11 @@ async function build(version, targets) {
     const name = `agentdock-${version}-${triple}`;
     const staged = path.join(dir, 'stage', name);
     await mkdir(staged, { recursive: true });
-    await writeFile(path.join(staged, 'agentdock-server'), `#!/bin/sh\necho ${triple}\n`);
+    const binary = triple.includes('windows') ? 'agentdock-server.exe' : 'agentdock-server';
+    await writeFile(path.join(staged, binary), `#!/bin/sh\necho ${triple}\n`);
     await writeFile(path.join(staged, 'README.md'), '');
-    execFileSync('tar', ['czf', path.join(tarballs, `${name}.tar.gz`), '-C', path.join(dir, 'stage'), name]);
+    // Relative paths: GNU tar reads the `C:` of a Windows path as a remote host.
+    execFileSync('tar', ['czf', path.join('tarballs', `${name}.tar.gz`), '-C', 'stage', name], { cwd: dir });
   }
   const out = path.join(dir, 'out');
   execFileSync('node', [path.join(here, 'build-packages.mjs'), version, tarballs, out], { stdio: 'pipe' });
@@ -57,6 +59,7 @@ test('a built release installs as one coherent set', async (t) => {
     'x86_64-apple-darwin',
     'x86_64-unknown-linux-musl',
     'aarch64-unknown-linux-musl',
+    'x86_64-pc-windows-msvc',
   ];
   const { dir, out } = await build(version, triples);
   t.after(() => rm(dir, { recursive: true, force: true }));
@@ -83,6 +86,7 @@ test('a built release installs as one coherent set', async (t) => {
     ['darwin', 'x64'],
     ['linux', 'x64'],
     ['linux', 'arm64'],
+    ['win32', 'x64'],
   ]) {
     const pkg = await manifest(`agentdock-${platform}-${arch}`);
     assert.deepEqual(pkg.os, [platform]);
@@ -113,7 +117,10 @@ test('a built release installs as one coherent set', async (t) => {
 
   // An un-executable binary installs fine and fails at first use.
   const mode = await stat(path.join(out, 'agentdock-darwin-arm64', 'bin', 'agentdock-server'));
-  assert.equal(mode.mode & 0o111, 0o111, 'the binary must be executable for all');
+  // Windows has no execute bit to check; there the file runs by its extension,
+  // so its package must carry the .exe name the shim asks for.
+  if (process.platform !== 'win32') assert.equal(mode.mode & 0o111, 0o111, 'the binary must be executable for all');
+  await stat(path.join(out, 'agentdock-win32-x64', 'bin', 'agentdock-server.exe'));
 
   // The path the shim computes from the resolved manifest.
   assert.ok((await read('shim.cjs')).includes("path.join(path.dirname(manifest), 'bin', BINARY)"));

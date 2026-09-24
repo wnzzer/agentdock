@@ -1,6 +1,6 @@
 // Turns the release tarballs into publishable npm packages: one per platform
 // holding a binary, plus the package users actually name, which holds only the
-// shim and depends on all four optionally.
+// shim and depends on all of them optionally.
 //
 //   node npm/build-packages.mjs <version> <dir-of-tarballs> [out]
 //
@@ -28,7 +28,9 @@ const TARGETS = [
   { triple: 'x86_64-apple-darwin', key: 'darwin-x64', os: 'darwin', cpu: 'x64' },
   { triple: 'x86_64-unknown-linux-musl', key: 'linux-x64', os: 'linux', cpu: 'x64' },
   { triple: 'aarch64-unknown-linux-musl', key: 'linux-arm64', os: 'linux', cpu: 'arm64' },
+  { triple: 'x86_64-pc-windows-msvc', key: 'win32-x64', os: 'win32', cpu: 'x64' },
 ];
+const binaryName = (target) => (target.os === 'win32' ? `${BINARY}.exe` : BINARY);
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -53,22 +55,25 @@ const shared = {
 const extractRoot = mkdtempSync(path.join(tmpdir(), 'agentdock-npm-'));
 try {
   for (const target of TARGETS) {
-    const tarball = path.resolve(tarballDir, `${NAME}-${version}-${target.triple}.tar.gz`);
+    const tarball = `${NAME}-${version}-${target.triple}.tar.gz`;
     const staged = path.join(extractRoot, target.triple);
     mkdirSync(staged, { recursive: true });
-    execFileSync('tar', ['xzf', tarball, '-C', staged], { stdio: 'inherit' });
+    // Relative to the tarball directory: GNU tar reads the `C:` of a Windows
+    // path as a remote host, and a relative path has no drive to misread.
+    const from = path.resolve(tarballDir);
+    execFileSync('tar', ['xzf', tarball, '-C', path.relative(from, staged).split(path.sep).join('/')], { cwd: from, stdio: 'inherit' });
 
     // The tarball holds one directory named for the build; find it rather than
     // rebuilding the name, so a rename upstream fails loudly here.
     const [unpacked] = readdirSync(staged);
-    const binary = path.join(staged, unpacked, BINARY);
+    const binary = path.join(staged, unpacked, binaryName(target));
 
     const dir = path.join(out, `${NAME}-${target.key}`);
     mkdirSync(path.join(dir, 'bin'), { recursive: true });
-    cpSync(binary, path.join(dir, 'bin', BINARY));
+    cpSync(binary, path.join(dir, 'bin', binaryName(target)));
     // npm records the mode in the tarball, so setting it here is what makes the
     // installed file runnable.
-    chmodSync(path.join(dir, 'bin', BINARY), 0o755);
+    chmodSync(path.join(dir, 'bin', binaryName(target)), 0o755);
     cpSync(path.join(root, 'LICENSE'), path.join(dir, 'LICENSE'));
     // The binary embeds the web bundle, which embeds MIT-licensed brand
     // vectors. Their licence requires the notice to travel with any copy, and

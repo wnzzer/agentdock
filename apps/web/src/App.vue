@@ -410,21 +410,24 @@ function openFile(id: string, file: FileEntry | string) {
 async function openReference(id: string, reference: { path: string; line?: number; checkout?: string | null }) {
   const workspace = workspaces.value.find(item => item.id === id); if (!workspace) return;
   let path = reference.path.replace(/^\.\//, '');
-  if (path.startsWith('/')) {
-    const inside = (root?: string | null) => !!root && path.startsWith(root.replace(/\/$/, '') + '/');
+  if (/^([A-Za-z]:)?\//.test(path)) {
+    // A Windows host reports roots as `C:\repo` while references arrive as
+    // `C:/repo/…`; compare one form, and without case, as that filesystem does.
+    const folded = (value: string) => { const plain = value.replace(/\\/g, '/').replace(/\/$/, ''); return /^[A-Za-z]:/.test(plain) ? plain.toLowerCase() : plain; };
+    const inside = (root?: string | null) => !!root && folded(path).startsWith(folded(root) + '/');
     const base = [workspace.root_path, reference.checkout].find(inside);
     if (!base) {
       // Another workspace holds it: open it there. Otherwise it is shown
       // read-only rather than refused -- the agent named it for a reason.
       const other = workspaces.value.filter(item => inside(item.root_path)).sort((a, b) => b.root_path.length - a.root_path.length)[0];
       if (other) {
-        const relative = path.slice(other.root_path.replace(/\/$/, '').length + 1);
+        const relative = path.slice(folded(other.root_path).length + 1);
         if (reference.line) requestJump(other.id, relative, reference.line);
         openFile(other.id, relative); return;
       }
       hostPreview.value = { path, line: reference.line }; return;
     }
-    path = path.slice(base.replace(/\/$/, '').length + 1);
+    path = path.slice(folded(base).length + 1);
   } else if (!path.includes('/')) {
     try {
       const found = await request<{ files: { path: string; name: string; kind: string }[] }>(`${workspacePath(id)}/files/search?${new URLSearchParams({ q: path, limit: '20' })}`);

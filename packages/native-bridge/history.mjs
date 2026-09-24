@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnNative as spawn } from "./native-spawn.mjs";
 import { realpath, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";

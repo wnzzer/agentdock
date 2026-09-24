@@ -135,7 +135,7 @@ pub async fn list(
             truncated: false,
         });
     }
-    let config_dir = tokio::fs::canonicalize(&source.config_dir)
+    let config_dir = crate::paths::canonicalize_async(&source.config_dir)
         .await
         .map_err(|_| ApiError::bad("Native history directory is unavailable"))?;
     let job = serde_json::json!({"provider":source.provider,"config_dir":config_dir,"cwd":cwd});
@@ -208,7 +208,7 @@ pub async fn list(
         listing.items.retain(|item| {
             valid_id(&item.id)
                 && item.provider == source.provider
-                && std::fs::canonicalize(&item.cwd).is_ok_and(|p| p == cwd)
+                && dunce::canonicalize(&item.cwd).is_ok_and(|p| p == cwd)
         });
         let managed = state
             .store
@@ -256,7 +256,7 @@ pub async fn import_with_environment(
         .find(|s| s.id == native_id)
         .ok_or_else(|| ApiError::missing("Native session in this workspace"))?;
     let source = selected_source(state, &source_id)?;
-    let config = tokio::fs::canonicalize(&source.config_dir)
+    let config = crate::paths::canonicalize_async(&source.config_dir)
         .await
         .map_err(|_| ApiError::bad("Native history source unavailable"))?;
     let source_id = source.id.clone();
@@ -289,7 +289,7 @@ pub fn resume_spec(
     if source.provider != session.provider {
         return Err(ApiError::bad("Native history provider mismatch"));
     }
-    let directory = std::fs::canonicalize(&source.config_dir)
+    let directory = dunce::canonicalize(&source.config_dir)
         .map_err(|_| ApiError::bad("Original client configuration directory is unavailable"))?;
     if session.native_config_dir.as_deref() != directory.to_str() {
         return Err(ApiError::bad(

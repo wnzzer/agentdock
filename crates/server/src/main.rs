@@ -14,6 +14,7 @@ mod installation;
 mod model_catalog;
 mod native_config;
 mod native_history;
+mod paths;
 mod preferences;
 mod providers;
 mod resources;
@@ -731,7 +732,7 @@ async fn session_record(state: &AppState, id: SessionId) -> Result<Session> {
 }
 async fn root(state: &AppState, id: WorkspaceId) -> Result<PathBuf> {
     let w = workspace(state, id).await?;
-    let path = tokio::fs::canonicalize(w.root_path)
+    let path = crate::paths::canonicalize_async(w.root_path)
         .await
         .map_err(|_| ApiError::conflict("Workspace directory is unavailable"))?;
     if !path.is_dir() {
@@ -920,7 +921,7 @@ async fn create_workspace(
     if !root_path.is_absolute() {
         return Err(ApiError::bad("Use an absolute host directory path"));
     }
-    let canonical = tokio::fs::canonicalize(root_path)
+    let canonical = crate::paths::canonicalize_async(root_path)
         .await
         .map_err(|_| ApiError::bad("Host directory does not exist"))?;
     if !canonical.is_dir() {

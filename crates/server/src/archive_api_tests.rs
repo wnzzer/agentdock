@@ -129,8 +129,8 @@ async fn archive_api_does_not_stop_or_replace_a_running_native_process() {
         .start(
             id.to_string(),
             agentdock_runtime::SpawnSpec {
-                program: "/bin/sh".into(),
-                args: vec!["-i".into()],
+                program: waiting_process(&["-i"]).0,
+                args: waiting_process(&["-i"]).1,
                 cwd: fixture.path.join("repo"),
                 env: Default::default(),
                 env_remove: vec![],
@@ -145,7 +145,7 @@ async fn archive_api_does_not_stop_or_replace_a_running_native_process() {
         .unwrap();
     let mut events = runtime.subscribe();
     runtime
-        .input(b"printf 'ARCHIVE_%s_READY\\n' 'FIXTURE'\r".to_vec())
+        .input(announce("ARCHIVE", "FIXTURE").into_bytes())
         .await
         .unwrap();
     tokio::time::timeout(Duration::from_secs(4), async {

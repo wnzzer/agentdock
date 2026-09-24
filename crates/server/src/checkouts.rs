@@ -47,7 +47,7 @@ pub async fn resolve(
     let listed = workspace_io::git_branches(&repo).await?;
     let repo_text = repo.to_string_lossy().into_owned();
     let is_repo = |path: &str| {
-        std::fs::canonicalize(path)
+        dunce::canonicalize(path)
             .map(|p| p == repo)
             .unwrap_or(false)
             || path == repo_text
@@ -105,7 +105,7 @@ pub async fn resolve(
         }
         _ => return Err(ApiError::bad("Name a branch or a worktree, not both")),
     };
-    let canonical = tokio::fs::canonicalize(&path)
+    let canonical = crate::paths::canonicalize_async(&path)
         .await
         .map_err(|_| ApiError::conflict("Worktree directory is unavailable"))?;
     if canonical == repo || is_repo(&canonical.to_string_lossy()) {
@@ -164,7 +164,7 @@ pub async fn session_cwd(state: &AppState, session: &Session) -> Result<PathBuf>
     };
     let listed = workspace_io::git_branches(&repo).await.ok();
     let valid = listed.is_some_and(|l| l.worktrees.iter().any(|w| w.path == path));
-    let canonical = tokio::fs::canonicalize(path)
+    let canonical = crate::paths::canonicalize_async(path)
         .await
         .ok()
         .filter(|p| p.is_dir());

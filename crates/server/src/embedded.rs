@@ -167,7 +167,12 @@ mod tests {
             );
         }
         // Their imports have to travel with them or the modules fail to load.
-        for imported in ["chat-claude.mjs", "chat-codex.mjs", "chat-common.mjs"] {
+        for imported in [
+            "chat-claude.mjs",
+            "chat-codex.mjs",
+            "chat-common.mjs",
+            "native-spawn.mjs",
+        ] {
             assert!(
                 names.iter().any(|name| name == imported),
                 "{imported} missing"

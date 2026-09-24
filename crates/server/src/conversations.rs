@@ -3,6 +3,7 @@
 use crate::{ApiError, AppState, Result, db, providers, session_record};
 use agentdock_domain::{InteractionMode, ProviderKind, Session, SessionId, SessionStatus};
 use agentdock_persistence::MessageSubmission;
+use agentdock_runtime::process;
 use axum::{
     Json, Router,
     extract::{
@@ -48,23 +49,19 @@ pub struct ChatRuntime {
     /// The bridge process; the native client runs beneath it.
     pid: Option<u32>,
 }
-#[cfg(unix)]
 struct OwnedProcessGroup(Option<u32>);
-#[cfg(unix)]
 impl OwnedProcessGroup {
-    fn signal(&self, signal: i32) {
-        if let Some(pid) = self.0.filter(|pid| *pid > 1) {
-            unsafe {
-                libc::kill(-(pid as i32), signal);
-            }
+    fn terminate(&self) {
+        if let Some(pid) = self.0 {
+            process::terminate_group(pid);
         }
     }
     fn finish(&mut self) {
-        self.signal(libc::SIGKILL);
-        self.0 = None;
+        if let Some(pid) = self.0.take() {
+            process::kill_group(pid);
+        }
     }
 }
-#[cfg(unix)]
 impl Drop for OwnedProcessGroup {
     fn drop(&mut self) {
         self.finish();
@@ -275,8 +272,7 @@ pub async fn start_locked(state: &AppState, session: &Session) -> Result<Arc<Cha
     for key in &spec.env_remove {
         command.env_remove(key);
     }
-    #[cfg(unix)]
-    command.process_group(0);
+    process::own_group(command.as_std_mut());
     let mut child = command.spawn().map_err(|_| {
         ApiError::conflict("Native chat needs Node.js and the installed chat bridge")
     })?;
@@ -920,7 +916,6 @@ async fn supervise(
     mut commands: mpsc::Receiver<Value>,
     init: Value,
 ) {
-    #[cfg(unix)]
     let mut group = OwnedProcessGroup(child.id());
     let mut buffer = Vec::new();
     let mut bytes = [0u8; 8192];
@@ -967,16 +962,16 @@ async fn supervise(
     .await;
     // A dedicated, positively identified process group contains only this bridge
     // and its native CLI descendants. Never signal the host or unrelated Agents.
+    // Windows has no polite request, so there the bridge gets the time it had to
+    // shut down on its own after the message above before its tree is stopped.
+    #[cfg(windows)]
+    let _ = tokio::time::timeout(Duration::from_millis(1600), child.wait()).await;
+    group.terminate();
+    // Keep the leader unreaped until its owned group has been cleaned up.
+    // Waiting for only the Node PID can leave TERM-ignoring descendants.
     #[cfg(unix)]
-    {
-        group.signal(libc::SIGTERM);
-        // Keep the leader unreaped until its owned group has been cleaned up.
-        // Waiting for only the Node PID can leave TERM-ignoring descendants.
-        tokio::time::sleep(Duration::from_millis(1600)).await;
-        group.finish();
-    }
-    #[cfg(not(unix))]
-    let _ = child.start_kill();
+    tokio::time::sleep(Duration::from_millis(1600)).await;
+    group.finish();
     if tokio::time::timeout(Duration::from_secs(2), child.wait())
         .await
         .is_err()

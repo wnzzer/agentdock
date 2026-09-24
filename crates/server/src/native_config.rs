@@ -54,7 +54,7 @@ pub fn pin(
             "A relative native configuration environment path cannot be reused across workspaces; configure an absolute native path first",
         ));
     }
-    let config_dir = std::fs::canonicalize(&source.config_dir)
+    let config_dir = dunce::canonicalize(&source.config_dir)
         .map_err(|_| ApiError::bad("Native configuration directory is unavailable"))?;
     if !config_dir.is_dir() {
         return Err(ApiError::bad(
@@ -162,7 +162,9 @@ pub fn usage_capture_enabled() -> bool {
 pub fn claude_config_home(config_env: Option<&str>) -> Option<PathBuf> {
     match config_env {
         Some(value) if !value.trim().is_empty() => Some(PathBuf::from(value)),
-        _ => env::var_os("HOME").map(|home| PathBuf::from(home).join(".claude")),
+        _ => env::var_os("HOME")
+            .or_else(|| env::var_os("USERPROFILE"))
+            .map(|home| PathBuf::from(home).join(".claude")),
     }
 }
 /// Arguments and environment that let a Claude session record its own usage.

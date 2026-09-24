@@ -426,6 +426,11 @@ test('file references are found where agents write them, and ordinary words are 
   assert.deepEqual(fileReference('src/App.vue#L12'), { path: 'src/App.vue', line: 12 });
   assert.deepEqual(fileReference('/Users/kl/repo/a.ts:3:9'), { path: '/Users/kl/repo/a.ts', line: 3 });
   assert.deepEqual(fileReference('file:///Users/kl/repo/README.md'), { path: '/Users/kl/repo/README.md' });
+  // A Windows host: drive paths and `\` separators come back in `/` form.
+  assert.deepEqual(fileReference('C:\\Users\\kl\\repo\\a.ts:3'), { path: 'C:/Users/kl/repo/a.ts', line: 3 });
+  assert.deepEqual(fileReference('file:///C:/Users/kl/repo/README.md'), { path: 'C:/Users/kl/repo/README.md' });
+  assert.deepEqual(fileReference('src\\main.rs:7'), { path: 'src/main.rs', line: 7 });
+  assert.equal(fileReference('\\\\server\\share\\a.ts'), undefined, 'a UNC share is not a workspace file');
   for (const word of ['set_model', '1.2.3', 'v0.1.20', 'turn/start', 'e.g.', 'https://example.com/a.js']) assert.equal(fileReference(word), undefined, word);
   // Inline code, markdown links and prose paths with a directory all link;
   // a bare name in a sentence stays text.

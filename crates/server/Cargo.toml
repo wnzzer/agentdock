@@ -26,6 +26,7 @@ toml = "0.8"
 tower = { version = "0.5", features = ["util"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 sysinfo = { version = "0.38.4", default-features = false, features = ["system"] }
+dunce = "1"
 
 [dev-dependencies]
 tokio-tungstenite = "0.29"

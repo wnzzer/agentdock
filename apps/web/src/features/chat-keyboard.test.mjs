@@ -37,7 +37,8 @@ test('the composer contract documents the outer focus ring and compact desktop t
 
 test('the composer uses compact desktop controls and restores touch targets on mobile', async () => {
   const { readFile } = await import('node:fs/promises');
-  const source = await readFile(new URL('./ChatSessionPane.vue', import.meta.url), 'utf8');
+  // A Windows checkout may carry CRLF; the rules below match line by line.
+  const source = (await readFile(new URL('./ChatSessionPane.vue', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   assert.match(source, /\.chat-composer\{margin:0 12px 8px;padding:8px 9px max\(5px,env\(safe-area-inset-bottom\)\);border-radius:10px\}/);
   // Endpoint and thinking depth are one shared chip control now, not a native
   // select, so their density contract lives with that primitive.

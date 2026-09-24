@@ -145,7 +145,7 @@ pub fn private_dir(path: &Path) -> Result<PathBuf, ApiError> {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(ApiError::internal)?;
     }
-    fs::canonicalize(path).map_err(ApiError::internal)
+    dunce::canonicalize(path).map_err(ApiError::internal)
 }
 
 pub fn validate_proxy(value: &str) -> Result<(), ApiError> {
@@ -314,8 +314,9 @@ fn build_base(state: &AppState, session: &Session, cwd: PathBuf) -> Result<Spawn
     let (program, config_key) = match session.provider {
         ProviderKind::Terminal => (
             env::var("AGENTDOCK_SHELL")
-                .or_else(|_| env::var("SHELL"))
-                .unwrap_or_else(|_| "/bin/sh".into()),
+                .ok()
+                .filter(|shell| !shell.is_empty())
+                .unwrap_or_else(agentdock_runtime::default_shell),
             None,
         ),
         ProviderKind::ClaudeCode => (
@@ -327,7 +328,9 @@ fn build_base(state: &AppState, session: &Session, cwd: PathBuf) -> Result<Spawn
             Some("CODEX_HOME"),
         ),
     };
-    if matches!(session.provider, ProviderKind::Terminal) {
+    // POSIX shells need `-i` to stay interactive on a pipe-like PTY; neither
+    // PowerShell nor cmd.exe accepts it.
+    if matches!(session.provider, ProviderKind::Terminal) && cfg!(unix) {
         args.push("-i".into());
     }
     if let Some(config_key) = config_key {
@@ -516,7 +519,10 @@ mod tests {
             model_aliases: Default::default(),
             native_config: Some(agentdock_domain::NativeConfigReference {
                 source_id: "claude-default".into(),
-                config_dir: "/tmp/agentdock-fixture".into(),
+                config_dir: std::env::temp_dir()
+                    .join("agentdock-fixture")
+                    .to_string_lossy()
+                    .into_owned(),
                 config_env: None,
             }),
             environment: Default::default(),

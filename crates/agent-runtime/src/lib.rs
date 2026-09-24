@@ -21,6 +21,8 @@ use std::{
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use tokio::sync::{Notify, broadcast, oneshot};
 
+pub mod process;
+
 const DEFAULT_COLS: u16 = 120;
 const DEFAULT_ROWS: u16 = 40;
 const MAX_COLS: u16 = 1_000;
@@ -204,7 +206,7 @@ impl RuntimeSession {
             return Ok(());
         }
         let _ = self.inner.commands.try_send(Control::Shutdown);
-        signal_group(self.inner.process_id, libc::SIGTERM);
+        signal_group(self.inner.process_id, process::terminate_group);
         if let Some(killer) = self
             .inner
             .killer
@@ -218,7 +220,7 @@ impl RuntimeSession {
             .await
             .is_err()
         {
-            signal_group(self.inner.process_id, libc::SIGKILL);
+            signal_group(self.inner.process_id, process::kill_group);
             let _ = tokio::time::timeout(Duration::from_secs(1), self.wait()).await;
         }
         Ok(())
@@ -341,8 +343,9 @@ fn spawn_runtime(id: String, spec: SpawnSpec) -> RuntimeResult<Arc<RuntimeSessio
         pixel_width: 0,
         pixel_height: 0,
     })?;
-    let mut command = CommandBuilder::new(&spec.program);
-    command.args(&spec.args);
+    let (program, args) = process::launcher(&spec.program, &spec.args)?;
+    let mut command = CommandBuilder::new(&program);
+    command.args(&args);
     command.cwd(&spec.cwd);
     command.env("TERM", "xterm-256color");
     for (key, value) in &spec.env {
@@ -509,19 +512,31 @@ fn validate_spawn(id: &str, spec: &SpawnSpec) -> RuntimeResult<()> {
     Ok(())
 }
 
-#[cfg(unix)]
-fn signal_group(process_id: Option<u32>, signal: libc::c_int) {
-    if let Some(pid) = process_id.filter(|pid| *pid > 1) {
-        // portable-pty calls setsid in the child, making this PID the process
-        // group leader. Signalling only -PID avoids touching unrelated jobs.
-        unsafe {
-            let _ = libc::kill(-(pid as libc::pid_t), signal);
-        }
+fn signal_group(process_id: Option<u32>, signal: fn(u32) -> bool) {
+    // portable-pty calls setsid in the child on Unix, making this PID the
+    // process group leader; on Windows the tree below it is what is signalled.
+    // Either way only this session's processes are touched.
+    if let Some(pid) = process_id {
+        signal(pid);
     }
 }
 
-#[cfg(not(unix))]
-fn signal_group(_process_id: Option<u32>, _signal: i32) {}
+/// The interactive shell a terminal session opens when none is configured.
+/// On Windows `SHELL` is ignored: under Git Bash it holds an MSYS path such as
+/// `/usr/bin/bash` that a native process cannot start.
+pub fn default_shell() -> String {
+    #[cfg(windows)]
+    {
+        if process::find_program("pwsh").is_some() {
+            return "pwsh.exe".to_owned();
+        }
+        "powershell.exe".to_owned()
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_owned())
+    }
+}
 
 // Backwards-compatible ephemeral API. New code should use RuntimeManager.
 #[derive(Debug)]
@@ -543,7 +558,7 @@ impl PtySession {
         cols: u16,
         rows: u16,
     ) -> RuntimeResult<(Self, tokio::sync::mpsc::UnboundedReceiver<PtyEvent>)> {
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_owned());
+        let shell = default_shell();
         Self::spawn_program(cwd, shell, &[], cols, rows)
     }
 
@@ -562,8 +577,9 @@ impl PtySession {
             pixel_width: 0,
             pixel_height: 0,
         })?;
-        let mut command = CommandBuilder::new(program.as_ref());
-        command.args(args);
+        let (program, args) = process::launcher(program.as_ref(), args)?;
+        let mut command = CommandBuilder::new(&program);
+        command.args(&args);
         command.cwd(cwd.as_ref());
         command.env("TERM", "xterm-256color");
         let child = pair.slave.spawn_command(command)?;
@@ -624,7 +640,7 @@ impl PtySession {
     }
 
     pub fn kill(&mut self) {
-        signal_group(self.process_id, libc::SIGTERM);
+        signal_group(self.process_id, process::terminate_group);
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -636,7 +652,12 @@ mod tests {
 
     fn shell_spec(args: &[&str]) -> SpawnSpec {
         SpawnSpec {
-            program: "/bin/bash".to_owned(),
+            program: if cfg!(windows) {
+                "cmd.exe"
+            } else {
+                "/bin/bash"
+            }
+            .to_owned(),
             args: args.iter().map(|arg| (*arg).to_owned()).collect(),
             cwd: std::env::temp_dir(),
             env: BTreeMap::new(),
@@ -644,19 +665,45 @@ mod tests {
         }
     }
 
+    fn interactive_shell() -> SpawnSpec {
+        if cfg!(windows) {
+            shell_spec(&["/Q"])
+        } else {
+            shell_spec(&["--noprofile", "--norc", "-i"])
+        }
+    }
+
+    /// ConPTY opens by asking the terminal where its cursor is (`ESC[6n`) and
+    /// shows nothing until it hears back. In the app xterm.js answers; here the
+    /// test is the terminal.
+    async fn answer_cursor_query(session: &RuntimeSession) {
+        if cfg!(windows) {
+            session
+                .input(b"\x1b[1;1R".to_vec())
+                .await
+                .expect("cursor report should enqueue");
+        }
+    }
+
+    /// Input that prints the sentinel and exits. The typed text never contains
+    /// the sentinel itself, so the terminal echoing the input cannot pass.
+    const SENTINEL_INPUT: &[u8] = if cfg!(windows) {
+        b"echo agentdock_runtime_^sentinel\r\nexit\r\n"
+    } else {
+        b"printf '\\nagentdock_runtime_sentinel\\n'\nexit\n"
+    };
+
     #[tokio::test]
     async fn interactive_shell_emits_output_and_exits() {
         let manager = RuntimeManager::new();
         let session = manager
-            .start(
-                "runtime-test-shell".to_owned(),
-                shell_spec(&["--noprofile", "--norc", "-i"]),
-            )
+            .start("runtime-test-shell".to_owned(), interactive_shell())
             .await
             .expect("shell should start");
         let mut events = session.subscribe();
+        answer_cursor_query(&session).await;
         session
-            .input(b"printf '\\nagentdock_runtime_sentinel\\n'\nexit\n".to_vec())
+            .input(SENTINEL_INPUT.to_vec())
             .await
             .expect("input should enqueue");
 
@@ -694,10 +741,15 @@ mod tests {
         let session = manager
             .start(
                 "runtime-test-replay".to_owned(),
-                shell_spec(&["--noprofile", "--norc", "-c", "printf replay_sentinel"]),
+                if cfg!(windows) {
+                    shell_spec(&["/C", "echo replay_sentinel"])
+                } else {
+                    shell_spec(&["--noprofile", "--norc", "-c", "printf replay_sentinel"])
+                },
             )
             .await
             .expect("shell should start");
+        answer_cursor_query(&session).await;
         let _ = session.wait().await;
         let snapshot = session.snapshot();
         assert!(snapshot.iter().any(|event| matches!(
@@ -720,10 +772,7 @@ mod tests {
     async fn resize_and_stop_work_for_running_shell() {
         let manager = RuntimeManager::new();
         let session = manager
-            .start(
-                "runtime-test-resize".to_owned(),
-                shell_spec(&["--noprofile", "--norc", "-i"]),
-            )
+            .start("runtime-test-resize".to_owned(), interactive_shell())
             .await
             .expect("shell should start");
         session.resize(80, 24).await.expect("resize should work");
@@ -735,17 +784,11 @@ mod tests {
     async fn invalid_sizes_and_duplicate_ids_are_rejected() {
         let manager = RuntimeManager::new();
         let session = manager
-            .start(
-                "duplicate".to_owned(),
-                shell_spec(&["--noprofile", "--norc", "-i"]),
-            )
+            .start("duplicate".to_owned(), interactive_shell())
             .await
             .expect("session should start");
         let duplicate = manager
-            .start(
-                "duplicate".to_owned(),
-                shell_spec(&["--noprofile", "--norc", "-i"]),
-            )
+            .start("duplicate".to_owned(), interactive_shell())
             .await;
         assert!(duplicate.is_err());
         assert!(session.resize(0, 20).await.is_err());
