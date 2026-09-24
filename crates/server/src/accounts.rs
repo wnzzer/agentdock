@@ -1887,7 +1887,7 @@ mod tests {
             .args(["-c", "trap '' TERM; sleep 60 & echo $!; wait"])
             .process_group(0)
             .kill_on_drop(true)
-            .stdout(Stdio::piped())
+            .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
         let mut reader = BufReader::new(child.stdout.take().unwrap()).lines();
