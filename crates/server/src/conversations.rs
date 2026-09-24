@@ -160,6 +160,7 @@ pub fn routes() -> Router<AppState> {
             post(open_conversation),
         )
         .route("/api/sessions/{id}/conversation/message", post(message))
+        .route("/api/sessions/{id}/conversation/steer", post(steer))
         .route("/api/sessions/{id}/conversation/interrupt", post(interrupt))
         .route("/api/sessions/{id}/conversation/approval", post(approval))
         .route("/api/sessions/{id}/conversation/model", post(select_model))
@@ -476,6 +477,58 @@ async fn message(
         return Err(error);
     }
     Ok(accepted(Some(&input.id), false))
+}
+/// A message for the turn that is running: the client reads it at its next
+/// step instead of after the turn. With no turn running it is an ordinary
+/// message, so a turn that ended while it was being written loses nothing.
+async fn steer(
+    State(state): State<AppState>,
+    Path(id): Path<SessionId>,
+    Json(input): Json<MessageInput>,
+) -> Result<CommandAck> {
+    if uuid::Uuid::parse_str(&input.id).is_err()
+        || input.content.trim().is_empty()
+        || input.content.len() > 32768
+        || input.content.contains('\0')
+    {
+        return Err(ApiError::bad(
+            "A message needs a UUID and 1–32768 bytes of text without NUL",
+        ));
+    }
+    let running = {
+        let _guard = state.operations.lock().await;
+        session_record(&state, id).await?;
+        let runtime = state.chats.get(id).filter(|r| r.running());
+        match runtime {
+            Some(runtime) if runtime.busy.load(Ordering::Acquire) => {
+                let mid = input.id.clone();
+                let content = input.content.clone();
+                match db(&state, move |s| {
+                    s.submit_chat_message_as(id, &mid, &content, true)
+                })
+                .await?
+                {
+                    MessageSubmission::Conflict => {
+                        return Err(ApiError::conflict(
+                            "This message ID was already used for different text",
+                        ));
+                    }
+                    MessageSubmission::Duplicate => return Ok(accepted(Some(&input.id), true)),
+                    MessageSubmission::New(event) => state.chats.publish(id, event),
+                }
+                runtime
+                    .send(json!({"type":"steer","id":input.id,"content":input.content}))
+                    .await?;
+                true
+            }
+            _ => false,
+        }
+    };
+    if running {
+        Ok(accepted(Some(&input.id), false))
+    } else {
+        message(State(state), Path(id), Json(input)).await
+    }
 }
 async fn interrupt(State(state): State<AppState>, Path(id): Path<SessionId>) -> Result<CommandAck> {
     let _guard = state.operations.lock().await;

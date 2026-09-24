@@ -115,7 +115,7 @@ export class NativeProcess {
 }
 
 export class ChatBase {
-  constructor(job, emit, options = {}) { this.job=job;this.emit=emit;this.options=options;this.seen=new Map();this.approvals=new Map();this.ready=false;this.active=undefined;this.closed=false; }
+  constructor(job, emit, options = {}) { this.job=job;this.emit=emit;this.options=options;this.seen=new Map();this.approvals=new Map();this.ready=false;this.active=undefined;this.closed=false;this.deferred=[]; }
   error(message) { this.emit({type:'error',message:clip(message,2048)}); }
   begin(message) {
     if (!this.ready || this.closed) { this.error('The native client is not ready.');return; }
@@ -123,9 +123,21 @@ export class ChatBase {
     if (this.seen.has(message.id)) { if(this.seen.get(message.id)!==digest)this.error('Message ID was already used for different content.');return; }
     if(this.active){this.error('A turn is already running. Interrupt it or wait before sending another message.');return;}
     if(this.seen.size>=4096){this.error('This bridge reached its message limit. Reopen the saved native session.');this.emit({type:'turn',id:message.id,status:'failed'});return;}
-    this.seen.set(message.id,digest);this.active={id:message.id,interrupted:false};
+    this.seen.set(message.id,digest);this.active={id:message.id,interrupted:false,early:[]};
     this.emit({type:'message',id:message.id,role:'user',text:clip(message.content),delta:false});
     this.emit({type:'turn',id:message.id,status:'running'});return this.active;
+  }
+  /**
+   * A message written while a turn runs, for that turn rather than the next.
+   * Returns false when it was already seen or cannot be taken; the caller
+   * runs it as an ordinary message when no turn is active any more.
+   */
+  acceptSteer(message) {
+    if (!this.ready || this.closed) { this.error('The native client is not ready.');return false; }
+    const digest=createHash('sha256').update(message.content).digest('hex');
+    if (this.seen.has(message.id)) { if(this.seen.get(message.id)!==digest)this.error('Message ID was already used for different content.');return false; }
+    if(this.seen.size>=4096){this.error('This bridge reached its message limit. Reopen the saved native session.');return false;}
+    this.seen.set(message.id,digest);return true;
   }
   finish(status) {
     if(!this.active)return;

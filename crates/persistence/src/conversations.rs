@@ -246,6 +246,17 @@ impl Store {
         message_id: &str,
         content: &str,
     ) -> Result<MessageSubmission> {
+        self.submit_chat_message_as(id, message_id, content, false)
+    }
+    /// `steered` marks a message written into a turn already running, so the
+    /// transcript can say it was read mid-turn rather than as a turn of its own.
+    pub fn submit_chat_message_as(
+        &self,
+        id: SessionId,
+        message_id: &str,
+        content: &str,
+        steered: bool,
+    ) -> Result<MessageSubmission> {
         let mut conn = self.connection.lock().expect("sqlite lock");
         let tx = conn.transaction()?;
         let hash = content_hash(content);
@@ -258,11 +269,12 @@ impl Store {
             });
         }
         tx.execute("INSERT INTO conversation_submissions(session_id,message_id,content_hash) VALUES (?1,?2,?3)",params![id.to_string(),message_id,hash])?;
-        let event = append(
-            &tx,
-            id,
-            json!({"type":"message","id":message_id,"role":"user","text":content,"delta":false}),
-        )?;
+        let mut message =
+            json!({"type":"message","id":message_id,"role":"user","text":content,"delta":false});
+        if steered {
+            message["steered"] = json!(true);
+        }
+        let event = append(&tx, id, message)?;
         tx.commit()?;
         Ok(MessageSubmission::New(event))
     }

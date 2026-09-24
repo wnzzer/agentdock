@@ -10,7 +10,7 @@ export interface ApprovalQuestion { id: string; header?: string; question: strin
 export type ChatEvent = ({ seq?: number } & (
   | { type: 'ready'; native_session_id?: string; commands?: string[] }
   | { type: 'settings'; model?: string; effort?: string; models?: NativeModel[]; permission_mode?: string; permission_modes?: string[] }
-  | { type: 'message'; id: string; role: 'user' | 'assistant'; text: string; delta?: boolean }
+  | { type: 'message'; id: string; role: 'user' | 'assistant'; text: string; delta?: boolean; steered?: boolean }
   | { type: 'tool'; id: string; name: string; status: 'running' | 'completed' | 'failed'; text?: string; activity?: string }
   | { type: 'approval'; id: string; title: string; text: string; choices: string[]; questions?: ApprovalQuestion[] }
   | { type: 'approval_resolved'; id: string }
@@ -23,7 +23,7 @@ export type ChatEvent = ({ seq?: number } & (
 ));
 export interface ConversationSnapshot { mode?: 'structured' | 'pty'; running: boolean; events: ChatEvent[]; truncated?: boolean }
 export type ChatItem =
-  | { type: 'message'; id: string; role: 'user' | 'assistant'; text: string }
+  | { type: 'message'; id: string; role: 'user' | 'assistant'; text: string; steered?: boolean }
   | { type: 'tool'; id: string; name: string; status: 'running' | 'completed' | 'failed'; text: string; activity?: string }
   | { type: 'approval'; id: string; title: string; text: string; choices: string[]; questions: ApprovalQuestion[]; resolved: boolean }
   | { type: 'configuration'; id: string; profile_name: string; text: string }
@@ -43,7 +43,8 @@ export function conversationView(events: readonly ChatEvent[], running?: boolean
     if (event.seq !== undefined) { if (seen.has(event.seq)) continue; seen.add(event.seq); }
     if (event.type === 'message') {
       const key = 'message:' + event.id, index = indexes.get(key), previous = index === undefined ? undefined : items[index];
-      const next: ChatItem = { type: 'message', id: event.id, role: event.role, text: event.delta && previous?.type === 'message' ? previous.text + event.text : event.text };
+      const steered = event.steered === true || (previous?.type === 'message' && previous.steered === true);
+      const next: ChatItem = { type: 'message', id: event.id, role: event.role, text: event.delta && previous?.type === 'message' ? previous.text + event.text : event.text, ...(steered ? { steered: true } : {}) };
       if (index === undefined) { indexes.set(key, items.length); items.push(next); } else items[index] = next;
     } else if (event.type === 'tool') {
       const key = 'tool:' + event.id, index = indexes.get(key), previous = index === undefined ? undefined : items[index];

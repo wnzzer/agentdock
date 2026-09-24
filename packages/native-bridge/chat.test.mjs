@@ -351,3 +351,43 @@ test('the client answers in its own vocabulary, and never in the interface\'s', 
   // rather than reported as the mode that happened to be requested.
   assert.equal((await settingsFor({ mode: 'someFutureMode' }, 'ask')), undefined);
 });
+
+const STEER_A='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', STEER_B='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const turns=events=>events.filter(event=>event.type==='turn').map(event=>event.id+':'+event.status);
+
+test('claude_code: a message steered into a running turn joins it when read in time',async()=>fixture('claude_code',async({send,wait,events,log})=>{
+  send({type:'message',id:STEER_A,content:'hold'});await wait(event=>event.type==='turn'&&event.id===STEER_A&&event.status==='running');
+  send({type:'steer',id:STEER_B,content:'join'});
+  await wait(event=>event.type==='turn'&&event.id===STEER_A&&event.status==='completed');
+  await new Promise(resolve=>setTimeout(resolve,150));
+  assert.deepEqual(turns(events),[STEER_A+':running',STEER_A+':completed'],'one turn, no phantom second one');
+  assert.ok((await log()).some(item=>item.type==='user'&&item.uuid===STEER_B),'written to the client under its own id');
+  assert.ok(!events.some(event=>event.type==='message'&&event.id===STEER_B),'the host already recorded the message; the bridge does not echo it');
+}));
+
+test('claude_code: a steered message the turn ended without reading runs as the next turn under its own id',async()=>fixture('claude_code',async({send,wait,events})=>{
+  send({type:'message',id:STEER_A,content:'hold'});await wait(event=>event.type==='turn'&&event.id===STEER_A&&event.status==='running');
+  send({type:'steer',id:STEER_B,content:'late'});
+  await wait(event=>event.type==='turn'&&event.id===STEER_B&&event.status==='completed');
+  assert.deepEqual(turns(events),[STEER_A+':running',STEER_A+':completed',STEER_B+':running',STEER_B+':completed']);
+}));
+
+test('codex: steering goes through turn/steer for the active turn',async()=>fixture('codex',async({send,wait,events,log})=>{
+  send({type:'message',id:STEER_A,content:'hold'});await wait(event=>event.type==='turn'&&event.id===STEER_A&&event.status==='running');
+  await new Promise(resolve=>setTimeout(resolve,100));
+  send({type:'steer',id:STEER_B,content:'also this'});
+  await wait(event=>event.type==='turn'&&event.id===STEER_A&&event.status==='completed');
+  const steer=(await log()).find(item=>item.method==='turn/steer');
+  assert.equal(steer.params.expectedTurnId,'turn-1');assert.equal(steer.params.input[0].text,'also this');
+  await new Promise(resolve=>setTimeout(resolve,150));
+  assert.deepEqual(turns(events),[STEER_A+':running',STEER_A+':completed']);
+}));
+
+test('codex: a turn that refuses steering leaves the message for the next turn, which starts on its own',async()=>fixture('codex',async({send,wait,events,log})=>{
+  send({type:'message',id:STEER_A,content:'review'});await wait(event=>event.type==='turn'&&event.id===STEER_A&&event.status==='running');
+  await new Promise(resolve=>setTimeout(resolve,100));
+  send({type:'steer',id:STEER_B,content:'afterwards'});
+  await wait(event=>event.type==='turn'&&event.id===STEER_B&&event.status==='completed');
+  assert.deepEqual(turns(events),[STEER_A+':running',STEER_A+':completed',STEER_B+':running',STEER_B+':completed']);
+  assert.ok((await log()).some(item=>item.method==='turn/start'&&item.params.input[0].text==='afterwards'));
+}));

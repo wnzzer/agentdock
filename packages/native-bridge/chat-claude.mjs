@@ -42,6 +42,10 @@ export function claudeLaunch(job) {
   // running, so it is never inherited from whatever this flag implies.
   args.push('--allow-dangerously-skip-permissions');
   if(!settingSources)args.push('--setting-sources','user,project,local');
+  // Each message written to the client is echoed back at the moment the model
+  // reads it. That is how a message sent mid-turn is known to have joined the
+  // turn, or to be waiting for one of its own.
+  args.push('--replay-user-messages');
   args.push('--print','--verbose','--input-format','stream-json','--output-format','stream-json','--include-partial-messages','--permission-prompt-tool','stdio');
   return {args,resume,sessionId,model,effort};
 }
@@ -75,6 +79,9 @@ function commandNames(value) {
   return value.map(entry=>typeof entry==='string'?entry:entry&&typeof entry==='object'?entry.name:undefined).filter(name=>typeof name==='string');
 }
 
+/** The client echoes `uuid` back when it reads a message; AgentDock's ids are UUIDs already. */
+const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const wireId=id=>UUID.test(id)?id:randomUUID();
 export class ClaudeChat extends ChatBase {
   async initialize() {
     this.launch=claudeLaunch(this.job);this.tools=new Map();
@@ -135,11 +142,29 @@ export class ClaudeChat extends ChatBase {
   message(message) {
     const active=this.begin(message);if(!active)return;
     this.assistantId=undefined;this.finalAssistant=false;
-    try{this.port.send({type:'user',uuid:randomUUID(),session_id:this.nativeSessionId??'',message:{role:'user',content:message.content},parent_tool_use_id:null});}
+    try{this.port.send({type:'user',uuid:wireId(message.id),session_id:this.nativeSessionId??'',message:{role:'user',content:message.content},parent_tool_use_id:null});}
     catch{this.error('Could not send the message to Claude Code.');this.finish('failed');}
   }
+  /**
+   * Steering needs nothing of Claude Code but the message: written while a
+   * turn runs, the model reads it at its next step. If the turn ends first it
+   * becomes a turn of its own, which the result handler below follows.
+   */
+  steer(message) {
+    if(!this.active){this.message(message);return;}
+    if(!this.acceptSteer(message))return;
+    this.unconsumed??=new Set();this.unconsumed.add(message.id);
+    try{this.port.send({type:'user',uuid:wireId(message.id),session_id:this.nativeSessionId??'',message:{role:'user',content:message.content},parent_tool_use_id:null});}
+    catch{this.unconsumed.delete(message.id);this.error('Could not send the message to Claude Code.');}
+  }
+  /** A steered message the turn ended without reading runs next, under its own id. */
+  continueSteered() {
+    const next=this.unconsumed?.values().next().value;if(next===undefined)return;
+    this.unconsumed.delete(next);this.assistantId=undefined;this.finalAssistant=false;
+    this.active={id:next,interrupted:false};this.emit({type:'turn',id:next,status:'running'});
+  }
   async interrupt() {
-    const active=this.active;if(!active)return;active.interrupted=true;this.clearApprovals();
+    const active=this.active;if(!active)return;active.interrupted=true;this.clearApprovals();this.unconsumed?.clear();
     try{await this.port.rpc('interrupt',{},true);}catch{if(this.active===active)this.error('Claude Code could not confirm turn interruption.');}
   }
   notification(message) {
@@ -160,6 +185,15 @@ export class ClaudeChat extends ChatBase {
       // model and inventing one would silently switch the user off theirs.
       if(typeof message.model==='string'&&message.model)this.model=message.model;
       this.settings(this.models,this.model);
+      return;
+    }
+    // The echo of a message the model just read. A steered one is no longer
+    // waiting; one read with no turn open -- after an interrupt, say -- opens
+    // one, so its reply is not dropped.
+    if(message.type==='user'&&message.isReplay===true){
+      const id=typeof message.uuid==='string'?message.uuid:undefined;
+      if(id)this.unconsumed?.delete(id);
+      if(id&&!this.active&&this.seen.has(id)){this.assistantId=undefined;this.finalAssistant=false;this.active={id,interrupted:false};this.emit({type:'turn',id,status:'running'});}
       return;
     }
     if(!this.active)return;
@@ -208,7 +242,9 @@ export class ClaudeChat extends ChatBase {
         const diagnostic=JSON.stringify(message.errors??[]);
         this.error(/oauth|subscription.*(?:not|unsupported)|authentication.*(?:not|unsupported)/i.test(diagnostic)?'Claude Code does not support this authentication mode for this interface. Use its native client or an approved API configuration.':'Claude Code could not complete the turn. Check its native account, endpoint and permission settings.');
       }
-      this.finish(this.active.interrupted?'interrupted':failed?'failed':'completed');
+      const interrupted=this.active.interrupted;
+      this.finish(interrupted?'interrupted':failed?'failed':'completed');
+      if(!interrupted)this.continueSteered();
     }
   }
   // Progress only: an activity line names what the subagent is doing and never

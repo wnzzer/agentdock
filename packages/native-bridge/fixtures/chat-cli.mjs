@@ -36,10 +36,15 @@ for await(const line of createInterface({input:process.stdin})) {
     // The real app-server answers with `data`, and marks some entries hidden.
     if(message.method==='model/list'){send({id:message.id,result:{data:[{id:'gpt-fixture',displayName:'Fixture',isDefault:true,supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}]},{id:'gpt-plain'},{id:'gpt-hidden',hidden:true}],nextCursor:null}});continue;}
     if(message.method==='thread/start'||message.method==='thread/resume'){thread=message.params.threadId??thread;send({id:message.id,result:{thread:{id:thread}}});continue;}
+    // Steering joins the active turn; `review` is a turn that refuses it, like /review.
+    if(message.method==='turn/steer'){
+      if(message.params.expectedTurnId!==activeTurn||mode==='review'){send({id:message.id,error:{code:-32600,message:'This turn cannot be steered.'}});if(mode==='review'){mode='';completed();}continue;}
+      send({id:message.id,result:{turnId:activeTurn}});mode='';completed();continue;
+    }
     if(message.method==='turn/interrupt'){send({id:message.id,result:{}});native('turn/completed',{threadId:thread,turn:{id:activeTurn,status:'interrupted'}});continue;}
     if(message.method==='turn/start'){
       turn++;activeTurn='turn-'+turn;mode=message.params.input[0].text;send({id:message.id,result:{turn:{id:activeTurn,status:'inProgress'}}});native('turn/started',{threadId:thread,turn:{id:activeTurn}});
-      if(mode==='hold'){native('item/started',{threadId:thread,turnId:activeTurn,item:{id:'hold-'+turn,type:'commandExecution',command:'fixture wait',status:'inProgress'}});continue;}
+      if(mode==='hold'||mode==='review'){native('item/started',{threadId:thread,turnId:activeTurn,item:{id:'hold-'+turn,type:'commandExecution',command:'fixture wait',status:'inProgress'}});continue;}
       if(mode==='approve'){
         native('item/started',{threadId:thread,turnId:activeTurn,item:{type:'commandExecution',id:'tool-'+turn,command:'printf fixture',status:'inProgress'}});
         requestId='approval-'+turn;send({id:requestId,method:'item/commandExecution/requestApproval',params:{threadId:thread,turnId:activeTurn,itemId:'tool-'+turn,command:'printf fixture',availableDecisions:['accept','decline','cancel']}});continue;
@@ -80,6 +85,15 @@ for await(const line of createInterface({input:process.stdin})) {
     continue;
   }
   if(message.type==='user'){
+    const replay=()=>{if(process.argv.includes('--replay-user-messages'))send({type:'user',isReplay:true,uuid:message.uuid,message:message.message});};
+    // A message written while `hold` runs: `join` is read inside that turn,
+    // `late` only after it has ended, so it runs as a turn of its own.
+    if(mode==='hold'&&['join','late'].includes(message.message.content)){
+      if(message.message.content==='join'){replay();completed();}
+      else{completed();turn++;replay();completed();}
+      mode='';continue;
+    }
+    replay();
     turn++;thread='fixture-claude';mode=message.message.content;assert.match(message.uuid,/^[a-f0-9-]{36}$/);
     send({type:'system',subtype:'init',session_id:thread});
     if(mode==='hold'){send({type:'tool_progress',tool_use_id:'hold-'+turn,tool_name:'Fixture wait'});continue;}

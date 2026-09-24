@@ -2835,3 +2835,29 @@ async fn preferences_are_validated_per_provider_and_kept() {
     .await;
     assert_eq!(low["endpoint_snapshot"]["effort"], "low");
 }
+
+#[tokio::test]
+async fn steering_is_validated_like_a_message() {
+    let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
+    let workspace = register(&f).await;
+    let (_, session) = call(
+        f.app(),
+        "POST",
+        &format!("/api/workspaces/{workspace}/sessions"),
+        json!({"title":"steer","provider":"claude_code","interaction_mode":"structured"}),
+    )
+    .await;
+    let path = format!(
+        "/api/sessions/{}/conversation/steer",
+        session["id"].as_str().unwrap()
+    );
+    for bad in [
+        json!({"id":"not-a-uuid","content":"hello"}),
+        json!({"id":Uuid::new_v4(),"content":"   "}),
+    ] {
+        assert_eq!(
+            call(f.app(), "POST", &path, bad).await.0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+}

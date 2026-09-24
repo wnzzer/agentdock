@@ -11,7 +11,7 @@ export function validateChatInput(message, first=false) {
     if(message.type!=='init'||!['codex','claude_code'].includes(message.provider)||typeof message.program!=='string'||!message.program||message.program.includes('\0')||typeof message.cwd!=='string'||!isAbsolute(message.cwd)||!Array.isArray(message.args)||message.args.length>512||message.args.some(arg=>typeof arg!=='string'||arg.includes('\0'))||Buffer.byteLength(JSON.stringify(message.args))>64*1024||(message.resume_id!==undefined&&!nativeId(message.resume_id)))throw Error('Invalid native chat initialization.');
     return message;
   }
-  if(message.type==='message'){
+  if(message.type==='message'||message.type==='steer'){
     if(typeof message.id!=='string'||!message.id||message.id.length>128||/[\u0000-\u001f]/.test(message.id)||typeof message.content!=='string'||!message.content.trim()||message.content.includes('\0')||Buffer.byteLength(message.content)>256*1024)throw Error('Invalid or oversized chat message.');
   }else if(message.type==='approval'){
     if(typeof message.request_id!=='string'||message.request_id.length>256||!['accept','decline','cancel'].includes(message.decision))throw Error('Invalid approval response.');
@@ -64,6 +64,7 @@ export function runChatBridge(input=process.stdin,output=process.stdout,options=
         }else{
           validateChatInput(message);
           if(message.type==='message')await runtime.message(message);
+          else if(message.type==='steer')await runtime.steer(message);
           else if(message.type==='approval')runtime.answer(message);
           else if(message.type==='interrupt')await runtime.interrupt();
           else if(message.type==='model')await runtime.selectModel(message);

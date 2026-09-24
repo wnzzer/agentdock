@@ -99,6 +99,9 @@ export class CodexChat extends ChatBase {
   }
   async message(message) {
     const active=this.begin(message);if(!active)return;
+    await this.run(active,message.content);
+  }
+  async run(active,content) {
     try {
       if(!this.nativeSessionId){
         const result=await this.port.rpc(this.launch.resume?'thread/resume':'thread/start',{...this.launch.thread,...(this.launch.resume?{threadId:this.launch.resume}:{})});
@@ -109,9 +112,38 @@ export class CodexChat extends ChatBase {
       if(active.interrupted){this.finish('interrupted');return;}
       // Codex takes both per turn, so a change applies to the next one without
       // touching the thread or its context.
-      const result=await this.port.rpc('turn/start',{threadId:this.nativeSessionId,input:[{type:'text',text:message.content}],...(this.launch.thread.model?{model:this.launch.thread.model}:{}),...(this.effort?{effort:this.effort}:{}),...(this.approvalPolicy?{approvalPolicy:this.approvalPolicy}:{}),...(this.sandboxPolicy?{sandboxPolicy:this.sandboxPolicy}:{})});
-      if(this.active===active){active.nativeTurn=result?.turn?.id;if(active.interrupted)await this.sendInterrupt(active);}
+      const result=await this.port.rpc('turn/start',{threadId:this.nativeSessionId,input:[{type:'text',text:content}],...(this.launch.thread.model?{model:this.launch.thread.model}:{}),...(this.effort?{effort:this.effort}:{}),...(this.approvalPolicy?{approvalPolicy:this.approvalPolicy}:{}),...(this.sandboxPolicy?{sandboxPolicy:this.sandboxPolicy}:{})});
+      if(this.active===active){
+        active.nativeTurn=result?.turn?.id;
+        if(active.interrupted)await this.sendInterrupt(active);
+        // Steering written before the turn had an id waited for it.
+        else for(const early of active.early.splice(0))await this.sendSteer(active,early);
+      }
     }catch(error){if(this.active===active){this.error(error.message);this.finish(active.interrupted?'interrupted':'failed');}}
+  }
+  /**
+   * Codex steers through `turn/steer`, bound to the turn it was written for:
+   * `expectedTurnId` makes it fail rather than land in a later turn. A turn
+   * that cannot take it -- /review, a manual /compact -- or one that ended in
+   * the meantime leaves it for the next turn, which starts on its own.
+   */
+  async steer(message) {
+    const active=this.active;
+    if(!active){await this.message(message);return;}
+    if(!this.acceptSteer(message))return;
+    if(!active.nativeTurn){active.early.push(message);return;}
+    await this.sendSteer(active,message);
+  }
+  async sendSteer(active,message) {
+    try{await this.port.rpc('turn/steer',{threadId:this.nativeSessionId,expectedTurnId:active.nativeTurn,input:[{type:'text',text:message.content}]});}
+    catch{if(active.interrupted)return;this.deferred.push(message);if(this.active!==active)this.continueDeferred();}
+  }
+  /** Steering a turn would not take runs as the next turn, all of it at once. */
+  continueDeferred() {
+    if(this.active||!this.deferred.length)return;
+    const list=this.deferred.splice(0),id=list[0].id;
+    this.active={id,interrupted:false,early:[]};this.emit({type:'turn',id,status:'running'});
+    void this.run(this.active,list.map(item=>item.content).join('\n\n'));
   }
   async sendInterrupt(active) {
     if(!active.nativeTurn||active.interruptSent)return;
@@ -119,7 +151,7 @@ export class CodexChat extends ChatBase {
     try{await this.port.rpc('turn/interrupt',{threadId:this.nativeSessionId,turnId:active.nativeTurn});}
     catch{if(this.active===active){active.interruptSent=false;this.error('Codex could not confirm turn interruption.');}}
   }
-  interrupt() { if(!this.active)return;this.active.interrupted=true;this.clearApprovals();void this.sendInterrupt(this.active); }
+  interrupt() { if(!this.active)return;this.active.interrupted=true;this.deferred.length=0;this.clearApprovals();void this.sendInterrupt(this.active); }
   notification(message) {
     if(!message||typeof message!=='object')return;
     if(message.method&&message.id!==undefined){this.request(message);return;}
@@ -131,7 +163,7 @@ export class CodexChat extends ChatBase {
     if(!this.active)return;
     if(p.turnId&&this.active.nativeTurn&&p.turnId!==this.active.nativeTurn)return;
     if(method==='turn/started'){this.active.nativeTurn=p.turn?.id;if(this.active.interrupted)void this.sendInterrupt(this.active);return;}
-    if(method==='turn/completed'){this.finish(p.turn?.status==='interrupted'?'interrupted':p.turn?.status==='failed'?'failed':'completed');return;}
+    if(method==='turn/completed'){const status=p.turn?.status==='interrupted'?'interrupted':p.turn?.status==='failed'?'failed':'completed';this.finish(status);if(status==='interrupted')this.deferred.length=0;else this.continueDeferred();return;}
     if(method==='item/agentMessage/delta'||method==='item/plan/delta'){
       if(typeof p.itemId==='string'&&typeof p.delta==='string')this.emit({type:'message',id:p.itemId,role:'assistant',text:clip(p.delta),delta:true});return;
     }
