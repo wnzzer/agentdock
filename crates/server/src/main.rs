@@ -197,6 +197,9 @@ struct BranchInput {
     branch: String,
     #[serde(default)]
     create: bool,
+    /// End the sessions running in the workspace directory, then switch.
+    #[serde(default)]
+    stop_sessions: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1172,6 +1175,11 @@ async fn stop_session(
 ) -> Result<Json<Session>> {
     let _guard = state.operations.lock().await;
     session_record(&state, id).await?;
+    stop_session_locked(&state, id).await?;
+    Ok(Json(session_record(&state, id).await?))
+}
+/// Ends a session's client and process; the caller holds the operations lock.
+async fn stop_session_locked(state: &AppState, id: SessionId) -> Result<()> {
     state.chats.stop(id).await?;
     if let Some(runtime) = state.runtime.get(&id.to_string()) {
         runtime
@@ -1179,11 +1187,11 @@ async fn stop_session(
             .await
             .map_err(|_| ApiError::conflict("Could not stop process"))?;
     }
-    db(&state, move |s| {
+    db(state, move |s| {
         s.set_session_status(id, SessionStatus::Stopped)
     })
     .await?;
-    Ok(Json(session_record(&state, id).await?))
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -1780,11 +1788,16 @@ async fn git_switch(
                     SessionStatus::Running | SessionStatus::Starting | SessionStatus::Waiting
                 )
         })
-        .count();
-    if busy > 0 {
+        .map(|session| session.id)
+        .collect::<Vec<_>>();
+    if !busy.is_empty() && !input.stop_sessions {
         return Err(ApiError::conflict(format!(
-            "{busy} session(s) are running in the workspace directory. End them first, or move a session to another branch from its own branch chip instead."
+            "{} session(s) are running in the workspace directory. End them first, or move a session to another branch from its own branch chip instead.",
+            busy.len()
         )));
+    }
+    for session in busy {
+        stop_session_locked(&state, session).await?;
     }
     workspace_io::git_switch(&root(&state, id).await?, input.branch.trim(), input.create).await?;
     Ok(StatusCode::NO_CONTENT)

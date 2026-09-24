@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
-import { errorMessage, json, request, workspacePath } from './api';
+import { ApiError, errorMessage, json, request, workspacePath } from './api';
 import { useI18n } from '../i18n';
 
 /**
@@ -43,7 +43,7 @@ async function toggle() {
   document.addEventListener('pointerdown', outside, true);
 }
 function close() { open.value = false; resetRow(); document.removeEventListener('pointerdown', outside, true); }
-function resetRow() { actions.value = undefined; renaming.value = ''; confirming.value = undefined; }
+function resetRow() { actions.value = undefined; renaming.value = ''; confirming.value = undefined; blocking.value = undefined; }
 function outside(event: Event) {
   const target = event.target as Node;
   if (!anchor.value?.contains(target) && !panel.value?.contains(target)) close();
@@ -64,10 +64,26 @@ async function run(work: () => Promise<Repo | unknown>, after?: () => void) {
   catch (cause) { error.value = errorMessage(cause); return false; }
   finally { busy.value = false; }
 }
-async function switchTo(branch: string, create = false) {
+/** Sessions in the workspace directory that a switch would change the files under. */
+const blocking = ref<{ branch: string; create: boolean; titles: string[] }>();
+async function switchTo(branch: string, create = false, stopSessions = false) {
   branch = branch.trim();
-  if (!branch || branch === repo.value?.current || heldElsewhere(branch)) return;
-  await run(() => request(`${workspacePath(props.workspaceId)}/git/switch`, json('POST', { branch, create })), () => { created.value = ''; close(); emit('switched'); });
+  if (!branch || branch === repo.value?.current || heldElsewhere(branch) || busy.value) return;
+  busy.value = true; error.value = '';
+  try {
+    await request(`${workspacePath(props.workspaceId)}/git/switch`, json('POST', { branch, create, stop_sessions: stopSessions }));
+    blocking.value = undefined; created.value = ''; close(); emit('switched'); emit('changed');
+  } catch (cause) {
+    const titles = cause instanceof ApiError && cause.status === 409 && !stopSessions ? await runningHere() : [];
+    if (titles.length) blocking.value = { branch, create, titles };
+    else error.value = errorMessage(cause);
+  } finally { busy.value = false; }
+}
+async function runningHere() {
+  try {
+    const sessions = await request<Array<{ title: string; status: string; checkout_path?: string | null }>>(`/sessions?workspace_id=${encodeURIComponent(props.workspaceId)}`);
+    return sessions.filter(session => !session.checkout_path && ['running', 'starting', 'waiting'].includes(session.status)).map(session => session.title);
+  } catch { return []; }
 }
 function showActions(kind: 'branch' | 'worktree', key: string) { renaming.value = ''; confirming.value = undefined; actions.value = actions.value?.key === key && actions.value.kind === kind ? undefined : { kind, key }; }
 function beginRename(name: string) { actions.value = undefined; renaming.value = name; renameTo.value = name; }
@@ -100,42 +116,48 @@ onBeforeUnmount(close);
     <span>{{ branch || t('Detached HEAD') }}</span>
   </button>
   <Teleport to="body">
-    <div v-if="open" ref="panel" class="ws-branch-panel" :style="place" role="dialog" :aria-label="t('Switch the workspace branch')" @keydown.esc.stop="actions || renaming || confirming ? resetRow() : close()">
+    <div v-if="open" ref="panel" class="ws-branch-panel" :style="place" role="dialog" :aria-label="t('Switch the workspace branch')" @keydown.esc.stop="actions || renaming || confirming || blocking ? resetRow() : close()">
       <header>{{ t('Workspace directory branch') }}</header>
       <p>{{ t('Switches the directory every session here shares. A session in its own worktree is not affected. Right-click a branch or worktree for more.') }}</p>
       <p v-if="error" class="ws-branch-error" role="alert">{{ error }}</p>
+      <div v-if="blocking" class="ws-confirm ws-blocking" role="alertdialog">
+        <p>{{ t('Switching to {branch} changes the files under these running sessions:', { branch: blocking.branch }) }}</p>
+        <ul><li v-for="(title, index) in blocking.titles" :key="index">{{ title }}</li></ul>
+        <p class="ws-branch-note">{{ t('End them and switch, or move a session to its own branch from its branch chip.') }}</p>
+        <div><button type="button" class="ws-btn danger solid" :disabled="busy" @click="switchTo(blocking.branch, blocking.create, true)">{{ t('End them and switch') }}</button><button type="button" class="ws-btn quiet" @click="blocking = undefined">{{ t('Cancel') }}</button></div>
+      </div>
       <p v-if="!repo && !error" class="ws-branch-note">{{ t('Loading…') }}</p>
       <template v-else-if="repo">
         <section>
           <div v-for="name in repo.branches" :key="name" class="ws-row" :class="{ current: name === repo.current }" @contextmenu.prevent="showActions('branch', name)">
-            <form v-if="renaming === name" class="ws-rename" @submit.prevent="rename"><input v-model="renameTo" :aria-label="t('New name for {branch}', { branch: name })" maxlength="200" spellcheck="false" autocomplete="off" @vue:mounted="({ el }: { el: HTMLInputElement }) => { el.focus(); el.select(); }" /><button type="submit" :disabled="busy">{{ t('Rename') }}</button><button type="button" class="ws-quiet" @click="renaming=''">{{ t('Cancel') }}</button></form>
+            <form v-if="renaming === name" class="ws-rename" @submit.prevent="rename"><input v-model="renameTo" :aria-label="t('New name for {branch}', { branch: name })" maxlength="200" spellcheck="false" autocomplete="off" @vue:mounted="({ el }: { el: HTMLInputElement }) => { el.focus(); el.select(); }" /><button type="submit" class="ws-btn primary" :disabled="busy">{{ t('Rename') }}</button><button type="button" class="ws-btn quiet" @click="renaming=''">{{ t('Cancel') }}</button></form>
             <template v-else>
               <button type="button" class="ws-row-main" :disabled="busy || heldElsewhere(name)" :title="heldElsewhere(name) ? t('Checked out in another worktree') : name === repo.current ? undefined : t('Switch this checkout to {branch}', { branch: name })" @click="switchTo(name)"><span>{{ name }}</span><small v-if="name === repo.current">{{ t('Current') }}</small><small v-else-if="heldElsewhere(name)">{{ t('In a worktree') }}</small></button>
               <button type="button" class="ws-more" :aria-label="t('More actions for {name}', { name })" :aria-expanded="actions?.kind === 'branch' && actions.key === name" @click="showActions('branch', name)">⋯</button>
             </template>
             <div v-if="actions?.kind === 'branch' && actions.key === name" class="ws-actions" role="menu">
-              <button type="button" role="menuitem" @click="beginRename(name)">{{ t('Rename…') }}</button>
-              <button type="button" role="menuitem" class="danger" :disabled="name === repo.current || heldElsewhere(name)" :title="name === repo.current || heldElsewhere(name) ? t('A branch that is checked out cannot be deleted') : undefined" @click="actions = undefined; confirming = { kind: 'delete', key: name, force: false }">{{ t('Delete branch…') }}</button>
+              <button type="button" role="menuitem" class="ws-btn" @click="beginRename(name)">{{ t('Rename…') }}</button>
+              <button type="button" role="menuitem" class="ws-btn danger" :disabled="name === repo.current || heldElsewhere(name)" :title="name === repo.current || heldElsewhere(name) ? t('A branch that is checked out cannot be deleted') : undefined" @click="actions = undefined; confirming = { kind: 'delete', key: name, force: false }">{{ t('Delete branch…') }}</button>
             </div>
             <div v-if="confirming?.kind === 'delete' && confirming.key === name" class="ws-confirm" role="alertdialog">
               <p>{{ confirming.force ? t('{branch} has commits not merged anywhere else. Deleting it anyway loses them.', { branch: name }) : t('Delete branch {branch}?', { branch: name }) }}</p>
-              <div><button type="button" class="danger" :disabled="busy" @click="confirm">{{ t(confirming.force ? 'Delete anyway' : 'Delete') }}</button><button type="button" class="ws-quiet" @click="confirming = undefined">{{ t('Cancel') }}</button></div>
+              <div><button type="button" class="ws-btn danger solid" :disabled="busy" @click="confirm">{{ t(confirming.force ? 'Delete anyway' : 'Delete') }}</button><button type="button" class="ws-btn quiet" @click="confirming = undefined">{{ t('Cancel') }}</button></div>
             </div>
           </div>
         </section>
-        <form class="ws-create" @submit.prevent="switchTo(created, true)"><input v-model="created" :placeholder="t('New branch name')" maxlength="200" spellcheck="false" autocomplete="off" :aria-label="t('New branch name')" /><button type="submit" :disabled="busy || !created.trim()">{{ t('Create') }}</button></form>
+        <form class="ws-create" @submit.prevent="switchTo(created, true)"><input v-model="created" :placeholder="t('New branch name')" maxlength="200" spellcheck="false" autocomplete="off" :aria-label="t('New branch name')" /><button type="submit" class="ws-btn primary" :disabled="busy || !created.trim()">{{ t('Create') }}</button></form>
         <section v-if="worktrees.length" class="ws-trees">
           <header>{{ t('Worktrees') }}</header>
           <div v-for="tree in worktrees" :key="tree.path" class="ws-row" @contextmenu.prevent="showActions('worktree', tree.path)">
             <div class="ws-row-main ws-tree" :title="tree.path"><span>{{ tree.branch || t('Detached HEAD') }}</span><small>{{ shortPath(tree.path) }}</small></div>
             <button type="button" class="ws-more" :aria-label="t('More actions for {name}', { name: tree.branch || tree.path })" @click="showActions('worktree', tree.path)">⋯</button>
             <div v-if="actions?.kind === 'worktree' && actions.key === tree.path" class="ws-actions" role="menu">
-              <button v-if="tree.branch" type="button" role="menuitem" @click="beginRename(tree.branch!)">{{ t('Rename branch…') }}</button>
-              <button type="button" role="menuitem" class="danger" @click="actions = undefined; confirming = { kind: 'remove', key: tree.path, force: false }">{{ t('Remove worktree…') }}</button>
+              <button v-if="tree.branch" type="button" role="menuitem" class="ws-btn" @click="beginRename(tree.branch!)">{{ t('Rename branch…') }}</button>
+              <button type="button" role="menuitem" class="ws-btn danger" @click="actions = undefined; confirming = { kind: 'remove', key: tree.path, force: false }">{{ t('Remove worktree…') }}</button>
             </div>
             <div v-if="confirming?.kind === 'remove' && confirming.key === tree.path" class="ws-confirm" role="alertdialog">
               <p>{{ confirming.force ? t('This worktree has uncommitted changes. Removing it anyway deletes them.') : t('Remove this worktree? Its directory is deleted; the branch stays. Stopped sessions in it move back to the workspace directory.') }}</p>
-              <div><button type="button" class="danger" :disabled="busy" @click="confirm">{{ t(confirming.force ? 'Remove anyway' : 'Remove') }}</button><button type="button" class="ws-quiet" @click="confirming = undefined">{{ t('Cancel') }}</button></div>
+              <div><button type="button" class="ws-btn danger solid" :disabled="busy" @click="confirm">{{ t(confirming.force ? 'Remove anyway' : 'Remove') }}</button><button type="button" class="ws-btn quiet" @click="confirming = undefined">{{ t('Cancel') }}</button></div>
             </div>
           </div>
         </section>
@@ -167,22 +189,30 @@ onBeforeUnmount(close);
 .ws-row:hover .ws-more,.ws-more:focus-visible,.ws-more[aria-expanded=true]{opacity:1}
 .ws-more:hover{background:var(--fill);color:var(--ink)}
 .ws-actions{flex-basis:100%;display:flex;gap:6px;padding:2px 8px 8px}
-.ws-actions button,.ws-confirm button,.ws-rename button{height:28px;padding:0 10px;border:1px solid var(--line);border-radius:7px;background:var(--surface);font-size:11px;color:var(--ink-soft);cursor:pointer}
-.ws-actions button:hover:not(:disabled){border-color:var(--teal-line);color:var(--teal)}
-.ws-actions button.danger,.ws-confirm button.danger{color:var(--danger-ink);border-color:#f1dadd}
-.ws-actions button:disabled{opacity:.45;cursor:not-allowed}
+/* One set of buttons for the whole menu: neutral by default, filled only to
+   commit a form, red only for what destroys something. */
+.ws-btn{height:28px;padding:0 10px;border:1px solid var(--line);border-radius:7px;background:var(--surface);font-size:11px;color:var(--ink-soft);cursor:pointer;white-space:nowrap}
+.ws-btn:hover:not(:disabled){background:var(--sunken);color:var(--ink)}
+.ws-btn:disabled{opacity:.45;cursor:not-allowed}
+.ws-btn.primary{background:var(--teal);border-color:var(--teal);color:#fff}
+.ws-btn.primary:hover:not(:disabled){background:var(--teal-deep);color:#fff}
+.ws-btn.danger{color:var(--danger-ink)}
+.ws-btn.danger:hover:not(:disabled){background:#fff3f5;border-color:#f1dadd;color:var(--danger-ink)}
+.ws-btn.danger.solid{background:var(--danger);border-color:var(--danger);color:#fff}
+.ws-btn.danger.solid:hover:not(:disabled){background:var(--danger-ink);color:#fff}
+.ws-btn.quiet{border-color:transparent;background:none}
+.ws-btn.quiet:hover:not(:disabled){background:var(--sunken)}
 .ws-confirm{flex-basis:100%;margin:2px 6px 8px;padding:8px 10px;border:1px solid #f1dfe4;border-radius:8px;background:#fff7f8}
 .ws-confirm p{margin:0 0 8px;font-size:11px;line-height:1.5;color:var(--danger-ink)}
 .ws-confirm div{display:flex;gap:6px}
-.ws-confirm button.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+.ws-blocking{margin:0 0 8px}
+.ws-blocking ul{margin:0 0 8px;padding-left:18px;font-size:12px;color:var(--ink)}
+.ws-blocking li{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ws-blocking .ws-branch-note{color:var(--ink-soft)}
 .ws-rename{flex:1;display:flex;gap:6px;padding:4px}
 .ws-rename input,.ws-create input{flex:1;min-width:0;height:30px;padding:0 8px;border:1px solid var(--line);border-radius:7px;font:12px ui-monospace,monospace;background:var(--surface);color:var(--ink)}
-.ws-rename button[type=submit]{background:var(--teal);border-color:var(--teal);color:#fff}
-.ws-quiet{border-color:transparent!important;background:none!important}
 .ws-create{display:flex;gap:6px;margin:8px 2px 2px;padding-top:8px;border-top:1px solid var(--line)}
-.ws-create button{height:30px;padding:0 10px;border:0;border-radius:7px;background:var(--teal);color:#fff;font-size:11px;cursor:pointer}
-.ws-create button:disabled{opacity:.45}
 .ws-trees{margin-top:8px;padding-top:6px;border-top:1px solid var(--line)}
 .ws-trees header{font-size:10.5px;color:var(--muted);margin:4px 6px}
-@media(pointer:coarse){.ws-more{opacity:1;width:36px;height:36px}.ws-row-main{min-height:44px}.ws-create input,.ws-create button,.ws-rename input{height:40px}}
+@media(pointer:coarse){.ws-more{opacity:1;width:36px;height:36px}.ws-row-main{min-height:44px}.ws-create input,.ws-rename input,.ws-btn{height:40px}}
 </style>

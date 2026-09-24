@@ -360,6 +360,12 @@ async fn workspace_file_git_layout_workflow() {
         .filter(|e| e["type"] == "configuration")
         .count();
     assert_eq!(boundaries, 4, "each move is marked in the conversation");
+    // A session running in the workspace directory holds the switch until
+    // the caller asks for it to be ended.
+    f.state
+        .store
+        .set_session_status(sid.parse().unwrap(), SessionStatus::Running)
+        .unwrap();
     let (status, _) = call(
         f.app(),
         "POST",
@@ -367,7 +373,17 @@ async fn workspace_file_git_layout_workflow() {
         json!({"branch":"side","create":true}),
     )
     .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (status, _) = call(
+        f.app(),
+        "POST",
+        &format!("{base}/git/switch"),
+        json!({"branch":"side","create":true,"stop_sessions":true}),
+    )
+    .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, ended) = call(f.app(), "GET", &format!("/api/sessions/{sid}"), Value::Null).await;
+    assert_eq!(ended["status"], "stopped");
     let layout = default_layout();
     assert_eq!(
         call(f.app(), "PUT", &format!("{base}/layout"), layout.clone())
