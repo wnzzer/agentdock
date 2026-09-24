@@ -803,6 +803,7 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Git unavailable": "Git 不可用",
   "No workspace": "尚无工作区",
   "{count} changes": "{count} 项变更",
+  "{count} change": "{count} 项变更",
   "Layout {status}": "布局：{status}",
   "{count} active sessions": "{count} 个活跃会话",
   "Saved": "已保存",

@@ -1088,7 +1088,7 @@ function keydown(event: KeyboardEvent) {
 .chat-boot-chip{animation:chat-shimmer 1.6s linear infinite,chat-chip-in .24s ease-out both}
 .chat-boot-enter-active,.chat-boot-leave-active{transition:opacity .24s ease,transform .24s ease}
 .chat-boot-enter-from,.chat-boot-leave-to{opacity:0;transform:translateY(4px)}
-.chat-model,.chat-permission,.chat-effort{animation:chat-chip-in .34s cubic-bezier(.2,.8,.2,1) both}
+.chat-model,.chat-permission,.chat-effort{animation:chat-chip-in .34s cubic-bezier(.2,.8,.2,1) backwards}
 .chat-permission{animation-delay:.06s}
 @keyframes chat-chip-in{from{opacity:0;transform:translateY(5px) scale(.96)}to{opacity:1;transform:none}}
 .chat-model-custom{display:flex;gap:6px;margin:5px 3px 3px;padding-top:6px;border-top:1px solid var(--line)}
@@ -1154,7 +1154,7 @@ function keydown(event: KeyboardEvent) {
 .chat-steer-send{margin-left:auto;background:var(--violet)}
 .chat-steered{font-style:normal;font-size:10px;padding:1px 6px;border-radius:5px;background:#efeafb;color:var(--violet)}
 .chat-steer-more{margin-left:2px}
-.chat-steer-more :deep(.chip-menu-panel){right:0;left:auto;min-width:240px}
+.chat-steer-more :deep(.chip-menu-panel){min-width:240px}
 .chat-steer-more nav button{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;padding:7px 10px;border:0;border-radius:7px;background:none;text-align:left;cursor:pointer}
 .chat-steer-more nav button:hover{background:var(--fill)}
 .chat-steer-more nav strong{font-size:12px;font-weight:550;color:var(--ink)}
@@ -1179,17 +1179,15 @@ function keydown(event: KeyboardEvent) {
 .chat-branch-body form button{height:30px;padding:0 10px;border:0;border-radius:7px;background:var(--teal);color:#fff;font-size:11px;cursor:pointer}
 .chat-branch-body form button:disabled{opacity:.45}
 
-/* Phone-width composer: the controls keep their full names in a strip that
-   scrolls sideways between attach and send, instead of all squeezing into
-   one row until none is readable. No edge fade: a mask would also hide the
-   menus, which are painted inside the strip. Their menus open as a sheet above the
-   message box -- fixed to the pane, so the strip never clips them. */
-.chat-chip-strip{display:contents}
+/* The composer's controls sit in one row that scrolls sideways when the pane
+   is too narrow for them, at any width, instead of squeezing until none is
+   readable. Their menus are fixed to the window (ChipMenu), so the row's
+   scrolling never clips them. */
+.chat-chip-strip{display:flex;align-items:center;gap:6px;flex:1;min-width:0;overflow-x:auto;overflow-anchor:none;overscroll-behavior-x:contain;scrollbar-width:none;padding:2px 0}
+.chat-chip-strip::-webkit-scrollbar{display:none}
+.chat-chip-strip>*{flex:none}
 @container(max-width:480px){
-  .chat-chip-strip{display:flex;align-items:center;gap:6px;flex:1;min-width:0;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;padding:2px 0;scroll-snap-type:x proximity}
-  .chat-chip-strip::-webkit-scrollbar{display:none}
-  .chat-chip-strip>*{flex:none;max-width:150px!important;scroll-snap-align:start}
-  .chat-chip-strip :deep(.chip-menu-panel){position:fixed;left:10px!important;right:10px;bottom:calc(150px + env(safe-area-inset-bottom));top:auto!important;width:auto!important;max-width:none!important;max-height:55%!important;overflow-y:auto;box-shadow:0 -8px 32px #243b4c33}
+  .chat-chip-strip>*{max-width:150px!important}
   .chat-composer footer{display:none}
   .chat-composer-controls>.chat-send{margin-left:0}
 }

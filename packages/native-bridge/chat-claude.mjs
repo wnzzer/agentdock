@@ -82,6 +82,12 @@ function commandNames(value) {
 /** The client echoes `uuid` back when it reads a message; AgentDock's ids are UUIDs already. */
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const wireId=id=>UUID.test(id)?id:randomUUID();
+/** Whether a listed selection still describes the model the client resolved it to. */
+export function keepsSelection(models,selected,reported){
+  if(!selected||selected===reported||!models?.some(entry=>entry.id===selected))return selected===reported;
+  if(selected==='default')return true;
+  return reported.toLowerCase().includes(selected.replace(/\[.*\]$/,'').toLowerCase());
+}
 export class ClaudeChat extends ChatBase {
   async initialize() {
     this.launch=claudeLaunch(this.job);this.tools=new Map();
@@ -183,7 +189,10 @@ export class ClaudeChat extends ChatBase {
       // The init message names the model actually in use. Knowing it is what
       // lets a depth-only change be applied in place, since set_model needs a
       // model and inventing one would silently switch the user off theirs.
-      if(typeof message.model==='string'&&message.model)this.model=message.model;
+      // It names the resolved id (claude-sonnet-5) even when the choice was a
+      // list entry (sonnet, default). Keeping the entry that still describes
+      // it is what keeps the chip on "Sonnet" instead of an unlisted id.
+      if(typeof message.model==='string'&&message.model&&!keepsSelection(this.models,this.model,message.model))this.model=message.model;
       this.settings(this.models,this.model);
       return;
     }

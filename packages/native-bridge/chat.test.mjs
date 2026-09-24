@@ -391,3 +391,13 @@ test('codex: a turn that refuses steering leaves the message for the next turn, 
   assert.deepEqual(turns(events),[STEER_A+':running',STEER_A+':completed',STEER_B+':running',STEER_B+':completed']);
   assert.ok((await log()).some(item=>item.method==='turn/start'&&item.params.input[0].text==='afterwards'));
 }));
+
+test('a listed model stays selected when the client reports the id it resolved to',async()=>{
+  const { keepsSelection } = await import('./chat-claude.mjs');
+  const models=[{id:'default'},{id:'sonnet'},{id:'opus'},{id:'claude-fable-5-1[1m]'}];
+  assert.equal(keepsSelection(models,'sonnet','claude-sonnet-5'),true);
+  assert.equal(keepsSelection(models,'default','claude-opus-5-5'),true);
+  assert.equal(keepsSelection(models,'claude-fable-5-1[1m]','claude-fable-5-1'),true);
+  assert.equal(keepsSelection(models,'sonnet','claude-opus-5-5'),false,'a different model replaces the selection');
+  assert.equal(keepsSelection(models,'my-custom','claude-sonnet-5'),false,'an unlisted selection follows the client');
+});
