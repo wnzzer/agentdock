@@ -9,7 +9,8 @@ test('outside Windows a client is started exactly as named', () => {
   assert.deepEqual(nativeCommand('claude', ['--name', 'a & b'], { platform: 'linux' }), { command: 'claude', args: ['--name', 'a & b'] });
 });
 
-test('an npm shim runs its script with node and never passes through cmd.exe', async t => {
+// `.cmd` shims, and the `\` separators they are written with, exist only on Windows.
+test('an npm shim runs its script with node and never passes through cmd.exe', { skip: process.platform !== 'win32' }, async t => {
   const directory = await mkdtemp(join(tmpdir(), 'agentdock-shim-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   await mkdir(join(directory, 'node_modules', '@scope', 'tool'), { recursive: true });

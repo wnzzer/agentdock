@@ -11,7 +11,6 @@
 //! started, and on Unix `-0` and `-1` would address far more than one tree.
 
 use std::{
-    ffi::OsStr,
     io,
     path::{Path, PathBuf},
 };
@@ -190,7 +189,7 @@ pub fn launcher(program: &str, args: &[String]) -> io::Result<(String, Vec<Strin
     #[cfg(windows)]
     {
         let path = find_program(program).unwrap_or_else(|| PathBuf::from(program));
-        let extension = extension(&path);
+        let extension = extension_of(&path);
         let prefixed = |runner: String, script: &Path| {
             let mut all = vec![script.to_string_lossy().into_owned()];
             all.extend(args.iter().cloned());
@@ -219,16 +218,12 @@ pub fn launcher(program: &str, args: &[String]) -> io::Result<(String, Vec<Strin
     }
 }
 
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg(windows)]
 fn extension_of(path: &Path) -> String {
     path.extension()
-        .and_then(OsStr::to_str)
+        .and_then(std::ffi::OsStr::to_str)
         .unwrap_or("")
         .to_ascii_lowercase()
-}
-#[cfg(windows)]
-fn extension(path: &Path) -> String {
-    extension_of(path)
 }
 
 /// Node beside the shim when npm put one there, as the shim itself prefers.
@@ -248,7 +243,7 @@ fn node_program(shim_directory: Option<&Path>) -> String {
 /// The script an npm (or pnpm) `.cmd` shim starts. Both write it as a quoted
 /// path relative to the shim's own directory, `"%dp0%\…"` or `"%~dp0\…"`; the
 /// last such path that is not Node itself is the target.
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg(windows)]
 fn shim_target(shim: &Path) -> Option<PathBuf> {
     let text = std::fs::read_to_string(shim).ok()?;
     if text.len() > 16 * 1024 {
@@ -330,6 +325,8 @@ mod tests {
         assert!(alive(std::process::id()));
     }
 
+    // `.cmd` shims, and the `\` separators they are written with, exist only on Windows.
+    #[cfg(windows)]
     #[test]
     fn npm_and_pnpm_shims_name_their_script() {
         let directory = std::env::temp_dir().join(format!("agentdock-shim-{}", std::process::id()));
