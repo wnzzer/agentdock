@@ -219,6 +219,14 @@ watch([sessions, layout], () => {
   const prompt = discardPrompt.value;
   if (prompt && (!sessions.value.some(item => item.id === prompt.session.id) || !flattenPanes(layout.value.root).some(pane => pane.id === prompt.paneId))) discardPrompt.value = undefined;
 }, { deep: true });
+// A tab keeps the name its session had when it opened. The server renames a
+// session too -- after its first message -- so every change in the list
+// reaches the tabs, not only a rename made here.
+watch(sessions, list => {
+  let root = layout.value.root;
+  for (const session of list) root = renameSessionPanes(root, session.id, session.title);
+  if (root !== layout.value.root) layout.value = { ...layout.value, root };
+});
 function openSession(session: Session) {
   if (!workspaces.value.some(workspace => workspace.id === session.workspace_id)) {
     // A session can arrive before its workspace does -- one opened in a

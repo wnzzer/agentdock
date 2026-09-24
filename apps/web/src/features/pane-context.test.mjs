@@ -30,6 +30,10 @@ test('renaming a session updates every bound tab while preserving pane and layou
   assert.equal(renamed.second.panes[1].id, 'second-view'); assert.equal(renamed.second.panes[1].title, 'Review billing');
   assert.equal(renamed.second.panes[0].title, 'Agent');
 });
+test('a session whose name has not changed leaves the layout as it is', () => {
+  const root = { type:'split', id:'root', direction:'horizontal', ratio:0.5, first: sessionPane(sessions[0]), second: sessionPane(sessions[1]) };
+  assert.equal(renameSessionPanes(root, 'one', root.first.title), root);
+});
 test('foreign drag scopes and traversal do not enter the shared canvas', () => {
   assert.equal(acceptsScopedPane(filePane('a','src/a #?.txt'),workspaces,sessions),true);
   for(const path of ['../secret','/absolute','a/../../secret','a\0b']) assert.equal(acceptsScopedPane(filePane('a',path),workspaces,sessions),false);

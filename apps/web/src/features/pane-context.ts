@@ -12,7 +12,7 @@ export function sessionPane(session: Session): PaneNode {
 }
 /** Update every canvas tab bound to a session without changing its pane ID. */
 export function renameSessionPanes(root: LayoutNode, sessionId: string, title: string): LayoutNode {
-  if (root.type === "pane") return paneString(root, "session_id") === sessionId ? { ...root, title } : root;
+  if (root.type === "pane") return paneString(root, "session_id") === sessionId && root.title !== title ? { ...root, title } : root;
   if (root.type === "stack") {
     let changed = false;
     const panes = root.panes.map(pane => {
