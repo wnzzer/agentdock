@@ -52,12 +52,18 @@ AgentDock 本身不包含 Agent：Codex 通过官方 `app-server` 驱动，Claud
 从手机到带鱼屏，都是同一个完整的工作区，小屏上功能不缩水。窗口或窗格太小时，分屏会自动折叠成标签页，空间够了再展开，保存的布局不受影响。控件按所在窗格的宽度自适应，所以大屏上的窄分屏也会切换到紧凑布局。在手机上，侧边栏变成抽屉，界面会给键盘让出位置，菜单从底部弹出，按钮大小适合手指点按，长按代替右键。躺在沙发上也能看长任务的进度、批准权限，或者引导 Agent 换个方向。
 
 <p align="center">
-  <img src="docs/assets/screenshot-mobile.zh-CN.png" alt="手机上的 AgentDock：对话与输入框。" width="36%">
+  <img src="docs/assets/screenshot-mobile.zh-CN.png" alt="手机上的 AgentDock：分屏折叠成标签页、被引导的消息和输入框。" width="36%">
+  &nbsp;
+  <img src="docs/assets/screenshot-terminal-mobile.zh-CN.png" alt="手机上的终端会话，带触屏按键栏。" width="36%">
 </p>
 
 ### 边做边纠正
 
 Agent 工作时写下的消息不必干等。**Enter 引导**：不中断，Agent 下一步就会读到，聊天记录里会标出来。**⌥/Alt+Enter 排队**：等这一轮结束再作为新的一轮发出。需要彻底改方向时，用**中断并发送**。客户端当下接不了的消息会进入队列，不会丢。
+
+<p align="center">
+  <img src="docs/assets/screenshot-steer.zh-CN.png" alt="进行中的一轮里标着“引导”的消息，以及打开的发送菜单：引导、等这轮结束、中断并发送。" width="70%">
+</p>
 
 ### 每个会话一个分支
 
@@ -71,13 +77,21 @@ Agent 工作时写下的消息不必干等。**Enter 引导**：不中断，Agen
 
 Agent 提到的文件路径（如 `src/app.ts:42`、`README.md`）会变成可点击的小卡片，点开直接跳到对应行。在别的工作区里的文件就在那个工作区打开，不在任何工作区的文件以只读方式预览。连续的工具调用折叠成一张卡片，图片可以点开放大，表格和代码都正常渲染。
 
-### Agent 之间接力
+### 账号与端点，彼此隔离
 
-一个 Agent 卡住了？换另一个接着干：从 Claude Code 切到 Codex（或反过来），之前的对话会带进新会话的输入框，发出去即可继续。
+每个会话自己选在哪里跑：在 AgentDock 里登录的官方账号、本机已有的登录、团队网关或代理这类自定义端点，或者一个与本机完全不共享的全新独立客户端环境。它们彼此隔离，切换一个会话不会影响其他会话；API Key 只以引用的形式保存，启动时才解析。随时可以在输入框下方切换。同一个菜单还能把对话交给另一个 Agent：从 Claude Code 切到 Codex（或反过来），之前说过的内容会带进新会话的输入框。
+
+<p align="center">
+  <img src="docs/assets/screenshot-endpoints.zh-CN.png" alt="端点菜单：独立配置、团队网关、本机登录，以及换成 Codex 继续。" width="70%">
+</p>
 
 ### 额度一眼看清
 
-登录官方 Claude Code 或 Codex 账号，或者引入本机已有的配置，就能看到 5 小时窗口和本周窗口**还剩**多少，以及各自什么时候重置。多个账号可以并存，新建会话时选用哪个。
+每个官方账号的 5 小时窗口和本周窗口**还剩**多少、什么时候重置，一目了然，账号再多也一样。用量只在你查询时向官方接口读取，不会在后台轮询。
+
+<p align="center">
+  <img src="docs/assets/screenshot-accounts.zh-CN.png" alt="官方账号：5 小时窗口剩余 84%，本周窗口剩余 48%，并显示重置时间。" width="70%">
+</p>
 
 ### 设置一次就好
 

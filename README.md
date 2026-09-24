@@ -52,12 +52,18 @@ Every session is the official `claude` or `codex` you already have installed, dr
 The same workspace works from a phone to an ultrawide monitor, with nothing cut down on the small end. Splits fold into tabs when a window or pane gets too small and open back up when there is room, without touching the saved layout. Controls adapt to the pane they sit in, so a narrow split on a big screen gets the compact layout too. On a phone the sidebar becomes a drawer, the layout makes room for the keyboard, menus open as bottom sheets, touch targets are finger-sized and a long press stands in for right-click. Check on a long task, answer an approval or steer the agent from the couch.
 
 <p align="center">
-  <img src="docs/assets/screenshot-mobile.png" alt="AgentDock on a phone: the conversation and composer." width="36%">
+  <img src="docs/assets/screenshot-mobile.png" alt="AgentDock on a phone: the split folded into tabs, a steered message, and the composer." width="36%">
+  &nbsp;
+  <img src="docs/assets/screenshot-terminal-mobile.png" alt="A terminal session on a phone, with the touch key bar." width="36%">
 </p>
 
 ### Correct the agent while it works
 
 A message typed while the agent is busy doesn't have to wait. **Enter steers**: the agent reads it at its next step, without stopping, and the transcript marks it. **⌥/Alt+Enter queues** it as the next turn instead, and **Interrupt and send** stops the turn when you need to change course completely. If the client can't take a message mid-turn, it waits in the queue rather than being lost.
+
+<p align="center">
+  <img src="docs/assets/screenshot-steer.png" alt="A steered message marked Steer in the middle of a running turn, with the send menu open: Steer, After this turn, Interrupt and send." width="70%">
+</p>
 
 ### One branch per session
 
@@ -71,13 +77,21 @@ Split, tab and dock sessions, files, Git diffs and terminals the way you like. S
 
 File paths the agent mentions (`src/app.ts:42`, `README.md`) are clickable chips that open the file at that line. Files in another workspace open there, and anything else opens in a read-only preview. Consecutive tool calls fold into one card, images open in a lightbox, and tables and code render properly.
 
-### Hand off between agents
+### Accounts and endpoints, kept apart
 
-Stuck with one agent? Continue the same work in the other: switch from Claude Code to Codex (or back) and the conversation so far is carried into the new session's message box, ready to send.
+Every session chooses where it runs: an official account signed in through AgentDock, the sign-in already on the host, a custom endpoint such as a team gateway or proxy, or a clean, isolated client home that shares nothing with the host. Each is isolated from the others, so switching one session never touches another, and API keys are stored only as references resolved at launch. Switch from the message box at any time. The same menu hands the conversation to the other agent: go from Claude Code to Codex (or back) and what was said so far is carried into the new session's message box.
+
+<p align="center">
+  <img src="docs/assets/screenshot-endpoints.png" alt="The endpoint menu: an isolated configuration, a team gateway, the host sign-in, and continuing with Codex." width="70%">
+</p>
 
 ### Your quota at a glance
 
-Sign in to official Claude Code or Codex accounts, or import the ones already on the host, and see how much of the 5-hour and weekly windows is **left**, with the time each one resets. Several accounts can live side by side, and each new session picks one.
+See how much of each official account's 5-hour and weekly windows is **left**, with when each resets, for as many accounts as you use. Usage is read from the official endpoint on request, never polled in the background.
+
+<p align="center">
+  <img src="docs/assets/screenshot-accounts.png" alt="Official accounts: 84% of the 5-hour window and 48% of the weekly window left, with reset times." width="70%">
+</p>
 
 ### Set it once
 
