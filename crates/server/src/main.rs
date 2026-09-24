@@ -1771,16 +1771,19 @@ async fn git_switch(
     let busy = db(&state, move |s| s.list_sessions(Some(id)))
         .await?
         .into_iter()
+        // Only sessions in the workspace directory itself have their files
+        // rewritten; one in its own worktree is untouched by this switch.
         .filter(|session| {
-            matches!(
-                session.status,
-                SessionStatus::Running | SessionStatus::Starting | SessionStatus::Waiting
-            )
+            session.checkout_path.is_none()
+                && matches!(
+                    session.status,
+                    SessionStatus::Running | SessionStatus::Starting | SessionStatus::Waiting
+                )
         })
         .count();
     if busy > 0 {
         return Err(ApiError::conflict(format!(
-            "{busy} session(s) are running in this workspace. End them, or open the branch in a new worktree instead."
+            "{busy} session(s) are running in the workspace directory. End them first, or move a session to another branch from its own branch chip instead."
         )));
     }
     workspace_io::git_switch(&root(&state, id).await?, input.branch.trim(), input.create).await?;

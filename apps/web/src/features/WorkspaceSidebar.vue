@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import WorkspaceBranchMenu from "./WorkspaceBranchMenu.vue";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { ComponentPublicInstance } from "vue";
 import type { ProviderKind, Session, Workspace } from "@agentdock/protocol";
@@ -25,8 +26,11 @@ const props = withDefaults(defineProps<{
   keepBusyIds?: string[];
   sessionsLoading?: boolean;
   storageKey?: string;
+  /** Branch of each workspace directory, where known. */
+  workspaceBranches?: Record<string, string>;
 }>(), { historySupported: false, archiveSupported: false, ephemeralSupported: false, archiveBusyIds: () => [], keepBusyIds: () => [], sessionsLoading: false });
 const emit = defineEmits<{
+  branchSwitched: [id: string];
   selectWorkspace: [id: string];
   openSession: [session: Session];
   locateSession: [session: Session];
@@ -185,6 +189,7 @@ defineExpose({ revealSession });
         <div class="workspace-group-header" @contextmenu.prevent="openMenuId = group.workspace.id">
           <button class="icon-button workspace-disclosure" :class="{ expanded: group.expanded }" :aria-expanded="group.expanded" :aria-label="t(group.expanded ? 'Collapse {workspace} sessions' : 'Expand {workspace} sessions', { workspace: group.workspace.name })" :aria-controls="`workspace-sessions-${group.workspace.id}`" @click="setExpanded(group.workspace.id, !group.expanded)"><Icon name="chevron" :size="11" /></button>
           <button class="workspace-group-name" :title="group.workspace.root_path" :aria-expanded="group.expanded" :aria-controls="`workspace-sessions-${group.workspace.id}`" @click="selectWorkspace(group)" @keydown="navigateWorkspace($event, group)"><strong>{{ group.workspace.name }}</strong><svg v-if="group.pinned" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" :aria-label="t('Pinned workspace')"><path d="m16 3 5 5-4 1-4 5v4l-3-3-6 6 6-6-3-3h4l5-5z" /></svg></button>
+          <WorkspaceBranchMenu v-if="workspaceBranches?.[group.workspace.id]" compact :workspace-id="group.workspace.id" :branch="workspaceBranches[group.workspace.id]" @switched="emit('branchSwitched', group.workspace.id)" />
           <span v-if="group.activeCount" class="workspace-active-count" :title="t('{count} active sessions', { count: group.activeCount })" :aria-label="t('{count} active sessions', { count: group.activeCount })"><i class="state-dot running" />{{ group.activeCount }}</span>
           <button :ref="element => recordMenuButton(group.workspace.id, element)" class="icon-button workspace-more-button" :class="{ selected: openMenuId === group.workspace.id }" :aria-label="t('Workspace actions for {workspace}', { workspace: group.workspace.name })" :aria-expanded="openMenuId === group.workspace.id" :aria-controls="`workspace-menu-${group.workspace.id}`" @click="openMenuId = openMenuId === group.workspace.id ? undefined : group.workspace.id"><Icon name="more" :size="15" /></button>
         </div>
