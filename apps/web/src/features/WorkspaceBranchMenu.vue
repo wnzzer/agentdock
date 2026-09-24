@@ -169,8 +169,8 @@ onBeforeUnmount(close);
 <style scoped>
 .ws-branch{display:inline-flex;align-items:center;gap:4px;min-width:0;max-width:160px;padding:1px 6px;border:1px solid transparent;border-radius:5px;background:none;color:inherit;font:inherit;cursor:pointer}
 .ws-branch span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ws-branch:hover,.ws-branch[aria-expanded=true]{background:#efeafb;color:var(--violet);border-color:#dcd3f2}
-.ws-branch.compact{font-size:10px;color:var(--violet);background:#f5f2fc;max-width:110px}
+.ws-branch:hover,.ws-branch[aria-expanded=true]{background:var(--fill-hover);color:var(--ink);border-color:var(--line)}
+.ws-branch.compact{font-size:10px;color:var(--ink-soft);background:var(--fill);max-width:110px}
 .ws-branch-panel{position:fixed;z-index:1200;overflow-y:auto;padding:8px;border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:0 12px 32px #243b4c29;font-size:12px;color:var(--ink);text-align:left}
 .ws-branch-panel header{font-weight:600;margin:2px 4px}
 .ws-branch-panel>p{margin:4px 4px 8px;font-size:10.5px;line-height:1.5;color:var(--muted)}

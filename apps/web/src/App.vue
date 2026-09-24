@@ -586,6 +586,25 @@ async function bootstrap() {
 function adaptDrawers() { const desktop = window.innerWidth > 1100; if (wasDesktop && !desktop) { explorerOpen.value = false; sidebarOpen.value = false; } wasDesktop = desktop; sidebarRail.value = sidebarIsRail(window.innerWidth); }
 /** Below the rail width the same control drives the drawer, so the remembered
  * desktop preference is left untouched. */
+/**
+ * The workspace column can be dragged narrower or wider; how much room it
+ * needs depends on how many workspaces and sessions there are. Remembered in
+ * this browser, and a double-click on the edge puts it back.
+ */
+const SIDEBAR_WIDTH_KEY = "agentdock.sidebar-width.v1";
+const sidebarWidth = ref<number | undefined>((() => { try { const value = Number(storage?.getItem(SIDEBAR_WIDTH_KEY)); return value >= 184 && value <= 380 ? value : undefined; } catch { return undefined; } })());
+const bodyStyle = computed(() => sidebarWidth.value && sidebarRail.value && !sidebarCollapsed.value ? { "--rail-left": sidebarWidth.value + "px" } : undefined);
+function resizeSidebar(event: PointerEvent) {
+  const handle = event.currentTarget as HTMLElement, left = handle.parentElement?.getBoundingClientRect().left ?? 0;
+  handle.setPointerCapture(event.pointerId);
+  const move = (next: PointerEvent) => { sidebarWidth.value = Math.round(Math.min(380, Math.max(184, next.clientX - left))); };
+  const end = () => {
+    handle.removeEventListener("pointermove", move); handle.removeEventListener("pointerup", end); handle.removeEventListener("pointercancel", end);
+    try { if (sidebarWidth.value) storage?.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth.value)); } catch { /* The width lasts for this page when storage is unavailable. */ }
+  };
+  handle.addEventListener("pointermove", move); handle.addEventListener("pointerup", end); handle.addEventListener("pointercancel", end);
+}
+function resetSidebarWidth() { sidebarWidth.value = undefined; try { storage?.setItem(SIDEBAR_WIDTH_KEY, ""); } catch { /* Nothing stored. */ } }
 function toggleSidebar() { if (sidebarRail.value) sidebarExpanded.value = !sidebarExpanded.value; else sidebarOpen.value = !sidebarOpen.value; }
 // Persist wherever the panels change, including opening the explorer by
 // revealing a file, so the shell reopens the way the user left it.
@@ -621,21 +640,19 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
 <template>
   <div :class="['app-shell', { 'explorer-hidden': !explorerOpen || !explorerWorkspace, 'sidebar-collapsed': sidebarCollapsed }]">
     <header class="topbar">
-      <div class="brand"><button class="icon-button mobile-menu" :aria-label="t('Toggle workspace navigation')" @click="sidebarOpen = !sidebarOpen"><Icon name="menu" /></button><button class="icon-button sidebar-toggle" :class="{selected:!sidebarCollapsed}" :aria-pressed="!sidebarCollapsed" :aria-label="t(sidebarCollapsed?'Expand workspace panel':'Collapse workspace panel')" :title="t(sidebarCollapsed?'Expand workspace panel':'Collapse workspace panel')" @click="toggleSidebar"><Icon name="panelLeft"/></button><span class="brand-mark"><span /></span><strong>AgentDock<span class="brand-version" :title="serverVersion?t('AgentDock {version}',{version:serverVersion}):undefined">{{ instanceLabel || (serverVersion ? 'v' + serverVersion : 'AgentDock') }}</span></strong></div>
+      <div class="brand"><button class="icon-button mobile-menu" :aria-label="t('Toggle workspace navigation')" @click="sidebarOpen = !sidebarOpen"><Icon name="menu" /></button><button class="icon-button sidebar-toggle" :class="{selected:!sidebarCollapsed}" :aria-pressed="!sidebarCollapsed" :aria-label="t(sidebarCollapsed?'Expand workspace panel':'Collapse workspace panel')" :title="t(sidebarCollapsed?'Expand workspace panel':'Collapse workspace panel')" @click="toggleSidebar"><Icon name="panelLeft"/></button><span class="brand-mark"><span /></span><strong :title="serverVersion?t('AgentDock {version}',{version:serverVersion}):undefined">AgentDock<span v-if="instanceLabel" class="brand-version">{{ instanceLabel }}</span></strong></div>
       <div class="top-crumb"><span>{{ t('Shared workspace canvas') }}</span><Icon name="chevron" :size="13"/><strong>{{ contextWorkspace?.name || t('Your next workspace') }}</strong></div>
       <div class="top-actions">
-        <span class="connection-badge"><i :class="['state-dot', apiOnline ? 'running' : 'stopped']"/>{{ t(loading ? 'Connecting' : apiOnline ? 'Host connected' : 'Offline') }}</span>
-        <button v-if="workspaces.length" class="icon-button workspace-refresh-top" :aria-label="t('Refresh workspace')" :aria-busy="refreshingResources" :title="t(refreshingResources?'Refreshing workspace data…':'Refresh workspace')" :disabled="loading||refreshingResources" @click="refreshResources"><Icon name="refresh" :size="16"/></button>
+        <span v-if="loading||!apiOnline" class="connection-badge"><i :class="['state-dot', apiOnline ? 'running' : 'stopped']"/>{{ t(loading ? 'Connecting' : apiOnline ? 'Host connected' : 'Offline') }}</span>
         <button v-if="workspaces.length" class="primary-button new-session-top" :disabled="!selectedWorkspace" :aria-label="t('New session')" :title="selectedWorkspace?t('New session in {workspace}',{workspace:selectedWorkspace.name}):t('New session')" @click="newSession()"><Icon name="plus" :size="14"/><span>{{ t('New session') }}</span></button>
-        <button class="secondary-button add-workspace-top" @click="showWorkspace = true"><Icon name="plus" :size="14"/>{{ t('Workspace') }}</button>
-        <select class="language-select" :value="locale" :aria-label="t('Language')" @change="setLocale(($event.target as HTMLSelectElement).value === 'en' ? 'en' : 'zh-CN')"><option value="zh-CN" lang="zh-CN">中文</option><option value="en" lang="en">English</option></select>
-        <button class="icon-button" :aria-label="t('Settings')" :title="t('Settings')" @click="settingsSection='agents'"><Icon name="settings"/></button>
+        <button class="icon-button" :aria-label="t('Settings')" :title="t('Settings')" @click="settingsSection='preferences'"><Icon name="settings"/></button>
         <button v-if="workspaces.length" :class="['icon-button',{selected:explorerOpen}]" :aria-pressed="explorerOpen" :aria-label="t(explorerOpen?'Collapse file panel':'Expand file panel')" :title="t(explorerOpen?'Collapse file panel':'Expand file panel')" @click="explorerOpen = !explorerOpen"><Icon name="panelRight"/></button>
       </div>
     </header>
-    <div class="app-body">
+    <div class="app-body" :style="bodyStyle">
       <button v-if="sidebarOpen" class="drawer-overlay sidebar-overlay" :aria-label="t('Close workspace navigation')" @click="sidebarOpen = false"/>
       <aside :class="['sidebar',{'drawer-open':sidebarOpen}]">
+        <div v-if="sidebarRail&&!sidebarCollapsed" class="sidebar-resizer" role="separator" aria-orientation="vertical" :aria-label="t('Resize workspace panel')" :title="t('Drag to resize · double-click to reset')" @pointerdown.prevent="resizeSidebar" @dblclick="resetSidebarWidth"/>
         <WorkspaceSidebar ref="workspaceSidebar" :workspace-branches="Object.fromEntries(Object.entries(gitStatuses).flatMap(([id,status])=>status.branch?[[id,status.branch]]:[]))" @branch-switched="branchSwitched" :workspaces="workspaces" :sessions="sessions" :selected-workspace-id="selectedWorkspaceId" :selected-session-id="selectedSessionId" :history-supported="backendCapabilities.nativeHistory" :storage-key="storageKey" :archive-supported="backendCapabilities.sessionArchive" :ephemeral-supported="backendCapabilities.ephemeralSessions" :archive-busy-ids="archiveBusyIds" :keep-busy-ids="keepBusyIds" :delete-busy-ids="deleteBusyIds" :sessions-loading="sessionsLoading" @select-workspace="selectWorkspace" @open-session="openSession" @rename-session="renameSession" @archive-session="archiveSession" @archive-sessions="archiveSessions" @delete-sessions="deleteSessions" @keep-session="keepSession" @refresh-sessions="refreshSessions" @session-environment="environmentSessionId=$event;sidebarOpen=false" @open-files="openFiles" @open-changes="openChanges" @new-session="newSession" @quick-session="quickSession" @load-history="loadHistory" @add-workspace="showWorkspace=true" @canvas="sidebarOpen=false"/>
         <div class="host-card"><span class="host-symbol"><Icon name="terminal"/></span><div><strong>{{ t('Host native') }}</strong><small>{{ platform || 'macOS / Linux' }} · {{ t('no containers') }}</small></div><span :class="['state-dot',apiOnline?'running':'stopped']"/></div>
       </aside>
@@ -647,7 +664,7 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
         <div v-if="canvasConflict" class="confirmation-bar" role="alert">{{ t('Another page updated the shared canvas. Your current layout is kept locally.') }}<button class="small-button" @click="resolveCanvasConflict(false)">{{ t('Load server layout') }}</button><button class="small-button danger" @click="resolveCanvasConflict(true)">{{ t('Save my current layout instead') }}</button></div>
         <div v-if="localRecovery" class="canvas-compat-notice"><span>{{ t('A local recovery layout is available.') }}</span><button class="text-button" @click="restoreLocalRecovery">{{ t('Restore local layout') }}</button><button class="icon-button" :aria-label="t('Dismiss error')" @click="localRecovery=undefined"><Icon name="close" :size="13"/></button></div>
         <template v-if="workspaces.length">
-          <Canvas v-if="canvasReady" ref="canvas" v-model="layout" :selected-pane-id="selectedPaneId" :default-workspace-id="contextWorkspace?.id" :accept-pane="acceptDroppedPane" :confirm-close-pane="confirmClosePane" :ephemeral-session-ids="ephemeralIds" :ephemeral-supported="backendCapabilities.ephemeralSessions" @create-session="createSessionInPane" @reveal-session="revealSession" :workspace-labels="Object.fromEntries(workspaces.map(workspace=>[workspace.id,workspace.name]))" :session-branches="Object.fromEntries(sessions.flatMap(session=>session.checkout_path&&session.checkout_branch?[[session.id,session.checkout_branch]]:[]))" :workspace-branches="Object.fromEntries(Object.entries(gitStatuses).flatMap(([id,status])=>status.branch?[[id,status.branch]]:[]))" :session-providers="sessionProviders" @select-pane="selectPane" @open-pane="sessionPaneDropped">
+          <Canvas v-if="canvasReady" ref="canvas" v-model="layout" :selected-pane-id="selectedPaneId" :default-workspace-id="contextWorkspace?.id" :accept-pane="acceptDroppedPane" :confirm-close-pane="confirmClosePane" :ephemeral-session-ids="ephemeralIds" :ephemeral-supported="backendCapabilities.ephemeralSessions" @create-session="createSessionInPane" @reveal-session="revealSession" :workspace-labels="Object.fromEntries(workspaces.map(workspace=>[workspace.id,workspace.name]))" :mixed-workspaces="new Set(flattenPanes(layout.root).map(pane=>paneString(pane,'workspace_id')).filter(Boolean)).size>1" :session-branches="Object.fromEntries(sessions.flatMap(session=>session.checkout_path&&session.checkout_branch?[[session.id,session.checkout_branch]]:[]))" :workspace-branches="Object.fromEntries(Object.entries(gitStatuses).flatMap(([id,status])=>status.branch?[[id,status.branch]]:[]))" :session-providers="sessionProviders" @select-pane="selectPane" @open-pane="sessionPaneDropped">
             <template #pane="{ pane }"><WorkspacePane :key="pane.id" :pane="pane" :workspaces="workspaces" :sessions="sessions" :profiles="profiles" :git-refresh="gitRefresh" @session-changed="refreshSessions" @new-session="(id,provider)=>newSession(id??selectedWorkspaceId,provider)" @open-session="openSession" @reveal-session="revealSession" @keep-session="keepSessionById" @rename-request="requestRenameSession" @session-environment="environmentSessionId=$event" @structured-session="enableChat" @profiles="settingsSection='endpoints'" @git-changed="gitChanged" @open-file="openFile" @open-reference="openReference" @files-saved="filesSaved" @browse="id=>openFiles(id??selectedWorkspaceId)" @reveal="revealFile"/></template>
           </Canvas>
           <div v-else class="pane-empty"><p>{{ t('Opening workspace…') }}</p></div>

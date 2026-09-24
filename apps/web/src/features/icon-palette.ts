@@ -10,19 +10,17 @@ export const ICON_PALETTE = {
   slate: "#708797",
 } as const;
 
-const ICON_TONES: Record<string, keyof typeof ICON_PALETTE> = {
-  folder: "gold", archive: "gold", clock: "gold",
-  git: "orange",
-  spark: "purple", account: "purple", settings: "purple",
-  file: "blue", terminal: "blue", image: "blue", play: "blue", download: "blue", info: "blue",
-  close: "slate", stop: "rose",
-  // Panel toggles are chrome, not content: keep them neutral so a collapsed
-  // panel does not read as an active state.
-  panelLeft: "slate", panelRight: "slate",
-};
+/**
+ * Functional icons carry no colour of their own: they take the colour of the
+ * text beside them, so a row reads in one tone and a selected one in teal.
+ * A palette per icon (gold folders, orange git, purple settings, blue files)
+ * made the chrome look busier than anything on it. Only stopping keeps a hue,
+ * because it destroys something; providers keep theirs, being identity.
+ */
+const ICON_TONES: Record<string, keyof typeof ICON_PALETTE> = { stop: "rose" };
 
 export function iconColor(name: string): string {
-  return ICON_PALETTE[Object.hasOwn(ICON_TONES, name) ? ICON_TONES[name] : "teal"];
+  return Object.hasOwn(ICON_TONES, name) ? ICON_PALETTE[ICON_TONES[name]] : "currentColor";
 }
 
 export function providerColor(provider: string): string {

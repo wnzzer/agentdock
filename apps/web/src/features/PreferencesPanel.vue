@@ -14,7 +14,7 @@ import { useI18n } from '../i18n';
  * A change saves at once -- there is nothing to lose by not asking.
  */
 const props = defineProps<{ profiles: EndpointProfile[] }>();
-const { t } = useI18n();
+const { t, locale, setLocale } = useI18n();
 const PROVIDERS: PreferenceProvider[] = ['claude_code', 'codex'];
 const PERMISSION_LABELS: Record<string, string> = { ask: 'Ask every time', plan: 'Plan first', accept_edits: 'Accept edits', danger: 'Never ask' };
 const loaded = ref(false), saving = ref(false), error = ref(''), saved = ref(false);
@@ -42,6 +42,14 @@ const pick = (provider: PreferenceProvider, field: 'endpoint_profile_id' | 'effo
   <section class="preferences-page">
     <div class="settings-lead"><p>{{ t('What a new session starts with. The new-session dialog and each session\'s own controls can still change it.') }}</p><span v-if="saving||saved" class="preferences-state" role="status">{{ t(saving ? 'Saving…' : 'Saved') }}</span></div>
     <p v-if="error" class="account-error" role="alert">{{ error }}</p>
+    <!-- The interface language belongs to this browser, not the server: it is
+         a per-viewer choice, and a phone and a laptop may well differ. -->
+    <article class="preference-card">
+      <label class="preference-row first">
+        <span><strong>{{ t('Language') }}</strong><small>{{ t('For this browser.') }}</small></span>
+        <select :value="locale" :aria-label="t('Language')" @change="setLocale(($event.target as HTMLSelectElement).value === 'en' ? 'en' : 'zh-CN')"><option value="zh-CN" lang="zh-CN">中文</option><option value="en" lang="en">English</option></select>
+      </label>
+    </article>
     <p v-if="!loaded" class="preferences-quiet">{{ t('Loading…') }}</p>
     <template v-else>
       <article v-for="provider in PROVIDERS" :key="provider" class="preference-card">
@@ -86,6 +94,7 @@ const pick = (provider: PreferenceProvider, field: 'endpoint_profile_id' | 'effo
 .preference-mark{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;background:#F0E9FF;color:#7552B8;flex-shrink:0}
 .preference-mark.claude_code{background:#FFF0E5;color:#B75B27}
 .preference-row{display:flex;align-items:center;gap:14px;padding:9px 0;border-top:1px solid var(--border)}
+.preference-row.first{border-top:0;padding-top:0}
 .preference-row>span{flex:1;min-width:0}
 .preference-row strong{display:block;font-size:12px;font-weight:550;color:var(--ink)}
 .preference-row small{display:block;margin-top:2px;font-size:10.5px;line-height:1.5;color:var(--muted)}

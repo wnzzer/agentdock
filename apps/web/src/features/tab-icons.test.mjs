@@ -43,15 +43,10 @@ test('every icon has an explicit semantic foreground and a light background with
 });
 
 test('key icons share a semantic palette across tabs, navigation and provider badges', () => {
-  assert.equal(iconColor('folder'), ICON_PALETTE.gold);
-  assert.equal(iconColor('archive'), ICON_PALETTE.gold);
-  for (const name of ['grid', 'layout', 'plus', 'locate', 'restore', 'splitHorizontal', 'splitVertical', 'maximize', 'more']) assert.equal(iconColor(name), ICON_PALETTE.teal);
-  assert.equal(iconColor('git'), TAB_ICON_PALETTE.git.color);
-  assert.equal(iconColor('file'), TAB_ICON_PALETTE.text.color);
-  assert.equal(iconColor('terminal'), TAB_ICON_PALETTE.terminal.color);
-  assert.equal(iconColor('account'), TAB_ICON_PALETTE.codex.color);
+  // Functional icons take the colour of the text beside them; only stop keeps a hue.
+  for (const name of ['folder', 'archive', 'git', 'file', 'terminal', 'account', 'settings', 'grid', 'plus', 'locate', 'more', 'toString']) assert.equal(iconColor(name), 'currentColor', name);
+  assert.equal(iconColor('stop'), ICON_PALETTE.rose);
   for (const provider of ['claude_code', 'codex', 'terminal']) assert.equal(providerColor(provider), TAB_ICON_PALETTE[provider].color);
-  assert.equal(iconColor('toString'), ICON_PALETTE.teal);
 });
 
 test('resolved appearance is a separate value, not a mutable palette entry', () => {

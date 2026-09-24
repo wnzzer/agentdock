@@ -9,7 +9,7 @@ import Icon from "../features/Icon.vue";
 import ContextMenu from "../features/ContextMenu.vue";
 const { t } = useI18n();
 
-const props = defineProps<{ node: LayoutNode; selected?: string | null; maximized?: string | null; locatedPaneId?: string | null; workspaceLabels?: Record<string, string>; workspaceBranches?: Record<string, string>; sessionBranches?: Record<string, string>; sessionProviders?: Record<string, ProviderKind>; ephemeralSessionIds?: string[]; ephemeralSupported?: boolean }>();
+const props = defineProps<{ node: LayoutNode; selected?: string | null; maximized?: string | null; locatedPaneId?: string | null; workspaceLabels?: Record<string, string>; mixedWorkspaces?: boolean; workspaceBranches?: Record<string, string>; sessionBranches?: Record<string, string>; sessionProviders?: Record<string, ProviderKind>; ephemeralSessionIds?: string[]; ephemeralSupported?: boolean }>();
 defineSlots<{ pane(props: { pane: PaneNode }): unknown }>();
 const emit = defineEmits<{
   select: [pane: PaneNode, groupId?: string];
@@ -110,13 +110,12 @@ function titleFor(pane: PaneNode) {
   if (pane.title && (pane.metadata?.session_id || pane.metadata?.path)) return pane.title;
   return t(pane.title || paneTypes.find((entry) => entry.kind === pane.kind)?.title || pane.kind);
 }
-/** A session's branch is its workspace's; files and Git panes already say
- * which checkout they show, so only sessions carry it. */
+/** A branch only when the session has one of its own -- a worktree. One in
+ * the workspace directory shares the branch the status bar already names. */
 function branchFor(pane: PaneNode) {
   if (pane.kind !== "agent_chat" && pane.kind !== "terminal") return undefined;
-  // A session in a worktree has a branch of its own; the rest share their workspace's.
-  const session = pane.metadata?.session_id, id = pane.metadata?.workspace_id;
-  return (typeof session === "string" ? props.sessionBranches?.[session] : undefined) ?? (typeof id === "string" ? props.workspaceBranches?.[id] : undefined);
+  const session = pane.metadata?.session_id;
+  return typeof session === "string" ? props.sessionBranches?.[session] : undefined;
 }
 function workspaceFor(pane: PaneNode) { const id = pane.metadata?.workspace_id; return typeof id === "string" ? props.workspaceLabels?.[id] : undefined; }
 const ephemeralIds = computed(() => new Set(props.ephemeralSessionIds ?? []));
@@ -233,13 +232,13 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
 <template>
   <div v-if="node.type === 'split'" ref="splitElement" class="dock-split" :class="'is-' + node.direction" :style="splitStyle" :data-split-id="node.id">
     <div class="dock-child">
-      <LayoutNode :node="node.first" :selected="selected" :maximized="maximized" :located-pane-id="locatedPaneId" :workspace-labels="workspaceLabels" :workspace-branches="workspaceBranches" :session-branches="sessionBranches" :session-providers="sessionProviders" :ephemeral-session-ids="ephemeralSessionIds" :ephemeral-supported="ephemeralSupported" @select="forwardSelect" @split="forwardSplit" @resize="forwardResize" @resizing="emit('resizing', $event)" @close="emit('close', $event)" @maximize="emit('maximize', $event)" @drop-pane="forwardDrop" @add-pane="forwardAdd" @create-session="forwardCreate" @reveal-session="emit('reveal-session', $event)">
+      <LayoutNode :node="node.first" :selected="selected" :maximized="maximized" :located-pane-id="locatedPaneId" :workspace-labels="workspaceLabels" :mixed-workspaces="mixedWorkspaces" :workspace-branches="workspaceBranches" :session-branches="sessionBranches" :session-providers="sessionProviders" :ephemeral-session-ids="ephemeralSessionIds" :ephemeral-supported="ephemeralSupported" @select="forwardSelect" @split="forwardSplit" @resize="forwardResize" @resizing="emit('resizing', $event)" @close="emit('close', $event)" @maximize="emit('maximize', $event)" @drop-pane="forwardDrop" @add-pane="forwardAdd" @create-session="forwardCreate" @reveal-session="emit('reveal-session', $event)">
         <template #pane="scope"><slot name="pane" :pane="scope.pane" /></template>
       </LayoutNode>
     </div>
     <div class="dock-separator" role="separator" tabindex="0" :aria-label="t(node.direction === 'horizontal' ? 'Resize columns' : 'Resize rows')" :aria-orientation="node.direction === 'horizontal' ? 'vertical' : 'horizontal'" :aria-valuenow="Math.round(node.ratio * 100)" :aria-valuemin="5" :aria-valuemax="95" :title="t('Drag to resize · double-click for 1:1 · arrow keys for precision')" @pointerdown="beginResize" @keydown="keyboardResize" @dblclick="emit('resize', node.id, 0.5, true)" />
     <div class="dock-child">
-      <LayoutNode :node="node.second" :selected="selected" :maximized="maximized" :located-pane-id="locatedPaneId" :workspace-labels="workspaceLabels" :workspace-branches="workspaceBranches" :session-branches="sessionBranches" :session-providers="sessionProviders" :ephemeral-session-ids="ephemeralSessionIds" :ephemeral-supported="ephemeralSupported" @select="forwardSelect" @split="forwardSplit" @resize="forwardResize" @resizing="emit('resizing', $event)" @close="emit('close', $event)" @maximize="emit('maximize', $event)" @drop-pane="forwardDrop" @add-pane="forwardAdd" @create-session="forwardCreate" @reveal-session="emit('reveal-session', $event)">
+      <LayoutNode :node="node.second" :selected="selected" :maximized="maximized" :located-pane-id="locatedPaneId" :workspace-labels="workspaceLabels" :mixed-workspaces="mixedWorkspaces" :workspace-branches="workspaceBranches" :session-branches="sessionBranches" :session-providers="sessionProviders" :ephemeral-session-ids="ephemeralSessionIds" :ephemeral-supported="ephemeralSupported" @select="forwardSelect" @split="forwardSplit" @resize="forwardResize" @resizing="emit('resizing', $event)" @close="emit('close', $event)" @maximize="emit('maximize', $event)" @drop-pane="forwardDrop" @add-pane="forwardAdd" @create-session="forwardCreate" @reveal-session="emit('reveal-session', $event)">
         <template #pane="scope"><slot name="pane" :pane="scope.pane" /></template>
       </LayoutNode>
     </div>
@@ -251,7 +250,7 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
           <TabIcon :kind="pane.kind" :metadata="pane.metadata" :session-providers="sessionProviders" />
           <span v-if="isEphemeral(pane)" class="dock-tab-ephemeral" role="img" :aria-label="t('Temporary window')" :title="t('Temporary window')" />
           <span class="dock-tab-title">{{ titleFor(pane) }}</span>
-          <span v-if="workspaceFor(pane) && pane.id === activePane?.id" class="dock-tab-workspace">{{ workspaceFor(pane) }}</span><span v-if="branchFor(pane) && pane.id === activePane?.id" class="dock-tab-branch" :title="branchFor(pane)"><svg viewBox="0 0 16 16" width="9" height="9" aria-hidden="true"><path d="M5 3v7M5 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm0-7a2 2 0 1 0 0-.01M11 5a2 2 0 1 0 0-.01M11 7c0 2-2 3-6 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>{{ branchFor(pane) }}</span>
+          <span v-if="mixedWorkspaces && workspaceFor(pane) && pane.id === activePane?.id" class="dock-tab-workspace">{{ workspaceFor(pane) }}</span><span v-if="branchFor(pane) && pane.id === activePane?.id" class="dock-tab-branch" :title="branchFor(pane)"><svg viewBox="0 0 16 16" width="9" height="9" aria-hidden="true"><path d="M5 3v7M5 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm0-7a2 2 0 1 0 0-.01M11 5a2 2 0 1 0 0-.01M11 7c0 2-2 3-6 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>{{ branchFor(pane) }}</span>
           <!-- The session menu is teleported here by the active session pane.
                Inactive tabs stay compact and do not reserve an empty action slot. -->
           <!-- Keep every session target mounted. A Teleport menu can outlive a
@@ -341,7 +340,7 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
 .dock-tab.is-active { max-width:360px;color:#243746;background:#fff;border-bottom-color:#16a398; }
 .dock-tab:focus-visible { box-shadow:inset 0 0 0 2px #53b9b0; }
 .dock-tab-title { min-width:48px;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600; }
-.dock-tab-branch { display:inline-flex;align-items:center;gap:3px;max-width:96px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;font-size:8px;border-radius:4px;padding:1px 4px;background:#efeafb;color:#7a66b0; }
+.dock-tab-branch { display:inline-flex;align-items:center;gap:3px;max-width:96px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;font-size:8px;border-radius:4px;padding:1px 4px;background:var(--fill);color:var(--ink-soft); }
 .dock-tab-workspace { max-width:80px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;font-size:8px;border-radius:4px;padding:1px 4px;background:#eaf2ed;color:#789b88; }
 .dock-tab.is-ephemeral { border-bottom-style:dashed; }.dock-tab.is-ephemeral.is-active { border-bottom-color:#8973b4; }
 .dock-tab-ephemeral { flex-shrink:0;width:5px;height:5px;margin-left:-3px;border-radius:50%;background:#8973b4;box-shadow:0 0 0 2px #efeaf8; }
@@ -349,6 +348,8 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
 .dock-tab:not(.is-active)>.dock-tab-session-actions { display:none; }
 .dock-tab-close { display:grid;place-items:center;border:0;padding:0;background:transparent;width:17px;height:19px;color:#98a2aa;cursor:pointer;border-radius:4px;font-size:14px;flex-shrink:0; }
 .dock-tab-close:hover { color:#be4453;background:#fff0f1; }
+.dock-tab:not(.is-active):not(:hover):not(:focus-within) .dock-tab-close { opacity:0; }
+@media(pointer:coarse) { .dock-tab:not(.is-active) .dock-tab-close { opacity:1; } }
 .dock-actions { display:flex;align-items:center;gap:1px;flex-shrink:0; }
 .dock-action { display:grid;place-items:center;width:24px;height:25px;padding:0;border:0;border-radius:5px;background:transparent;color:#74818c;cursor:pointer;font-size:16px;list-style:none; }
 .dock-action:hover,.dock-action:focus-visible { background:#eaf3f2;color:#087e73;outline:none; }
