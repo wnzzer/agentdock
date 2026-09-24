@@ -42,8 +42,12 @@ export function isProfileSelectionValid(provider: ProviderKind, selection: strin
   return UUID.test(selection) && profiles.some(profile => profile.id === selection && profile.provider === provider);
 }
 
-/** A sole host profile is a useful default; multiple accounts always require an explicit choice. */
-export function preferredProfileSelection(provider: ProviderKind, profiles: EndpointProfile[], storage?: PreferenceStorage): string {
+/**
+ * The default set in Preferences wins; then the last choice made here; then a
+ * sole host profile. Multiple accounts with neither require an explicit choice.
+ */
+export function preferredProfileSelection(provider: ProviderKind, profiles: EndpointProfile[], storage?: PreferenceStorage, preferred?: string | null): string {
+  if (preferred && isProfileSelectionValid(provider, preferred, profiles)) return preferred;
   const remembered = rememberedSelection(provider, storage ?? browserStorage());
   if (remembered !== undefined && isProfileSelectionValid(provider, remembered, profiles)) return remembered;
   const nativeIds = new Set(profiles.filter(profile => profile.provider === provider && !!profile.native_config && UUID.test(profile.id)).map(profile => profile.id));

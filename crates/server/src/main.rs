@@ -14,6 +14,7 @@ mod installation;
 mod model_catalog;
 mod native_config;
 mod native_history;
+mod preferences;
 mod providers;
 mod resources;
 mod security;
@@ -127,11 +128,20 @@ struct CreateSession {
     title: String,
     endpoint_profile_id: Option<Uuid>,
     model: Option<String>,
-    effort: Option<String>,
+    /// Absent takes the preferred depth for the provider; `null` is an explicit
+    /// "automatic" and takes nothing.
+    #[serde(default, deserialize_with = "present")]
+    effort: Option<Option<String>>,
     /// Declared here or never. There is deliberately no way to mark an existing
     /// session temporary, only to promote a temporary one to permanent.
     #[serde(default)]
     ephemeral: bool,
+}
+/// Tells a field sent as `null` apart from one not sent at all.
+fn present<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<Option<String>>, D::Error> {
+    Option::<String>::deserialize(deserializer).map(Some)
 }
 #[derive(Deserialize, Default)]
 struct SessionQuery {
@@ -572,6 +582,7 @@ fn router(state: AppState) -> Router {
         .merge(clients::routes())
         .merge(resources::routes())
         .merge(checkouts::routes())
+        .merge(preferences::routes())
         .merge(conversations::routes())
         .route("/api/health", get(health))
         .route("/api/auth", get(security::status).post(security::login))
@@ -941,7 +952,13 @@ async fn create_session(
     workspace(&state, id).await?;
     let title = bounded_name(&input.title)?;
     let model = optional(input.model);
-    let effort = optional(input.effort);
+    let effort = match input.effort {
+        Some(chosen) => optional(chosen),
+        None => preferences::load(&state)
+            .await?
+            .for_provider(&input.provider)
+            .and_then(|p| p.effort.clone()),
+    };
     providers::validate_effort(effort.as_deref())?;
     let interaction_mode = input.interaction_mode.unwrap_or_default();
     if input.provider == ProviderKind::Terminal && interaction_mode == InteractionMode::Structured {

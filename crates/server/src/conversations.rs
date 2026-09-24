@@ -336,6 +336,14 @@ pub async fn start_locked(state: &AppState, session: &Session) -> Result<Arc<Cha
         .await?;
         return Err(error);
     }
+    // Every start takes the preferred permission mode. Failing to apply it is
+    // not failing to start: the chip still shows the mode actually in force,
+    // and the user can change it there.
+    if let Some(mode) = crate::preferences::initial_permission(state, session).await? {
+        let _ = runtime
+            .send(json!({"type": "permission", "mode": mode}))
+            .await;
+    }
     db(state, move |s| {
         s.set_session_status(id, SessionStatus::Running)
     })

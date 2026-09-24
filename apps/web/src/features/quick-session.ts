@@ -42,6 +42,8 @@ export interface QuickOptions {
   ephemeralSupported?: boolean;
   /** Existing titles in the workspace, so a repeated quick create does not produce duplicates. */
   existingTitles?: readonly string[];
+  /** The profile Preferences names for this provider, if any. */
+  preferredProfileId?: string | null;
 }
 
 /**
@@ -50,7 +52,7 @@ export interface QuickOptions {
  * be picking one silently, so the dialog opens instead.
  */
 export function planQuickSession(provider: QuickProvider, profiles: EndpointProfile[], options: QuickOptions = {}): QuickPlan {
-  const profileId = provider === "terminal" ? "" : preferredProfileSelection(provider, profiles);
+  const profileId = provider === "terminal" ? "" : preferredProfileSelection(provider, profiles, undefined, options.preferredProfileId);
   if (profileId === PROFILE_CHOICE_REQUIRED) return { needsDialog: true };
   return {
     needsDialog: false,

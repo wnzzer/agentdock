@@ -42,6 +42,7 @@ test('Codex launch preserves native configuration overrides, translates model an
 });
 test('Claude native streaming preserves settings, model and native permission intent without SDK auth or bypass',()=>{
   const options=claudeLaunch({cwd:'/fixture',args:['--model','chosen-model','--permission-mode','plan','--effort','high','--resume=saved-session']});
+  assert.equal(options.effort,'high','the launch depth is reported, not left as automatic');
   assert.ok(options.args.includes('plan'));assert.ok(options.args.includes('--effort'));assert.ok(options.args.includes('high'));assert.ok(options.args.includes('user,project,local'));assert.ok(options.args.includes('--permission-prompt-tool'));assert.ok(options.args.includes('stdio'));
   assert.equal(options.resume,'saved-session');assert.ok(!options.args.includes('--bare'));assert.ok(!options.args.includes('bypassPermissions'));
   assert.throws(()=>claudeLaunch({cwd:'/fixture',args:['--dangerously-skip-permissions']}));

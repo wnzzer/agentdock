@@ -72,3 +72,13 @@ test('the plain + button remembers the last provider and says which one it will 
   rememberQuickProvider('terminal', denied);
   assert.equal(lastQuickProvider(denied), 'terminal');
 });
+
+test('a default endpoint from Preferences settles several accounts without the dialog', () => {
+  const second = '22222222-2222-4222-8222-222222222222';
+  const profiles = [profile(), profile({ id: second, name: 'Second Claude' })];
+  const plan = planQuickSession('claude_code', profiles, { preferredProfileId: second });
+  assert.equal(plan.needsDialog, false);
+  assert.equal(plan.body.endpoint_profile_id, second);
+  // A preference naming a profile that is gone is ignored, not trusted.
+  assert.equal(planQuickSession('claude_code', profiles, { preferredProfileId: '33333333-3333-4333-8333-333333333333' }).needsDialog, true);
+});

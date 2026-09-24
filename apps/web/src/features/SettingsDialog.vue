@@ -6,6 +6,7 @@ import Icon from './Icon.vue';
 import AgentClientsPanel from './AgentClientsPanel.vue';
 import ProfilesDialog from './ProfilesDialog.vue';
 import AccountsDialog from './AccountsDialog.vue';
+import PreferencesPanel from './PreferencesPanel.vue';
 import { useI18n } from '../i18n';
 
 /**
@@ -13,12 +14,13 @@ import { useI18n } from '../i18n';
  * three separate top-level dialogs; they are one place now, because choosing
  * between them is part of configuring the same thing.
  */
-type SettingsSection = 'agents' | 'endpoints' | 'accounts';
+type SettingsSection = 'preferences' | 'agents' | 'endpoints' | 'accounts';
 const props = defineProps<{ profiles: EndpointProfile[]; initialSection?: SettingsSection }>();
 const emit = defineEmits<{ close: []; changed: [profile?: EndpointProfile] }>();
 const { t } = useI18n();
 
 const SECTIONS = [
+  { id: 'preferences', icon: 'gauge', label: 'Preferences' },
   { id: 'agents', icon: 'spark', label: 'Agent clients' },
   { id: 'endpoints', icon: 'settings', label: 'Endpoint profiles' },
   { id: 'accounts', icon: 'account', label: 'Official accounts' },
@@ -45,7 +47,8 @@ function select(next: SettingsSection) { if (next !== section.value) leave(() =>
         </button>
       </nav>
       <div class="settings-page">
-        <AgentClientsPanel v-if="section==='agents'"/>
+        <PreferencesPanel v-if="section==='preferences'" :profiles="profiles"/>
+        <AgentClientsPanel v-else-if="section==='agents'"/>
         <ProfilesDialog v-else-if="section==='endpoints'" ref="profilesPage" embedded :profiles="profiles" @close="emit('close')" @changed="emit('changed', $event)" @accounts="section='accounts'"/>
         <AccountsDialog v-else embedded @close="emit('close')" @changed="emit('changed', $event)"/>
       </div>

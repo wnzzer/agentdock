@@ -2753,3 +2753,85 @@ fn urlencoding(value: &str) -> String {
         })
         .collect()
 }
+
+#[tokio::test]
+async fn preferences_are_validated_per_provider_and_kept() {
+    let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
+    let (status, empty) = call(f.app(), "GET", "/api/preferences", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(empty, json!({"claude_code":{},"codex":{}}));
+    // Codex has no plan mode, and a depth must be one the clients know.
+    for bad in [
+        json!({"codex":{"permission":"plan"}}),
+        json!({"claude_code":{"effort":"extreme"}}),
+        json!({"claude_code":{"endpoint_profile_id":Uuid::new_v4()}}),
+    ] {
+        assert_ne!(
+            call(f.app(), "PUT", "/api/preferences", bad).await.0,
+            StatusCode::OK
+        );
+    }
+    let (_, profile) = call(
+        f.app(),
+        "POST",
+        "/api/endpoint-profiles",
+        json!({"name":"work","provider":"codex","endpoint_url":"https://example.test/v1","permission_mode":"interactive"}),
+    )
+    .await;
+    let pid = profile["id"].as_str().unwrap();
+    // A profile belongs to one provider's preferences only.
+    assert_eq!(
+        call(
+            f.app(),
+            "PUT",
+            "/api/preferences",
+            json!({"claude_code":{"endpoint_profile_id":pid}})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let chosen = json!({"claude_code":{"effort":"high","permission":"plan"},"codex":{"endpoint_profile_id":pid,"permission":"ask"}});
+    let (status, _) = call(f.app(), "PUT", "/api/preferences", chosen.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        call(f.app(), "GET", "/api/preferences", Value::Null)
+            .await
+            .1,
+        chosen
+    );
+    // A new session takes the preferred depth unless it says otherwise; an
+    // explicit null is "automatic" and takes none.
+    let workspace = register(&f).await;
+    let path = format!("/api/workspaces/{workspace}/sessions");
+    let (_, defaulted) = call(
+        f.app(),
+        "POST",
+        &path,
+        json!({"title":"a","provider":"claude_code"}),
+    )
+    .await;
+    assert_eq!(
+        defaulted["endpoint_snapshot"]["effort"], "high",
+        "{defaulted}"
+    );
+    let (_, automatic) = call(
+        f.app(),
+        "POST",
+        &path,
+        json!({"title":"b","provider":"claude_code","effort":null}),
+    )
+    .await;
+    assert!(
+        automatic["endpoint_snapshot"]["effort"].is_null(),
+        "{automatic}"
+    );
+    let (_, low) = call(
+        f.app(),
+        "POST",
+        &path,
+        json!({"title":"c","provider":"claude_code","effort":"low"}),
+    )
+    .await;
+    assert_eq!(low["endpoint_snapshot"]["effort"], "low");
+}

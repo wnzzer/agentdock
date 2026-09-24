@@ -15,7 +15,7 @@ const AGENTDOCK_PERMISSION=Object.fromEntries(Object.entries(CLAUDE_PERMISSION).
 AGENTDOCK_PERMISSION.manual='ask';
 
 export function claudeLaunch(job) {
-  const args=[];let resume=job.resume_id,settingSources=false,sessionId,model;
+  const args=[];let resume=job.resume_id,settingSources=false,sessionId,model,effort;
   const values=new Set(['--model','--permission-mode','--permission-prompts','--settings','--setting-sources','--append-system-prompt','--system-prompt','--agent','--agents','--effort','--max-budget-usd','--fallback-model','--allowedTools','--allowed-tools','--disallowedTools','--disallowed-tools','--tools','--add-dir','--plugin-dir','--mcp-config','--name','-n']);
   for(let i=0;i<job.args.length;i++) {
     const arg=job.args[i],equal=arg.indexOf('='),flag=equal>0?arg.slice(0,equal):arg;
@@ -28,6 +28,7 @@ export function claudeLaunch(job) {
     else if(values.has(flag)) {
       const next=value();if(flag==='--permission-mode'&&next==='bypassPermissions')throw Error('Structured mode does not enable permission bypass.');
       if(flag==='--model')model=next;
+      if(flag==='--effort')effort=next;
       if(flag==='--setting-sources')settingSources=true;args.push(flag,next);
     }else if(['--strict-mcp-config','--disable-slash-commands'].includes(flag))args.push(flag);
     else throw Error('Unsupported Claude Code launch option in structured mode.');
@@ -42,7 +43,7 @@ export function claudeLaunch(job) {
   args.push('--allow-dangerously-skip-permissions');
   if(!settingSources)args.push('--setting-sources','user,project,local');
   args.push('--print','--verbose','--input-format','stream-json','--output-format','stream-json','--include-partial-messages','--permission-prompt-tool','stdio');
-  return {args,resume,sessionId,model};
+  return {args,resume,sessionId,model,effort};
 }
 
 // What currently occupies the context window. Claude Code documents this as the
@@ -89,7 +90,10 @@ export class ClaudeChat extends ChatBase {
     // resolves to", so that is a truthful starting point — and only when the
     // client itself listed it. A launch flag is more specific, so it wins.
     this.model=this.launch.model??(this.models?.some(entry=>entry.id==='default')?'default':undefined);
-    this.settings(this.models,this.model);
+    // The depth it was launched with is the one in force; saying nothing
+    // left the chip reading "automatic" over a session running deeper.
+    this.effort=this.launch.effort;
+    this.settings(this.models,this.model,this.effort);
   }
   /**
    * Switch model in place. `set_model` is the client's own live control, so the

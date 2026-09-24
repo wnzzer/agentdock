@@ -4,7 +4,8 @@ import type { EndpointProfile, ModelCatalog, ProviderKind, Session, Workspace } 
 import { errorMessage, json, providerLabel, request, workspacePath } from "./api";
 import { sessionEffortOverride, sessionModelOverride } from "./native-profiles";
 import { effortLabel, modelEfforts } from "./reasoning-effort";
-import { PROFILE_CHOICE_REQUIRED, isProfileSelectionValid, preferredProfileSelection, rememberProfileSelection } from "./profile-preferences";
+import { PROFILE_CHOICE_REQUIRED, isProfileSelectionValid, preferredProfileSelection as rememberedSelection, rememberProfileSelection } from "./profile-preferences";
+import { loadPreferences, preferenceFor } from "./preferences";
 import { useI18n } from "../i18n";
 import { backendCapabilities } from "./backend-capabilities";
 import { environmentRows, mergeEnvironment, parseEnvironmentRows, type EnvironmentRow } from "./environment-model";
@@ -16,6 +17,9 @@ const { t }=useI18n();
 const props = defineProps<{ workspace: Workspace; profiles: EndpointProfile[]; initialProvider?: ProviderKind }>();
 const emit = defineEmits<{ close: []; created: [session: Session]; profiles: [] }>();
 const provider = ref<ProviderKind>(props.initialProvider ?? "claude_code");
+/** Preferences choose the account and depth a new session starts with; the form can still change both. */
+const preferredProfileSelection=(value:ProviderKind,profiles:typeof props.profiles)=>rememberedSelection(value,profiles,undefined,preferenceFor(value)?.endpoint_profile_id);
+const preferredEffort=()=>preferenceFor(provider.value)?.effort??"";
 const title = ref(t('{provider} session',{provider:providerLabel(provider.value)}));
 const profileId=ref(preferredProfileSelection(provider.value,props.profiles)), profileTouched=ref(false), model=ref(""), effort=ref(""), busy=ref(false),error=ref(""),discovering=ref(false),modelError=ref("");
 const catalog=ref<ModelCatalog>();
@@ -54,7 +58,8 @@ watch(available,()=>{
   }
   if(!profileTouched.value)profileId.value=preferredProfileSelection(provider.value,props.profiles);
 },{flush:"sync"});
-watch([provider,profileId,()=>nativeConfig.value?.source_id,()=>nativeConfig.value?.config_dir],()=>{catalog.value=undefined;modelError.value="";model.value="";effort.value=selectedProfile.value?.effort??"";discovering.value=false;revision++;},{flush:"sync"});
+watch([provider,profileId,()=>nativeConfig.value?.source_id,()=>nativeConfig.value?.config_dir],()=>{catalog.value=undefined;modelError.value="";model.value="";effort.value=selectedProfile.value?.effort??preferredEffort();discovering.value=false;revision++;},{flush:"sync"});
+void loadPreferences().then(()=>{if(busy.value)return;if(!profileTouched.value)profileId.value=preferredProfileSelection(provider.value,props.profiles);if(!effort.value)effort.value=selectedProfile.value?.effort??preferredEffort();});
 async function discover(){
   if(!validProfile.value||!backendCapabilities.models||nativeConfig.value||provider.value==="terminal")return;
   const p=selectedProfile.value ?? {name:"Native catalog",provider:provider.value,endpoint_url:null,model:null,permission_mode:"native",secret_ref:null,proxy_url:null,effort:null,model_aliases:{}};if(discovering.value)return;
@@ -68,7 +73,7 @@ async function create() {
   const selectedProvider=provider.value, selectedProfileId=profileId.value;
   busy.value = true; error.value = "";
   try {
-    let session = await request<Session>(`${workspacePath(props.workspace.id)}/sessions`, json("POST", { title: title.value.trim(), provider: selectedProvider, endpoint_profile_id: selectedProfileId || null, ...(backendCapabilities.structuredChat&&selectedProvider!=='terminal'?{interaction_mode:'structured'}:{}), ...sessionModelOverride(selectedProvider,selectedProfile.value,model.value), ...sessionEffortOverride(selectedProvider,selectedProfile.value,effort.value), ...(backendCapabilities.environment&&Object.keys(parsedEnvironment.value.environment).length?{environment:parsedEnvironment.value.environment}:{}), ...(ephemeralSupported.value&&ephemeral.value?{ephemeral:true}:{}) })); if (place.value === 'worktree') { const branch = worktreeBranch.value.trim(); session = await request<Session>(`/sessions/${encodeURIComponent(session.id)}/checkout`, json("POST", { branch, create: !repo.value?.branches.includes(branch) })); }
+    let session = await request<Session>(`${workspacePath(props.workspace.id)}/sessions`, json("POST", { title: title.value.trim(), provider: selectedProvider, endpoint_profile_id: selectedProfileId || null, ...(backendCapabilities.structuredChat&&selectedProvider!=='terminal'?{interaction_mode:'structured'}:{}), ...sessionModelOverride(selectedProvider,selectedProfile.value,model.value), ...sessionEffortOverride(selectedProvider,selectedProfile.value,effort.value), ...(selectedProvider!=='terminal'&&!nativeConfig.value&&!effort.value.trim()?{effort:null}:{}), ...(backendCapabilities.environment&&Object.keys(parsedEnvironment.value.environment).length?{environment:parsedEnvironment.value.environment}:{}), ...(ephemeralSupported.value&&ephemeral.value?{ephemeral:true}:{}) })); if (place.value === 'worktree') { const branch = worktreeBranch.value.trim(); session = await request<Session>(`/sessions/${encodeURIComponent(session.id)}/checkout`, json("POST", { branch, create: !repo.value?.branches.includes(branch) })); }
     rememberProfileSelection(selectedProvider,selectedProfileId); emit("created", session); }
   catch (cause) { error.value = errorMessage(cause); }
   finally { busy.value = false; }

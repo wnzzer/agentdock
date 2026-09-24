@@ -21,6 +21,7 @@ import AuthDialog from "./features/AuthDialog.vue";
 import Icon from "./features/Icon.vue";
 import { useI18n } from "./i18n";
 import { ApiConnectionError, ApiError, errorMessage, json, request, workspacePath } from "./features/api";
+import { loadPreferences, preferenceFor } from "./features/preferences";
 import { paneString, paneWorkspace, paneSession, filePane, changesPane, sessionPane, renameSessionPanes, scopeLegacyLayout, acceptsScopedPane, ephemeralSessionIds, withoutEphemeralPanes } from "./features/pane-context";
 import { isEphemeralSession } from "./features/session-list";
 import { lastQuickProvider, planQuickSession, rememberQuickProvider } from "./features/quick-session";
@@ -59,7 +60,7 @@ const connectionError = ref(""), refreshingResources = ref(false);
 const visibleError = computed(() => error.value || connectionError.value);
 const platform = ref<string>(), instanceLabel = ref<string>(), serverVersion = ref<string>();
 const showWorkspace = ref(false), showAuth = ref(false);
-const settingsSection = ref<'agents' | 'endpoints' | 'accounts'>();
+const settingsSection = ref<'preferences' | 'agents' | 'endpoints' | 'accounts'>();
 const archiveBusyIds = ref<string[]>([]), keepBusyIds = ref<string[]>([]), deleteBusyIds = ref<string[]>([]), quickBusy = ref(false);
 const ephemeralIds = computed(() => ephemeralSessionIds(sessions.value));
 const discardPrompt = ref<{ paneId: string; session: Session }>();
@@ -445,7 +446,9 @@ function newSession(id = selectedWorkspaceId.value, provider: ProviderKind = "cl
  */
 async function quickSession(id = selectedWorkspaceId.value, provider: ProviderKind = lastQuickProvider(), ephemeral = false, targetPaneId?: string) {
   if (!workspaces.value.some(workspace => workspace.id === id) || quickBusy.value) return;
+  await loadPreferences();
   const plan = planQuickSession(provider, profiles.value, {
+    preferredProfileId: preferenceFor(provider)?.endpoint_profile_id,
     ephemeral,
     structuredChat: backendCapabilities.structuredChat,
     ephemeralSupported: backendCapabilities.ephemeralSessions,

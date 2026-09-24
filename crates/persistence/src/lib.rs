@@ -31,7 +31,7 @@ impl Store {
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 13 {
+        if version > 14 {
             return Err(rusqlite::Error::InvalidQuery);
         }
         let tx = connection.transaction()?;
@@ -108,6 +108,9 @@ impl Store {
                 "../../../migrations/0013_session_checkout.sql"
             ))?;
         }
+        if version < 14 {
+            tx.execute_batch(include_str!("../../../migrations/0014_preferences.sql"))?;
+        }
         // Capture the endpoint settings for legacy M0 sessions once, before templates change.
         let legacy = {
             let mut stmt = tx.prepare("SELECT s.id,p.id FROM sessions s JOIN endpoint_profiles p ON p.id=s.endpoint_profile_id WHERE s.endpoint_snapshot IS NULL")?;
@@ -126,7 +129,7 @@ impl Store {
                 params![snapshot, id],
             )?;
         }
-        tx.pragma_update(None, "user_version", 13)?;
+        tx.pragma_update(None, "user_version", 14)?;
         tx.commit()?;
         Ok(Self {
             connection: Mutex::new(connection),
@@ -453,6 +456,27 @@ impl Store {
             .optional()
     }
 
+    /// The stored preferences document, or `null` when none was ever saved.
+    pub fn preferences(&self) -> Result<serde_json::Value> {
+        let raw: Option<String> = self
+            .connection
+            .lock()
+            .expect("sqlite lock")
+            .query_row("SELECT value FROM preferences WHERE id=1", [], |r| r.get(0))
+            .optional()?;
+        match raw {
+            Some(raw) => serde_json::from_str(&raw).map_err(conversion_error),
+            None => Ok(serde_json::Value::Null),
+        }
+    }
+    pub fn set_preferences(&self, value: &serde_json::Value) -> Result<()> {
+        let encoded = serde_json::to_string(value).map_err(conversion_error)?;
+        self.connection.lock().expect("sqlite lock").execute(
+            "INSERT INTO preferences(id,value,updated_at) VALUES (1,?1,?2) ON CONFLICT(id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+            params![encoded, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
     pub fn update_session_title(&self, id: SessionId, title: &str) -> Result<Option<Session>> {
         let mut connection = self.connection.lock().expect("sqlite lock");
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -1758,7 +1782,7 @@ mod tests {
                     .unwrap()
                     .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                     .unwrap(),
-                13
+                14
             );
             let current = store.get_endpoint_profile(profile.id).unwrap().unwrap();
             assert!(current.native_config.is_none());
@@ -2148,7 +2172,7 @@ mod tests {
                     .unwrap()
                     .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                     .unwrap(),
-                13
+                14
             );
             assert!(matches!(
                 store.get_session(session_id).unwrap().unwrap().status,
