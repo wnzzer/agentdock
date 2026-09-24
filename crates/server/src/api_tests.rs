@@ -298,6 +298,17 @@ async fn workspace_file_git_layout_workflow() {
         renamed["configuration_revision"], 1,
         "a label, not a new context"
     );
+    // Renaming through the API is followed the same way.
+    let (status, _) = call(
+        f.app(),
+        "POST",
+        &format!("{base}/git/branches/rename"),
+        json!({"from":"feature/renamed","to":"feature/final"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, followed) = call(f.app(), "GET", &format!("/api/sessions/{sid}"), Value::Null).await;
+    assert_eq!(followed["checkout_branch"], "feature/final");
     // Choosing the workspace's own branch brings it back to the workspace.
     let (_, home) = call(f.app(), "GET", &format!("{base}/git/branches"), Value::Null).await;
     let current = home["current"].as_str().unwrap().to_owned();
@@ -309,6 +320,32 @@ async fn workspace_file_git_layout_workflow() {
     )
     .await;
     assert!(back["checkout_path"].is_null());
+    // Removing a worktree moves the stopped sessions bound to it home first.
+    call(
+        f.app(),
+        "POST",
+        &format!("/api/sessions/{sid}/checkout"),
+        json!({"branch":"feature/final"}),
+    )
+    .await;
+    let (status, _) = call(
+        f.app(),
+        "POST",
+        &format!("{base}/git/worktrees/remove"),
+        json!({"path":tree_path}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, homed) = call(f.app(), "GET", &format!("/api/sessions/{sid}"), Value::Null).await;
+    assert!(homed["checkout_path"].is_null());
+    let (status, _) = call(
+        f.app(),
+        "POST",
+        &format!("{base}/git/branches/delete"),
+        json!({"branch":"feature/final","force":true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
     let (_, conversation) = call(
         f.app(),
         "GET",
@@ -322,7 +359,7 @@ async fn workspace_file_git_layout_workflow() {
         .iter()
         .filter(|e| e["type"] == "configuration")
         .count();
-    assert_eq!(boundaries, 2, "each move is marked in the conversation");
+    assert_eq!(boundaries, 4, "each move is marked in the conversation");
     let (status, _) = call(
         f.app(),
         "POST",

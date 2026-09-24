@@ -229,8 +229,113 @@ async fn worktree(
     Ok(Json(resolve(&state, id, choice).await?))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RenameInput {
+    from: String,
+    to: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeleteBranchInput {
+    branch: String,
+    #[serde(default)]
+    force: bool,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RemoveWorktreeInput {
+    path: String,
+    #[serde(default)]
+    force: bool,
+}
+
+/// Rename a branch. Sessions in its worktree stay where they are and show
+/// the new name, since what binds them is the directory.
+async fn rename_branch(
+    State(state): State<AppState>,
+    Path(id): Path<WorkspaceId>,
+    Json(input): Json<RenameInput>,
+) -> Result<Json<workspace_io::GitBranches>> {
+    let _guard = state.operations.lock().await;
+    let repo = root(&state, id).await?;
+    workspace_io::git_branch_rename(&repo, input.from.trim(), input.to.trim()).await?;
+    let listed = workspace_io::git_branches(&repo).await?;
+    refresh_labels(&state, id, &listed).await;
+    Ok(Json(listed))
+}
+
+async fn delete_branch(
+    State(state): State<AppState>,
+    Path(id): Path<WorkspaceId>,
+    Json(input): Json<DeleteBranchInput>,
+) -> Result<Json<workspace_io::GitBranches>> {
+    let _guard = state.operations.lock().await;
+    let repo = root(&state, id).await?;
+    workspace_io::git_branch_delete(&repo, input.branch.trim(), input.force).await?;
+    Ok(Json(workspace_io::git_branches(&repo).await?))
+}
+
+/// Remove a worktree. A session running in it refuses the removal; stopped
+/// ones bound to it move back to the workspace directory first, so none is
+/// left pointing at a directory that is gone.
+async fn remove_worktree(
+    State(state): State<AppState>,
+    Path(id): Path<WorkspaceId>,
+    Json(input): Json<RemoveWorktreeInput>,
+) -> Result<Json<workspace_io::GitBranches>> {
+    let _guard = state.operations.lock().await;
+    let repo = root(&state, id).await?;
+    let path = input.path.clone();
+    let bound: Vec<Session> = db(&state, move |s| s.list_sessions(Some(id)))
+        .await?
+        .into_iter()
+        .filter(|session| session.checkout_path.as_deref() == Some(path.as_str()))
+        .collect();
+    let running = bound
+        .iter()
+        .filter(|session| {
+            state.chats.get(session.id).is_some_and(|r| r.running())
+                || state
+                    .runtime
+                    .get(&session.id.to_string())
+                    .is_some_and(|r| r.running())
+        })
+        .count();
+    if running > 0 {
+        return Err(ApiError::conflict(format!(
+            "{running} session(s) are running in this worktree. End them or move them to another branch first."
+        )));
+    }
+    workspace_io::git_worktree_remove(&repo, &input.path, input.force).await?;
+    let listed = workspace_io::git_branches(&repo).await?;
+    for session in bound {
+        let sid = session.id;
+        let branch = listed.current.clone();
+        let label = branch.clone().unwrap_or_else(|| "Detached HEAD".into());
+        db(&state, move |s| {
+            s.set_session_checkout(sid, None, branch.as_deref(), &label)
+        })
+        .await?;
+        crate::conversations::publish_snapshot(&state, sid).await;
+    }
+    Ok(Json(listed))
+}
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/sessions/{id}/checkout", post(set_checkout))
         .route("/api/workspaces/{id}/git/worktrees", post(worktree))
+        .route(
+            "/api/workspaces/{id}/git/worktrees/remove",
+            post(remove_worktree),
+        )
+        .route(
+            "/api/workspaces/{id}/git/branches/rename",
+            post(rename_branch),
+        )
+        .route(
+            "/api/workspaces/{id}/git/branches/delete",
+            post(delete_branch),
+        )
 }

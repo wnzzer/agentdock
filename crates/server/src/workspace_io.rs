@@ -957,6 +957,70 @@ pub async fn git_switch(root: &Path, branch: &str, create: bool) -> Result<(), I
     }
 }
 
+/// Rename a local branch. A worktree that has it checked out follows the new
+/// name -- Git updates it -- so no checkout has to move.
+pub async fn git_branch_rename(root: &Path, from: &str, to: &str) -> Result<(), IoError> {
+    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    valid_branch(&root, from).await?;
+    valid_branch(&root, to).await?;
+    let args = vec!["branch".into(), "-m".into(), from.to_owned(), to.to_owned()];
+    let (_stdout, stderr, success) = run_git(&root, args, GIT_TIMEOUT).await?;
+    if success {
+        Ok(())
+    } else {
+        Err(IoError::new(409, git_error(&stderr)))
+    }
+}
+
+/// Delete a local branch. Git refuses one that is checked out anywhere, and
+/// -- unless `force` -- one whose commits are not merged; both are passed on.
+pub async fn git_branch_delete(root: &Path, branch: &str, force: bool) -> Result<(), IoError> {
+    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    valid_branch(&root, branch).await?;
+    let args = vec![
+        "branch".into(),
+        if force { "-D" } else { "-d" }.into(),
+        branch.to_owned(),
+    ];
+    let (_stdout, stderr, success) = run_git(&root, args, GIT_TIMEOUT).await?;
+    if success {
+        Ok(())
+    } else {
+        Err(IoError::new(409, git_error(&stderr)))
+    }
+}
+
+/// Remove a worktree of this repository -- its directory, not its branch.
+/// Git refuses one with uncommitted changes unless `force`; the repository's
+/// own checkout can never be removed this way.
+pub async fn git_worktree_remove(root: &Path, path: &str, force: bool) -> Result<(), IoError> {
+    let root = fs::canonicalize(root).map_err(IoError::from)?;
+    let listing = git_text(&root, &["worktree", "list", "--porcelain"])
+        .await?
+        .ok_or_else(|| IoError::new(400, "Not a Git repository"))?;
+    let tree = parse_worktrees(&listing)
+        .into_iter()
+        .find(|tree| tree.path == path)
+        .ok_or_else(|| IoError::new(400, "Not a worktree of this repository"))?;
+    if tree.main {
+        return Err(IoError::new(
+            400,
+            "The repository's own checkout cannot be removed",
+        ));
+    }
+    let mut args: Vec<String> = vec!["worktree".into(), "remove".into()];
+    if force {
+        args.push("--force".into());
+    }
+    args.push(tree.path);
+    let (_stdout, stderr, success) = run_git(&root, args, GIT_TIMEOUT).await?;
+    if success {
+        Ok(())
+    } else {
+        Err(IoError::new(409, git_error(&stderr)))
+    }
+}
+
 /// Where a new worktree for `branch` goes: beside the repository's own
 /// checkout, in `<repo>.worktrees/<branch>`, so every worktree of one
 /// repository sits together and none of them inside another.
@@ -1656,6 +1720,70 @@ mod tests {
             409
         );
         let _ = fs::remove_dir_all(&expected);
+    }
+
+    #[tokio::test]
+    async fn branches_rename_and_delete_and_worktrees_are_removed_but_never_the_main_one() {
+        let repo = TempRepo::new();
+        fs::write(repo.path.join("a.txt"), "a\n").unwrap();
+        git_stage(&repo.path, &["a.txt".into()]).await.unwrap();
+        git_commit(&repo.path, "first").await.unwrap();
+        let tree = git_worktree_add(&repo.path, "side", true).await.unwrap();
+        let tree_text = tree.to_string_lossy().into_owned();
+        // A rename is followed by the worktree that holds the branch.
+        git_branch_rename(&repo.path, "side", "renamed")
+            .await
+            .unwrap();
+        let listed = git_branches(&repo.path).await.unwrap();
+        assert!(
+            listed
+                .worktrees
+                .iter()
+                .any(|w| w.branch.as_deref() == Some("renamed"))
+        );
+        // A branch checked out somewhere cannot be deleted.
+        assert_eq!(
+            git_branch_delete(&repo.path, "renamed", true)
+                .await
+                .unwrap_err()
+                .status,
+            409
+        );
+        // Uncommitted work keeps a worktree unless forced.
+        fs::write(tree.join("dirty.txt"), "x").unwrap();
+        assert_eq!(
+            git_worktree_remove(&repo.path, &tree_text, false)
+                .await
+                .unwrap_err()
+                .status,
+            409
+        );
+        git_worktree_remove(&repo.path, &tree_text, true)
+            .await
+            .unwrap();
+        assert!(!tree.exists());
+        git_branch_delete(&repo.path, "renamed", false)
+            .await
+            .unwrap();
+        assert!(
+            !git_branches(&repo.path)
+                .await
+                .unwrap()
+                .branches
+                .contains(&"renamed".to_owned())
+        );
+        let main = fs::canonicalize(&repo.path)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            git_worktree_remove(&repo.path, &main, true)
+                .await
+                .unwrap_err()
+                .status,
+            400
+        );
+        let _ = fs::remove_dir_all(tree.parent().unwrap());
     }
 
     #[tokio::test]
