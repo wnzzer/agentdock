@@ -17,219 +17,81 @@
 
 <p align="center"><b>English</b> · <a href="README.zh-CN.md">简体中文</a></p>
 
-AgentDock is a browser workspace for the official **Claude Code** and **Codex** CLIs. It runs on the machine where your code lives and puts agent sessions, files, Git diffs and terminals on one canvas you can split and dock, reachable from any browser, including a phone.
+AgentDock is a browser workspace for the official **Claude Code** and **Codex** CLIs. It runs where your code lives and puts agent sessions, files, Git diffs and terminals on one canvas you can split and dock, from any browser, phone included.
 
-It does not have its own agent. Codex is driven through its official `app-server` and Claude Code through its `stream-json` interface, so logins, models, hooks, `CLAUDE.md` and permission prompts all stay native.
+It has no agent of its own: Codex runs through its official `app-server` and Claude Code through `stream-json`, so logins, models, hooks, `CLAUDE.md` and permission prompts stay native.
 
 <p align="center">
   <img src="docs/assets/screenshot-canvas.png" alt="The AgentDock canvas: two agent sessions side by side, and Git changes with a diff bottom right." width="100%">
 </p>
 
-- [Highlights](#highlights)
-- [Install](#install)
-- [Quick start](#quick-start)
-- [Commands](#commands)
-- [Configuration](#configuration)
-- [Remote access](#remote-access)
-- [All features](#all-features)
-- [Architecture](#architecture)
-- [Security](#security)
-- [Documentation](#documentation)
-- [Development](#development)
-
 ## Highlights
 
-### The real clients, not an imitation
-
-Every session is the official `claude` or `codex` you already have installed, driven through its own programmatic interface. Your sign-in, `CLAUDE.md`, hooks, MCP servers, slash commands and permission prompts behave exactly as they do in the terminal. The model list comes from the client itself, so a newly released model shows up as soon as you upgrade the CLI, and you can always type a model ID by hand.
-
-<p align="center">
-  <img src="docs/assets/screenshot-models.png" alt="The model menu, listing what the installed Claude Code reports, with a field for any other model ID." width="80%">
-</p>
-
-### Any screen, full workspace
-
-The same workspace works from a phone to an ultrawide monitor, with nothing cut down on the small end. Splits fold into tabs when a window or pane gets too small and open back up when there is room, without touching the saved layout. Controls adapt to the pane they sit in, so a narrow split on a big screen gets the compact layout too. On a phone the sidebar becomes a drawer, the layout makes room for the keyboard, menus open as bottom sheets, touch targets are finger-sized and a long press stands in for right-click. Check on a long task, answer an approval or steer the agent from the couch.
+- **The real clients.** Every session is the `claude` or `codex` you already have installed. Your sign-in, MCP servers, slash commands and permission prompts behave as in the terminal, and new models appear as soon as you upgrade the CLI.
+- **Steer while it works.** <kbd>Enter</kbd> steers the running turn without stopping it, <kbd>Alt</kbd>+<kbd>Enter</kbd> queues the next turn, and *Interrupt and send* changes course.
+- **Every project on one canvas.** Split, tab and dock sessions, files, diffs and terminals from different repositories. Closing a pane never ends its process, and the layout follows you to any browser.
+- **One branch per session.** Give a session its own branch and it works in a git worktree, so two agents can build two features at once.
+- **Accounts and endpoints, kept apart.** Each session picks an official account, the host's sign-in, a custom gateway or an isolated client home, with remaining 5-hour and weekly quota at a glance. Hand a conversation from Claude Code to Codex, or back.
+- **Any screen.** Splits fold into tabs when space runs out. On a phone you get a drawer sidebar, bottom-sheet menus and long-press for right-click.
 
 <p align="center">
-  <img src="docs/assets/screenshot-mobile.png" alt="AgentDock on a phone: the split folded into tabs, a steered message, and the composer." width="36%">
+  <img src="docs/assets/screenshot-steer.png" alt="A steered message in the middle of a running turn, with the send menu open." width="58%">
   &nbsp;
-  <img src="docs/assets/screenshot-terminal-mobile.png" alt="A terminal session on a phone, with the touch key bar." width="36%">
+  <img src="docs/assets/screenshot-mobile.png" alt="AgentDock on a phone: the split folded into tabs and the composer." width="27%">
 </p>
 
-### Correct the agent while it works
+<details>
+<summary><b>All features</b></summary>
 
-A message typed while the agent is busy doesn't have to wait. **Enter steers**: the agent reads it at its next step, without stopping, and the transcript marks it. **⌥/Alt+Enter queues** it as the next turn instead, and **Interrupt and send** stops the turn when you need to change course completely. If the client can't take a message mid-turn, it waits in the queue rather than being lost.
+**Canvas**: recursive splits, drag-to-edge docking, tabs and `1:1` / `2×2` / `1:2:1` presets; each file and Git pane stays bound to its repository; layouts saved on the server; right-click menus throughout.
 
-<p align="center">
-  <img src="docs/assets/screenshot-steer.png" alt="A steered message marked Steer in the middle of a running turn, with the send menu open: Steer, After this turn, Interrupt and send." width="70%">
-</p>
+**Agent sessions**: structured view with grouped tool cards, native approval and question cards, a context-usage ring and turn status. Model, thinking depth, permission mode and endpoint are switchable from the message box (or type any model ID). Resume native Claude Code and Codex history per workspace. File references such as `src/app.ts:42` open at that line. Images open in a lightbox; tables and code render properly. *Interrupt* and *End session* are separate, and input is never replayed after a disconnect. Sessions can be archived, multi-selected and deleted, and temporary sessions handle throwaway questions.
 
-### One branch per session
+**Files and Git**: file tree and editor that follow changes on disk live; `.gitignore`-aware search; `@path` completion; conflict-checked saves; Markdown, image, video, audio and PDF previews. The Git pane covers status, diff, stage, discard and commit, plus branches and worktrees.
 
-Give a session its own branch and it moves into a git worktree beside the repository, so two agents can work on two features at once without touching each other's files. The workspace keeps its own branch, switched from the status bar. Right-click a branch or worktree to rename, delete or remove it. If a session is in the way of a switch, AgentDock names it and offers to end it for you.
+**Accounts and environment**: official account sign-in and quota; import the host's configuration or create isolated endpoint profiles; per-session environment variables with secret references; per-client defaults stored on the server.
 
-### Every project on one canvas
+**Host**: CPU and memory in the status bar; English and Chinese UI.
 
-Split, tab and dock sessions, files, Git diffs and terminals the way you like. Sessions from different repositories can sit side by side. Closing a pane never ends its process, and the layout is saved on the server, so a second browser opens exactly what you left.
-
-### A conversation you can navigate
-
-File paths the agent mentions (`src/app.ts:42`, `README.md`) are clickable chips that open the file at that line. Files in another workspace open there, and anything else opens in a read-only preview. Consecutive tool calls fold into one card, images open in a lightbox, and tables and code render properly.
-
-### Accounts and endpoints, kept apart
-
-Every session chooses where it runs: an official account signed in through AgentDock, the sign-in already on the host, a custom endpoint such as a team gateway or proxy, or a clean, isolated client home that shares nothing with the host. Each is isolated from the others, so switching one session never touches another, and API keys are stored only as references resolved at launch. Switch from the message box at any time. The same menu hands the conversation to the other agent: go from Claude Code to Codex (or back) and what was said so far is carried into the new session's message box.
-
-<p align="center">
-  <img src="docs/assets/screenshot-endpoints.png" alt="The endpoint menu: an isolated configuration, a team gateway, the host sign-in, and continuing with Codex." width="70%">
-</p>
-
-### Your quota at a glance
-
-See how much of each official account's 5-hour and weekly windows is **left**, with when each resets, for as many accounts as you use. Usage is read from the official endpoint on request, never polled in the background.
-
-<p align="center">
-  <img src="docs/assets/screenshot-accounts.png" alt="Official accounts: 84% of the 5-hour window and 48% of the weekly window left, with reset times." width="70%">
-</p>
-
-### Set it once
-
-Preferences choose the default endpoint, thinking depth and permission mode per client, stored on the server so every device starts sessions the same way.
-
-## Install
-
-Requirements:
-
-- Node.js 24 or newer
-- [Claude Code](https://www.npmjs.com/package/@anthropic-ai/claude-code) and/or [Codex](https://www.npmjs.com/package/@openai/codex), installed on the same machine
-
-```bash
-npm install -g @wnzzer/agentdock
-```
-
-The package ships one prebuilt binary per platform, with the web client and native bridge inside it. It has no postinstall step, so `--ignore-scripts` works.
-
-| Platform | Architectures             |
-| -------- | ------------------------- |
-| macOS    | arm64, x64                |
-| Linux    | x64, arm64 (static musl)  |
-| Windows  | x64                       |
-| Other    | [Build from source](#development) |
-
-On Windows, terminal sessions open PowerShell (`pwsh` when installed; set `AGENTDOCK_SHELL` for another shell), and `agentdock stop` ends the gateway and its agents at once, since Windows has no gentler signal to send a background console program.
-
-Tarballs with `SHA256SUMS` are also attached to every [release](https://github.com/wnzzer/agentdock/releases).
+</details>
 
 ## Quick start
 
+Requires Node.js 24+ and [Claude Code](https://www.npmjs.com/package/@anthropic-ai/claude-code) and/or [Codex](https://www.npmjs.com/package/@openai/codex) on the same machine.
+
 ```bash
-agentdock
+npm install -g @wnzzer/agentdock
+agentdock          # starts in the background → http://127.0.0.1:28789/
 ```
 
-This starts the server in the background and prints its URL (by default **http://127.0.0.1:28789/**). In the browser:
+Then **pick a workspace** (any directory on the host), reuse your sign-in from *Settings → Official accounts → Import existing configuration*, and **create a session** or **load an existing one**.
 
-1. **Pick a workspace**, which can be any existing directory on the host.
-2. **Reuse your sign-in.** Go to *Settings → Official accounts → Import existing configuration*. It points at your existing `~/.claude` or `~/.codex` without copying credentials.
-3. **Create a session**, or use **Load existing session** to resume a native Claude Code or Codex conversation from this workspace.
-4. **Arrange the canvas** by dragging sessions, files, Git and terminals into splits and tabs.
+Prebuilt for macOS (arm64, x64), Linux (x64, arm64, static musl) and Windows (x64), with no postinstall step. Other platforms can [build from source](docs/development.md). On Windows, terminals open PowerShell (`AGENTDOCK_SHELL` picks another shell).
 
-## Commands
+| Command | Description |
+| --- | --- |
+| `agentdock` / `agentdock --lan` | Start in the background, on loopback or on every interface |
+| `agentdock status` · `logs` | URL, access token and server log |
+| `agentdock restart` · `stop` | Restart or stop the background server |
+| `agentdock serve` | Run in the foreground, for systemd or another supervisor |
 
-| Command             | Description                                                    |
-| ------------------- | -------------------------------------------------------------- |
-| `agentdock`         | Start the server in the background and wait until it responds  |
-| `agentdock --lan`   | Same, but reachable from other machines on the network         |
-| `agentdock status`  | Show whether it is running, its URL and the access token       |
-| `agentdock logs`    | Print the background server's log                              |
-| `agentdock restart` | Stop, then start again                                         |
-| `agentdock stop`    | Stop the background server                                     |
-| `agentdock serve`   | Run in the foreground (for systemd or another supervisor)      |
-| `agentdock init`    | Create the state directory without starting anything           |
+## Configuration and remote access
 
-If a start fails, the command prints the reason from the log and exits with a non-zero code.
-
-## Configuration
-
-All state is stored in `~/.agentdock/` (SQLite database, settings, logs). There is no telemetry.
-
-Settings are read from `~/.agentdock/config.toml`. An environment variable with the same meaning takes precedence over the file.
+State lives in `~/.agentdock/` (SQLite, settings, logs), with no telemetry. Settings are read from `~/.agentdock/config.toml`, and matching `AGENTDOCK_*` environment variables win:
 
 ```toml
 lan = true                  # same as --lan
 port = 28789                # or addr = "192.168.0.9:28789"
-token = "..."               # access token (AGENTDOCK_TOKEN)
+token = "..."               # AGENTDOCK_TOKEN
 allowed-origins = ["https://dock.example.com"]
 ```
 
-Commonly used environment variables:
+To reach it from another device, prefer **SSH forwarding** (`ssh -L 28789:127.0.0.1:28789 user@server`). `--lan` is plain HTTP for trusted networks only, and an **HTTPS reverse proxy** must keep `Host` and WebSocket upgrades. See [Configuration](docs/configuration.md) and [remote access](docs/security.md#private-remote-access).
 
-| Variable                    | Purpose                                            |
-| --------------------------- | -------------------------------------------------- |
-| `AGENTDOCK_HOME`            | State directory (default `~/.agentdock`)           |
-| `AGENTDOCK_ADDR`            | Listen address (default `127.0.0.1:28789`)         |
-| `AGENTDOCK_TOKEN`           | Access token; required for non-loopback binds      |
-| `AGENTDOCK_ALLOWED_ORIGINS` | Extra allowed browser origins, comma-separated     |
-| `AGENTDOCK_CLAUDE_BIN`      | Absolute path to `claude`                          |
-| `AGENTDOCK_CODEX_BIN`       | Absolute path to `codex`                           |
+> [!WARNING]
+> AgentDock is for **a single trusted user**. Anyone who can reach it has your user's permissions, and `claude` / `codex` run **unsandboxed**. Read [Security and boundaries](docs/security.md) before exposing it beyond localhost.
 
-API keys for custom endpoint profiles are stored only as references such as `env:AGENTDOCK_SECRET_WORK`, and the backend resolves them when a session launches. For the full list, see [Configuration](docs/configuration.md) and [Endpoint profiles](docs/endpoint-profiles.md).
-
-## Remote access
-
-By default AgentDock listens only on loopback. There are three ways to reach it from another device:
-
-- **SSH port forwarding** is the recommended option on networks you do not control:
-
-  ```bash
-  ssh -L 28789:127.0.0.1:28789 user@server
-  ```
-
-- **`agentdock --lan`** binds every interface and issues an access token. Traffic is plain HTTP, so use it only on a trusted network.
-- **An HTTPS reverse proxy** must preserve `Host` and WebSocket upgrades, and its hostname must be listed in `AGENTDOCK_ALLOWED_ORIGINS`.
-
-See [Security and boundaries](docs/security.md#private-remote-access) for details.
-
-## All features
-
-**Canvas**
-
-- Recursive horizontal and vertical splits, drag-to-edge docking, tabs, and `1:1` / `2×2` / `1:2:1` presets.
-- Sessions from different projects can share one canvas; each file and Git pane stays bound to its own repository.
-- Closing a pane never ends its process. Layouts are saved on the server.
-- Right-click menus throughout; the browser's own menu stays only where it is useful (text, links, the terminal).
-
-**Agent sessions**
-
-- Structured conversation view: tool cards (grouped when consecutive), native approval and question cards, context-usage ring, turn status.
-- Steer a running turn, queue for after it, or interrupt and send.
-- Model, thinking depth, permission mode and endpoint switchable from the message box; the model list comes from the installed client.
-- Hand a conversation to the other agent. Resume native Claude Code and Codex history per workspace.
-- Clickable file references and links, image previews, Markdown tables and syntax-highlighted code.
-- **Interrupt** and **End session** are separate. Input is saved before it is sent and never replayed after a disconnect.
-- Archive, multi-select and delete sessions; temporary sessions for throwaway questions.
-
-**Files and Git**
-
-- File tree, `.gitignore`-aware workspace search, and `@path` completion in the composer.
-- Syntax-highlighted editing with conflict-checked saves; Markdown, image, video, audio and PDF previews.
-- Git pane with status, diff, stage/unstage, discard and commit.
-- Per-session branches in their own worktrees; switch, create, rename and delete branches, and remove worktrees.
-
-**Accounts and environment**
-
-- Official Claude Code and Codex accounts with sign-in and remaining 5-hour and weekly quota.
-- Import the host's existing configuration, or create isolated custom endpoint profiles.
-- Per-session environment variables: literal values, secret references and explicit unset.
-- Preferences for each client's default endpoint, thinking depth and permission mode.
-
-**Host and access**
-
-- Host CPU and memory in the status bar.
-- Works at every size: splits fold into tabs and back as space allows, controls adapt to their pane, and phones get a drawer sidebar, keyboard-aware layout, bottom-sheet menus, touch-sized targets and long-press menus.
-- English and Chinese UI.
-
-## Architecture
+## How it works
 
 ```text
   Browser ── Vue 3 canvas: sessions · files · Git · terminals
@@ -243,76 +105,24 @@ See [Security and boundaries](docs/security.md#private-remote-access) for detail
            └─ claude stream-json ────────▶ official Claude Code
 ```
 
-- **Server (Rust)** handles the protocol, authentication, persistence and process supervision. It does not run an agent loop.
-- **Native bridge (Node)** maps each client's official interface to versioned session events, which is why Node is required.
-- **Layout engine** treats agents, editors, Git and terminals as pane types.
-
-See [Architecture](docs/architecture.md) and [Structured agent UI](docs/structured-agent-ui.md).
-
-## Security
-
-AgentDock is a workspace for **a single trusted user**. It is not a multi-tenant sandbox.
-
-- Anyone who can reach the API has the permissions of the user running the server. Protect the access token like that user's credentials.
-- Files are read and written only inside workspace roots. A file an agent names outside every workspace can be previewed read-only, but only inside the folder picker's browsing roots. `.git`, `.ssh`, `.agentdock`, credentials and client configuration files are refused everywhere, and deletion never follows symlinks.
-- **Agent processes are not sandboxed.** `claude` and `codex` run with your full user permissions, limited only by their own permission settings.
-- A non-loopback bind won't start without a token of at least 24 characters, and Origin and Host must be on the allow-list.
-
-Read [Security and boundaries](docs/security.md) and [Permission boundary](docs/permission-boundary.md) before exposing AgentDock beyond localhost.
+The Rust server handles the protocol, auth, persistence and process supervision, and runs no agent loop itself. The Node bridge maps each client's official interface to session events.
 
 ## Documentation
 
-| Topic                                  | Documents                                                                                          |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Configuration, credentials, environment | [Configuration](docs/configuration.md) · [Endpoint profiles](docs/endpoint-profiles.md)            |
-| Official accounts                      | [Official accounts](docs/official-accounts.md)                                                     |
-| Sessions and the canvas                | [Sessions and the shared canvas](docs/sessions-and-canvas.md) · [Structured agent UI](docs/structured-agent-ui.md) |
-| Security                               | [Security and boundaries](docs/security.md) · [Permission boundary](docs/permission-boundary.md)   |
-| HTTP API                               | [API contract](docs/api.md)                                                                        |
-| Design                                 | [Architecture](docs/architecture.md) · [Product boundary](docs/product-boundary.md) · [UI design](docs/ui-design.md) |
-| Upgrading                              | [Settings and update](docs/settings-update.md)                                                     |
+[Configuration](docs/configuration.md) · [Endpoint profiles](docs/endpoint-profiles.md) · [Official accounts](docs/official-accounts.md) · [Sessions and canvas](docs/sessions-and-canvas.md) · [Structured agent UI](docs/structured-agent-ui.md) · [Security](docs/security.md) · [Permission boundary](docs/permission-boundary.md) · [API](docs/api.md) · [Architecture](docs/architecture.md) · [Upgrading](docs/settings-update.md) · [Development](docs/development.md)
 
 ## Development
 
-Requirements: Rust stable 1.89+, Node.js 24+, pnpm 10.30.3.
+Requires Rust 1.89+, Node.js 24+ and pnpm 10.30.3.
 
 ```bash
-git clone https://github.com/wnzzer/agentdock.git
-cd agentdock
 pnpm install --frozen-lockfile
-pnpm run dev                                          # → http://127.0.0.1:5173/
+pnpm run dev       # → http://127.0.0.1:5173/
+pnpm run check && cargo test --workspace
 ```
 
-Run a production build locally:
-
-```bash
-pnpm run build:web && cargo run -p agentdock-server   # → http://127.0.0.1:28789/
-```
-
-Run the checks before submitting changes:
-
-```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-pnpm run check
-```
-
-| Path                     | Contents                                                     |
-| ------------------------ | ------------------------------------------------------------ |
-| `crates/server`          | HTTP/WebSocket API, daemon, security, accounts, workspace IO |
-| `crates/agent-runtime`   | Process and PTY supervision                                  |
-| `crates/persistence`     | SQLite store and migrations (`migrations/`)                  |
-| `crates/domain`          | Shared domain model                                          |
-| `packages/native-bridge` | Node JSONL bridge to Claude Code and Codex                   |
-| `packages/protocol`      | DTOs and layout model shared with the client                 |
-| `apps/web`               | Vue 3 + TypeScript client and layout engine                  |
-| `npm/`                   | Packaging for `@wnzzer/agentdock` and platform packages      |
-
-See [Development](docs/development.md) for more.
+See [Development](docs/development.md) for the full check list and repository layout.
 
 ## License
 
-[MIT](LICENSE). Third-party material is listed in [third-party notices](docs/third-party-notices.md).
-
-Claude Code and Codex are products of Anthropic and OpenAI respectively. AgentDock is an independent project and is not affiliated with or endorsed by either company.
+[MIT](LICENSE). Third-party material is listed in [third-party notices](docs/third-party-notices.md). Claude Code and Codex are products of Anthropic and OpenAI respectively. AgentDock is an independent project and is not affiliated with or endorsed by either company.

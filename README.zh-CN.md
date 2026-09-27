@@ -3,7 +3,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.svg">
-    <img src="docs/assets/banner-light.svg" alt="AgentDock——在你自己的机器上，用一块画布驾驭官方 Claude Code 与 Codex CLI。">
+    <img src="docs/assets/banner-light.svg" alt="AgentDock — 在你自己的机器上，用一张画布驾驭官方 Claude Code 与 Codex CLI。">
   </picture>
 </p>
 
@@ -11,7 +11,7 @@
   <a href="https://github.com/wnzzer/agentdock/actions/workflows/check.yml"><img src="https://github.com/wnzzer/agentdock/actions/workflows/check.yml/badge.svg" alt="CI 状态"></a>
   <a href="https://www.npmjs.com/package/@wnzzer/agentdock"><img src="https://img.shields.io/npm/v/%40wnzzer%2Fagentdock?style=flat-square&label=npm&color=0c8376" alt="npm 版本"></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A5%2024-0c8376?style=flat-square" alt="Node.js 24 及以上">
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-7760b5?style=flat-square" alt="平台：macOS、Linux 与 Windows">
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-7760b5?style=flat-square" alt="平台：macOS、Linux 和 Windows">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="许可证：MIT"></a>
 </p>
 
@@ -19,217 +19,79 @@
 
 AgentDock 是官方 **Claude Code** 与 **Codex** CLI 的浏览器工作台。它运行在代码所在的机器上，把 Agent 会话、文件、Git diff 和终端放进一块可分屏、可停靠的画布，任何浏览器（包括手机）都能访问。
 
-AgentDock 本身不包含 Agent：Codex 通过官方 `app-server` 驱动，Claude Code 通过其 `stream-json` 接口驱动，登录、模型、hooks、`CLAUDE.md` 和权限确认都保持原生。
+它本身不包含 Agent：Codex 通过官方 `app-server` 驱动，Claude Code 通过 `stream-json` 驱动，登录、模型、hooks、`CLAUDE.md` 和权限确认都保持原生。
 
 <p align="center">
   <img src="docs/assets/screenshot-canvas.zh-CN.png" alt="AgentDock 画布：两个 Agent 会话并排，右下是 Git 变更与 diff。" width="100%">
 </p>
 
-- [特色功能](#特色功能)
-- [安装](#安装)
-- [快速开始](#快速开始)
-- [命令](#命令)
-- [配置](#配置)
-- [远程访问](#远程访问)
-- [完整功能](#完整功能)
-- [架构](#架构)
-- [安全](#安全)
-- [文档](#文档)
-- [开发](#开发)
-
 ## 特色功能
 
-### 用的就是官方客户端，不是仿制品
-
-每个会话都是你本机已安装的官方 `claude` 或 `codex`，通过它们自己的编程接口驱动。登录状态、`CLAUDE.md`、hooks、MCP 服务、斜杠命令和权限确认，都和在终端里用时一模一样。模型列表直接来自客户端：新模型发布后，升级 CLI 就能看到；也可以随时手动输入模型 ID。
-
-<p align="center">
-  <img src="docs/assets/screenshot-models.zh-CN.png" alt="模型菜单：列出本机 Claude Code 报告的模型，并可手动输入其他模型 ID。" width="80%">
-</p>
-
-### 任何尺寸都能用
-
-从手机到带鱼屏，都是同一个完整的工作区，小屏上功能不缩水。窗口或窗格太小时，分屏会自动折叠成标签页，空间够了再展开，保存的布局不受影响。控件按所在窗格的宽度自适应，所以大屏上的窄分屏也会切换到紧凑布局。在手机上，侧边栏变成抽屉，界面会给键盘让出位置，菜单从底部弹出，按钮大小适合手指点按，长按代替右键。躺在沙发上也能看长任务的进度、批准权限，或者引导 Agent 换个方向。
+- **用的就是官方客户端。** 每个会话都是你本机已安装的 `claude` 或 `codex`。登录、MCP 服务、斜杠命令和权限确认与在终端里一致，升级 CLI 就能用上新模型。
+- **边做边纠正。** <kbd>Enter</kbd> 引导进行中的这一轮而不打断，<kbd>Alt</kbd>+<kbd>Enter</kbd> 排到下一轮，**中断并发送**直接改方向。
+- **所有项目一张画布。** 不同仓库的会话、文件、diff 和终端随意分屏、叠标签、拖动停靠。关闭窗格不结束进程，换个浏览器打开布局照旧。
+- **每个会话一个分支。** 给会话指定分支，它就在独立的 git worktree 里工作，两个 Agent 可以同时开发两个功能。
+- **账号与端点彼此隔离。** 每个会话自选官方账号、本机登录、自定义网关或独立客户端环境，5 小时与本周剩余额度一目了然。还能把对话从 Claude Code 交给 Codex，或反过来。
+- **任何屏幕都能用。** 空间不够时分屏自动折叠成标签页；手机上有抽屉侧边栏、底部弹出菜单，长按代替右键。
 
 <p align="center">
-  <img src="docs/assets/screenshot-mobile.zh-CN.png" alt="手机上的 AgentDock：分屏折叠成标签页、被引导的消息和输入框。" width="36%">
+  <img src="docs/assets/screenshot-steer.zh-CN.png" alt="进行中的一轮里被引导的消息，以及打开的发送菜单。" width="58%">
   &nbsp;
-  <img src="docs/assets/screenshot-terminal-mobile.zh-CN.png" alt="手机上的终端会话，带触屏按键栏。" width="36%">
+  <img src="docs/assets/screenshot-mobile.zh-CN.png" alt="手机上的 AgentDock：分屏折叠成标签页与输入框。" width="27%">
 </p>
 
-### 边做边纠正
+<details>
+<summary><b>完整功能</b></summary>
 
-Agent 工作时写下的消息不必干等。**Enter 引导**：不中断，Agent 下一步就会读到，聊天记录里会标出来。**⌥/Alt+Enter 排队**：等这一轮结束再作为新的一轮发出。需要彻底改方向时，用**中断并发送**。客户端当下接不了的消息会进入队列，不会丢。
+**画布**：递归分屏、拖到边缘停靠、标签页，以及 `1:1` / `2×2` / `1:2:1` 预设；每个文件和 Git 窗格绑定各自的仓库；布局保存在服务端；到处都有右键菜单。
 
-<p align="center">
-  <img src="docs/assets/screenshot-steer.zh-CN.png" alt="进行中的一轮里标着“引导”的消息，以及打开的发送菜单：引导、等这轮结束、中断并发送。" width="70%">
-</p>
+**Agent 会话**：结构化视图，包括折叠的工具卡片、原生权限与提问卡片、上下文用量环和轮次状态。模型、思考深度、权限模式和端点在输入框下方切换（也可手动输入模型 ID）。按工作区恢复原生 Claude Code 与 Codex 历史。`src/app.ts:42` 这类文件引用点开即跳到对应行。图片可放大，表格和代码正常渲染。**中断**与**结束会话**相互独立，断线后输入绝不重发。会话可以归档、多选和删除，临时会话适合一次性提问。
 
-### 每个会话一个分支
+**文件与 Git**：文件树和编辑器实时跟随磁盘变化；遵守 `.gitignore` 的搜索；`@路径` 补全；带冲突检测的保存；Markdown、图片、视频、音频和 PDF 预览。Git 窗格支持状态、diff、暂存、丢弃和提交，以及分支与 worktree 管理。
 
-给会话指定自己的分支，它就会搬进仓库旁边的 git worktree。两个 Agent 可以同时开发两个功能，互不碰对方的文件。工作区目录有自己的分支，在状态栏切换。右键分支或 worktree 可以重命名、删除或移除。有会话挡住切换时，AgentDock 会列出是哪些会话，并可以一键结束后再切换。
+**账号与环境**：官方账号登录与额度；引入本机配置或创建隔离的端点配置；会话级环境变量与密钥引用；各客户端默认值保存在服务端。
 
-### 所有项目在一张画布上
+**主机**：状态栏显示 CPU 与内存；中英文界面。
 
-会话、文件、Git diff 和终端可以随意分屏、叠成标签、拖动停靠，不同仓库的会话也能并排放。关闭窗格不会结束进程。布局保存在服务端，换一个浏览器打开也是原样。
-
-### 能“点”的对话
-
-Agent 提到的文件路径（如 `src/app.ts:42`、`README.md`）会变成可点击的小卡片，点开直接跳到对应行。在别的工作区里的文件就在那个工作区打开，不在任何工作区的文件以只读方式预览。连续的工具调用折叠成一张卡片，图片可以点开放大，表格和代码都正常渲染。
-
-### 账号与端点，彼此隔离
-
-每个会话自己选在哪里跑：在 AgentDock 里登录的官方账号、本机已有的登录、团队网关或代理这类自定义端点，或者一个与本机完全不共享的全新独立客户端环境。它们彼此隔离，切换一个会话不会影响其他会话；API Key 只以引用的形式保存，启动时才解析。随时可以在输入框下方切换。同一个菜单还能把对话交给另一个 Agent：从 Claude Code 切到 Codex（或反过来），之前说过的内容会带进新会话的输入框。
-
-<p align="center">
-  <img src="docs/assets/screenshot-endpoints.zh-CN.png" alt="端点菜单：独立配置、团队网关、本机登录，以及换成 Codex 继续。" width="70%">
-</p>
-
-### 额度一眼看清
-
-每个官方账号的 5 小时窗口和本周窗口**还剩**多少、什么时候重置，一目了然，账号再多也一样。用量只在你查询时向官方接口读取，不会在后台轮询。
-
-<p align="center">
-  <img src="docs/assets/screenshot-accounts.zh-CN.png" alt="官方账号：5 小时窗口剩余 84%，本周窗口剩余 48%，并显示重置时间。" width="70%">
-</p>
-
-### 设置一次就好
-
-在首选项里为每个客户端设定默认端点、思考深度和权限模式。设置保存在服务端，所有设备新建会话的方式都一样。
-
-## 安装
-
-要求：
-
-- Node.js 24 及以上
-- 同一台机器上已安装 [Claude Code](https://www.npmjs.com/package/@anthropic-ai/claude-code) 和/或 [Codex](https://www.npmjs.com/package/@openai/codex)
-
-```bash
-npm install -g @wnzzer/agentdock
-```
-
-每个平台对应一个预编译二进制，内含 Web 客户端和原生桥接。安装过程没有 postinstall，`--ignore-scripts` 环境也能正常安装。
-
-| 平台  | 架构                     |
-| ----- | ------------------------ |
-| macOS | arm64、x64               |
-| Linux | x64、arm64（静态 musl）  |
-| Windows | x64                    |
-| 其他  | [从源码构建](#开发)      |
-
-在 Windows 上，终端会话默认打开 PowerShell（已安装 `pwsh` 时优先使用；可用 `AGENTDOCK_SHELL` 指定其他 shell）。`agentdock stop` 会直接结束网关及其 Agent 进程，因为 Windows 没有可以发给后台控制台程序的温和终止信号。
-
-每个 [release](https://github.com/wnzzer/agentdock/releases) 也附带 tarball 和 `SHA256SUMS`。
+</details>
 
 ## 快速开始
 
+需要 Node.js 24+，并在同一台机器上安装 [Claude Code](https://www.npmjs.com/package/@anthropic-ai/claude-code) 和/或 [Codex](https://www.npmjs.com/package/@openai/codex)。
+
 ```bash
-agentdock
+npm install -g @wnzzer/agentdock
+agentdock          # 后台启动 → http://127.0.0.1:28789/
 ```
 
-该命令在后台启动服务并打印访问地址（默认 **http://127.0.0.1:28789/**）。在浏览器中：
+然后**选择工作区**（宿主机上任意目录），在 *设置 → 官方账号 → 引入现有配置* 中复用已有登录，再**新建会话**或**加载已有会话**。
 
-1. **选择工作区**：宿主机上任意已有目录。
-2. **复用已有登录**：进入 *设置 → 官方账号 → 引入现有配置*，它直接引用本机的 `~/.claude` 或 `~/.codex`，不复制凭据。
-3. **新建会话**，或用 **加载已有会话** 恢复该工作区下原生 Claude Code / Codex 的历史对话。
-4. **编排画布**：把会话、文件、Git 和终端拖成分屏或页签。
+提供 macOS（arm64、x64）、Linux（x64、arm64，静态 musl）和 Windows（x64）预编译包，没有 postinstall 步骤。其他平台可[从源码构建](docs/development.md)。Windows 上终端默认打开 PowerShell（可用 `AGENTDOCK_SHELL` 指定其他 shell）。
 
-## 命令
+| 命令 | 说明 |
+| --- | --- |
+| `agentdock` / `agentdock --lan` | 后台启动，仅本机或所有网卡 |
+| `agentdock status` · `logs` | 访问地址、访问 token 与服务日志 |
+| `agentdock restart` · `stop` | 重启或停止后台服务 |
+| `agentdock serve` | 前台运行，用于 systemd 等进程管理器 |
 
-| 命令                | 说明                                   |
-| ------------------- | -------------------------------------- |
-| `agentdock`         | 后台启动服务，并等待它可以响应         |
-| `agentdock --lan`   | 同上，但允许局域网内其他机器访问       |
-| `agentdock status`  | 查看运行状态、访问地址和访问 token     |
-| `agentdock logs`    | 打印后台服务的日志                     |
-| `agentdock restart` | 先停止再启动                           |
-| `agentdock stop`    | 停止后台服务                           |
-| `agentdock serve`   | 前台运行（用于 systemd 等进程管理器）  |
-| `agentdock init`    | 只创建状态目录，不启动服务             |
+## 配置与远程访问
 
-启动失败时会打印日志里的原因，并以非零退出码结束。
-
-## 配置
-
-所有状态都存放在 `~/.agentdock/`（SQLite 数据库、设置和日志），没有任何遥测。
-
-设置从 `~/.agentdock/config.toml` 读取；同名环境变量的优先级高于该文件。
+状态保存在 `~/.agentdock/`（SQLite、设置、日志），没有任何遥测。设置读取自 `~/.agentdock/config.toml`，同名 `AGENTDOCK_*` 环境变量优先：
 
 ```toml
 lan = true                  # 等同于 --lan
 port = 28789                # 或 addr = "192.168.0.9:28789"
-token = "..."               # 访问 token（AGENTDOCK_TOKEN）
+token = "..."               # AGENTDOCK_TOKEN
 allowed-origins = ["https://dock.example.com"]
 ```
 
-常用环境变量：
+从其他设备访问时优先使用 **SSH 端口转发**（`ssh -L 28789:127.0.0.1:28789 user@server`）。`--lan` 是明文 HTTP，只适合可信网络；**HTTPS 反向代理**需要保留 `Host` 和 WebSocket 升级。详见[配置](docs/configuration.md)与[远程访问](docs/security.md#private-remote-access)。
 
-| 变量                        | 用途                                   |
-| --------------------------- | -------------------------------------- |
-| `AGENTDOCK_HOME`            | 状态目录（默认 `~/.agentdock`）        |
-| `AGENTDOCK_ADDR`            | 监听地址（默认 `127.0.0.1:28789`）     |
-| `AGENTDOCK_TOKEN`           | 访问 token；绑定非回环地址时必填       |
-| `AGENTDOCK_ALLOWED_ORIGINS` | 额外允许的浏览器来源，逗号分隔         |
-| `AGENTDOCK_CLAUDE_BIN`      | `claude` 的绝对路径                    |
-| `AGENTDOCK_CODEX_BIN`       | `codex` 的绝对路径                     |
+> [!WARNING]
+> AgentDock 只面向**单个受信任用户**。能访问它的人就拥有你这个用户的全部权限，且 `claude` / `codex` **不在沙箱中运行**。在 localhost 之外开放前，请先阅读[安全与边界](docs/security.md)。
 
-自定义端点配置的 API key 只以引用形式保存，例如 `env:AGENTDOCK_SECRET_WORK`，会话启动时才由后端解析。完整列表见[配置](docs/configuration.md)和[端点配置](docs/endpoint-profiles.md)。
-
-## 远程访问
-
-默认只监听回环地址。从其他设备访问有三种方式：
-
-- **SSH 端口转发**：在不受你控制的网络上推荐使用这种方式。
-
-  ```bash
-  ssh -L 28789:127.0.0.1:28789 user@server
-  ```
-
-- **`agentdock --lan`**：绑定所有网卡并签发访问 token。流量是明文 HTTP，只在可信网络中使用。
-- **HTTPS 反向代理**：代理需要保留 `Host` 和 WebSocket 升级，并把它的域名加入 `AGENTDOCK_ALLOWED_ORIGINS`。
-
-详见[安全与边界](docs/security.md#private-remote-access)。
-
-## 完整功能
-
-**画布**
-
-- 递归的水平和垂直分屏、拖到边缘停靠、标签页，以及 `1:1` / `2×2` / `1:2:1` 预设。
-- 不同项目的会话可以共用一张画布，每个文件和 Git 窗格都绑定在各自的仓库。
-- 关闭窗格不会结束进程；布局保存在服务端。
-- 到处都有右键菜单；只在有用的地方（文字、链接、终端）保留浏览器自带的右键菜单。
-
-**Agent 会话**
-
-- 结构化对话视图：工具卡片（连续调用自动折叠）、原生权限与提问卡片、上下文用量环、轮次状态。
-- 引导进行中的这一轮、排到这一轮之后，或中断并发送。
-- 模型、思考深度、权限模式和端点都能在输入框下方切换；模型列表来自本机客户端。
-- 把对话交给另一个 Agent；按工作区恢复原生 Claude Code 和 Codex 历史会话。
-- 可点击的文件引用和链接、图片预览、Markdown 表格和代码高亮。
-- **中断**和**结束会话**是两个独立操作。输入在发送前保存，断线后绝不会自动重发。
-- 会话可归档、多选、删除；临时会话适合一次性提问。
-
-**文件与 Git**
-
-- 文件树、遵守 `.gitignore` 的工作区搜索，输入框里 `@路径` 补全。
-- 带冲突检测的代码高亮编辑；Markdown、图片、视频、音频和 PDF 预览。
-- Git 窗格：状态、diff、暂存/取消暂存、丢弃改动、提交。
-- 每个会话可以有自己的分支和 worktree；切换、新建、重命名、删除分支，移除 worktree。
-
-**账号与环境**
-
-- 官方 Claude Code 和 Codex 账号：登录，查看 5 小时和本周剩余额度。
-- 引入本机已有配置，或创建相互隔离的自定义端点配置。
-- 会话级环境变量：明文值、密钥引用和显式取消。
-- 首选项：每个客户端的默认端点、思考深度和权限模式。
-
-**主机与访问**
-
-- 状态栏显示主机 CPU 和内存占用。
-- 全尺寸适配：分屏随空间折叠成标签页、再自动展开，控件按所在窗格自适应；手机上有抽屉式侧边栏、避开键盘的布局、底部弹出菜单、适合手指的按钮和长按菜单。
-- 中英文界面。
-
-## 架构
+## 工作原理
 
 ```text
   浏览器 ── Vue 3 画布：会话 · 文件 · Git · 终端
@@ -243,76 +105,24 @@ allowed-origins = ["https://dock.example.com"]
            └─ claude stream-json ────────▶ 官方 Claude Code
 ```
 
-- **服务端（Rust）**负责协议、鉴权、持久化和进程监管，不运行 Agent 循环。
-- **原生桥接（Node）**把各客户端的官方接口映射为带版本的会话事件，所以 Node 是必需依赖。
-- **布局引擎**把 Agent、编辑器、Git 和终端都当作面板类型来处理。
-
-详见[架构](docs/architecture.md)与[结构化 Agent UI](docs/structured-agent-ui.md)。
-
-## 安全
-
-AgentDock 是给**单个受信任用户**使用的工作台，不是多租户沙箱。
-
-- 能访问 API 的人拥有运行服务的用户的全部权限。请像保管该用户的凭据一样保管访问 token。
-- 文件读写只在工作区根目录内进行。Agent 提到的、不在任何工作区里的文件可以只读预览，但仅限于添加工作区时能浏览的那些文件夹。`.git`、`.ssh`、`.agentdock`、凭据和客户端配置文件在任何地方都会被拒绝，删除操作不会跟随符号链接。
-- **Agent 进程不受沙箱限制。**`claude` 和 `codex` 以你的完整用户权限运行，只受它们自身权限设置的约束。
-- 绑定非回环地址时，没有至少 24 个字符的 token 就不会启动，并且 Origin 和 Host 必须在白名单中。
-
-在 localhost 之外开放 AgentDock 之前，请先阅读[安全与边界](docs/security.md)和[权限边界](docs/permission-boundary.md)。
+Rust 服务端负责协议、鉴权、持久化和进程监管，自身不运行 Agent 循环；Node 桥接把各客户端的官方接口映射为会话事件。
 
 ## 文档
 
-| 主题                 | 文档                                                                                           |
-| -------------------- | ---------------------------------------------------------------------------------------------- |
-| 配置、凭据与环境     | [配置](docs/configuration.md) · [端点配置](docs/endpoint-profiles.md)                          |
-| 官方账号             | [官方账号](docs/official-accounts.md)                                                          |
-| 会话与画布           | [会话与共享画布](docs/sessions-and-canvas.md) · [结构化 Agent UI](docs/structured-agent-ui.md) |
-| 安全                 | [安全与边界](docs/security.md) · [权限边界](docs/permission-boundary.md)                       |
-| HTTP API             | [API 契约](docs/api.md)                                                                        |
-| 设计                 | [架构](docs/architecture.md) · [产品边界](docs/product-boundary.md) · [UI 设计](docs/ui-design.md) |
-| 升级                 | [设置与更新](docs/settings-update.md)                                                          |
+[配置](docs/configuration.md) · [端点配置](docs/endpoint-profiles.md) · [官方账号](docs/official-accounts.md) · [会话与画布](docs/sessions-and-canvas.md) · [结构化 Agent UI](docs/structured-agent-ui.md) · [安全](docs/security.md) · [权限边界](docs/permission-boundary.md) · [API](docs/api.md) · [架构](docs/architecture.md) · [升级](docs/settings-update.md) · [开发](docs/development.md)
 
 ## 开发
 
-要求：Rust stable 1.89+、Node.js 24+、pnpm 10.30.3。
+需要 Rust 1.89+、Node.js 24+ 和 pnpm 10.30.3。
 
 ```bash
-git clone https://github.com/wnzzer/agentdock.git
-cd agentdock
 pnpm install --frozen-lockfile
-pnpm run dev                                          # → http://127.0.0.1:5173/
+pnpm run dev       # → http://127.0.0.1:5173/
+pnpm run check && cargo test --workspace
 ```
 
-在本地运行生产构建：
-
-```bash
-pnpm run build:web && cargo run -p agentdock-server   # → http://127.0.0.1:28789/
-```
-
-提交改动前运行检查：
-
-```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-pnpm run check
-```
-
-| 路径                     | 内容                                                |
-| ------------------------ | --------------------------------------------------- |
-| `crates/server`          | HTTP/WebSocket API、守护进程、安全、账号、工作区 IO |
-| `crates/agent-runtime`   | 进程与 PTY 监管                                     |
-| `crates/persistence`     | SQLite 存储与迁移（`migrations/`）                  |
-| `crates/domain`          | 共享领域模型                                        |
-| `packages/native-bridge` | 连接 Claude Code 与 Codex 的 Node JSONL 桥接        |
-| `packages/protocol`      | 与客户端共享的 DTO 和布局模型                       |
-| `apps/web`               | Vue 3 + TypeScript 客户端与布局引擎                 |
-| `npm/`                   | `@wnzzer/agentdock` 及各平台包的打包脚本            |
-
-更多内容见[开发文档](docs/development.md)。
+完整检查清单与目录结构见[开发文档](docs/development.md)。
 
 ## 许可证
 
-[MIT](LICENSE)。第三方内容列在[第三方声明](docs/third-party-notices.md)中。
-
-Claude Code 和 Codex 分别是 Anthropic 和 OpenAI 的产品。AgentDock 是独立项目，与这两家公司没有隶属或背书关系。
+[MIT](LICENSE)。第三方内容见[第三方声明](docs/third-party-notices.md)。Claude Code 和 Codex 分别是 Anthropic 和 OpenAI 的产品。AgentDock 是独立项目，与这两家公司没有隶属或背书关系。

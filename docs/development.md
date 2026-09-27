@@ -20,6 +20,19 @@ The previous Bun lockfile and version pin are retained under `docs/toolchain-his
 
 Choose an existing host directory in the workspace picker, then create/open a session. New Web-created Agent sessions use structured conversation cards on a capable backend; existing PTY sessions keep their original interface. Tool approvals remain native decisions, rendered by the Web client. **Interrupt** cancels current work, while **End session** remains a separate, confirmed secondary action. Closing a pane never ends its process.
 
+## Repository layout
+
+| Path                     | Contents                                                     |
+| ------------------------ | ------------------------------------------------------------ |
+| `crates/server`          | HTTP/WebSocket API, daemon, security, accounts, workspace IO |
+| `crates/agent-runtime`   | Process and PTY supervision                                  |
+| `crates/persistence`     | SQLite store and migrations (`migrations/`)                  |
+| `crates/domain`          | Shared domain model                                          |
+| `packages/native-bridge` | Node JSONL bridge to Claude Code and Codex                   |
+| `packages/protocol`      | DTOs and layout model shared with the client                 |
+| `apps/web`               | Vue 3 + TypeScript client and layout engine                  |
+| `npm/`                   | Packaging for `@wnzzer/agentdock` and platform packages      |
+
 ## Verify
 
 ```sh

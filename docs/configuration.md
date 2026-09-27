@@ -1,6 +1,23 @@
 # Configuration
 
-State directory, credentials, host-configuration reuse, per-session environment and every `AGENTDOCK_*` variable. Back to the [README](../README.md).
+Commands, state directory, credentials, host-configuration reuse, per-session environment and every `AGENTDOCK_*` variable. Back to the [README](../README.md).
+
+## Commands
+
+| Command             | Description                                                    |
+| ------------------- | -------------------------------------------------------------- |
+| `agentdock`         | Start the server in the background and wait until it responds  |
+| `agentdock --lan`   | Same, but reachable from other machines on the network         |
+| `agentdock status`  | Show whether it is running, its URL and the access token       |
+| `agentdock logs`    | Print the background server's log                              |
+| `agentdock restart` | Stop, then start again                                         |
+| `agentdock stop`    | Stop the background server                                     |
+| `agentdock serve`   | Run in the foreground (for systemd or another supervisor)      |
+| `agentdock init`    | Create the state directory without starting anything           |
+
+If a start fails, the command prints the reason from the log and exits with a non-zero code. On Windows, `agentdock stop` ends the gateway and its agents at once, since Windows has no gentler signal to send a background console program.
+
+Tarballs with `SHA256SUMS` are also attached to every [release](https://github.com/wnzzer/agentdock/releases).
 
 ## State and credentials
 
