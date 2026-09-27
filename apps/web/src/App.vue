@@ -13,6 +13,7 @@ import SettingsDialog from "./features/SettingsDialog.vue";
 import HostFilePreview from "./features/HostFilePreview.vue";
 import HostUsage from "./features/HostUsage.vue";
 import { requestJump } from "./features/file-jumps";
+import { announceFilesChanged, createFileWatch } from "./features/file-watch";
 import WorkspaceBranchMenu from "./features/WorkspaceBranchMenu.vue";
 import ImageLightbox from "./features/ImageLightbox.vue";
 import CreateSessionDialog from "./features/CreateSessionDialog.vue";
@@ -538,6 +539,19 @@ async function refreshProfiles(imported?: EndpointProfile) {
 function trackedWorkspaces() {
   return new Set([contextWorkspace.value?.id, explorerWorkspace.value?.id, ...flattenPanes(layout.value.root).map(pane => paneWorkspace(pane, workspaces.value, sessions.value)?.id)].filter((id): id is string => !!id));
 }
+/** Files changed on the host, pushed for every workspace on screen. The Git poll stays as the fallback. */
+const fileWatch = createFileWatch({
+  createSocket: url => new WebSocket(url),
+  url: id => { const url = new URL(`/api${workspacePath(id)}/files/ws`, window.location.href); url.protocol = url.protocol === "https:" ? "wss:" : "ws:"; return url.href; },
+  onChange(id, paths, git) {
+    announceFilesChanged(id, paths);
+    // A file edited again stays `M` in status, but its diff moved.
+    if (paths?.length !== 0) tick(gitRefresh, id);
+    if (paths?.length !== 0 || git) void refreshGit(id);
+  },
+});
+watch(() => showAuth.value ? "" : [...trackedWorkspaces()].sort().join("\n"), ids => fileWatch.sync(ids ? ids.split("\n") : []), { immediate: true });
+function wakeFileWatch() { if (!document.hidden) fileWatch.wake(); }
 async function refreshResources() {
   if (refreshingResources.value || loading.value) return;
   refreshingResources.value = true; error.value = ""; connectionError.value = "";
@@ -631,13 +645,14 @@ onMounted(() => {
   void bootstrap();
   pollTimer = setInterval(() => { if (!document.hidden && !showAuth.value) { void refreshSessions(); for (const id of trackedWorkspaces()) void refreshGit(id); } }, 5000);
   window.addEventListener("beforeunload", beforeUnload); window.addEventListener("resize", adaptDrawers);
+  document.addEventListener("visibilitychange", wakeFileWatch);
   // The visual viewport also scrolls under a keyboard, which is the other way
   // its height stops describing what can be seen.
   window.visualViewport?.addEventListener("resize", fitToKeyboard);
   window.visualViewport?.addEventListener("scroll", fitToKeyboard);
   fitToKeyboard();
 });
-onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); disposed = true; clearInterval(pollTimer); clearTimeout(layoutTimer); window.removeEventListener("beforeunload", beforeUnload); window.removeEventListener("resize", adaptDrawers); window.visualViewport?.removeEventListener("resize", fitToKeyboard); window.visualViewport?.removeEventListener("scroll", fitToKeyboard); });
+onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); disposed = true; clearInterval(pollTimer); fileWatch.dispose(); document.removeEventListener("visibilitychange", wakeFileWatch); clearTimeout(layoutTimer); window.removeEventListener("beforeunload", beforeUnload); window.removeEventListener("resize", adaptDrawers); window.visualViewport?.removeEventListener("resize", fitToKeyboard); window.visualViewport?.removeEventListener("scroll", fitToKeyboard); });
 </script>
 
 <template>

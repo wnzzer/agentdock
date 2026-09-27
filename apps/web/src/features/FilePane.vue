@@ -4,6 +4,7 @@ import type { TextFile } from "@agentdock/protocol";
 import { ApiError, assetUrl, errorMessage, json, request, workspacePath } from "./api";
 import { fileDraft } from "./file-drafts";
 import { lineRange, pendingJump, takeJump } from "./file-jumps";
+import { onFilesChanged, touchesFile } from "./file-watch";
 import { escapeHtml, languageFor, loadHighlighter, MAX_HIGHLIGHT_BYTES, wrapsProse } from "./highlighting";
 import { MarkdownContent } from "./MarkdownContent";
 import Icon from "./Icon.vue";
@@ -17,7 +18,8 @@ const draft = computed(() => fileDraft(props.workspaceId, props.path ?? ""));
 const dirty = computed(() => draft.value.loaded && draft.value.content !== draft.value.original);
 const extension = computed(() => props.path?.split(".").pop()?.toLowerCase() ?? "");
 const kind = computed(() => /^(png|jpg|jpeg|gif|webp|svg|bmp|ico|avif)$/.test(extension.value) ? "image" : /^(mp4|webm|mov|m4v|ogv)$/.test(extension.value) ? "video" : /^(mp3|wav|ogg|m4a|flac)$/.test(extension.value) ? "audio" : extension.value === "pdf" ? "pdf" : "text");
-const url = computed(() => props.path ? assetUrl(props.workspaceId, props.path) : "");
+const mediaVersion = ref(0);
+const url = computed(() => props.path ? assetUrl(props.workspaceId, props.path) + (mediaVersion.value ? `&v=${mediaVersion.value}` : "") : "");
 /**
  * Syntax highlighting, drawn behind the editor rather than replacing it.
  *
@@ -159,8 +161,33 @@ async function save() {
   finally { if (own === revision) saving.value = false; }
 }
 function reload() { if (dirty.value) confirmReload.value = true; else void read(); }
+/**
+ * The host changed this file. An untouched copy follows it where you were
+ * reading; a draft is never overwritten, only warned about before it is saved
+ * over the new version.
+ */
+async function hostChanged() {
+  if (!props.path || !draft.value.loaded || saving.value || loading.value) return;
+  const own = revision, target = draft.value;
+  try {
+    const file = await request<TextFile>(`${workspacePath(props.workspaceId)}/file?path=${encodeURIComponent(props.path)}`);
+    if (own !== revision || saving.value || file.version === target.version) return;
+    if (target.content !== target.original) { conflict.value = true; error.value = "This file changed on the host. Your draft is kept. Copy your draft, or reload the host version before saving."; return; }
+    const input = editor.value, at = input && { start: input.selectionStart, end: input.selectionEnd, top: input.scrollTop, left: input.scrollLeft };
+    Object.assign(target, { content: file.content, original: file.content, version: file.version });
+    if (!input || !at) return;
+    await nextTick();
+    input.setSelectionRange(at.start, at.end); input.scrollTop = at.top; input.scrollLeft = at.left;
+    syncScroll({ target: input } as unknown as Event);
+  } catch { /* Deleted or unreadable: an explicit reload says why. */ }
+}
+const stopWatching = onFilesChanged((workspaceId, paths) => {
+  if (workspaceId !== props.workspaceId || !props.path || !touchesFile(paths, props.path)) return;
+  if (kind.value === "text") void hostChanged();
+  else { mediaVersion.value++; mediaFailed.value = false; }
+});
 watch([() => props.workspaceId, () => props.path], () => { revision++; saving.value = false; error.value = ""; success.value = ""; mediaFailed.value = false; loading.value = false; conflict.value = false; confirmReload.value = false; if (!draft.value.loaded) void read(); }, { immediate: true, flush: "sync" });
-onBeforeUnmount(() => { revision++; watcher?.disconnect(); });
+onBeforeUnmount(() => { revision++; watcher?.disconnect(); stopWatching(); });
 </script>
 <template>
   <div v-if="!path" class="pane-empty"><span class="empty-icon"><Icon name="file" :size="28" /></span><h3>{{ t('Your files, right here') }}</h3><p>{{ t('Open a file from Explorer, or drag it into this pane.') }}</p><button class="secondary-button" @click="emit('browse')">{{ t('Browse files') }}</button></div>

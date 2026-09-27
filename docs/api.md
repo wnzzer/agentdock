@@ -184,7 +184,10 @@ GET /api/workspaces/:id/files?path=src
 GET /api/workspaces/:id/file?path=src/main.rs
 PUT /api/workspaces/:id/file?path=src/main.rs {content,expected_version}
 GET /api/workspaces/:id/asset?path=assets/preview.png
+WS  /api/workspaces/:id/files/ws
 ```
+
+The files socket reports changes on disk so the tree and open files follow edits made outside the browser. It is read-only (plus Ping/Pong). The first message is `{"type":"ready"}` once the host watches the workspace, or `{"type":"unavailable","message":...}` when it cannot (for example an exhausted inotify limit), after which the socket closes and clients fall back to polling. Changes arrive in batches of about 200 ms as `{"type":"changed","paths":["src/app.ts"],"git":false}`. `paths` is `null` when anything may have changed, such as an overflowing batch or a lagged reader. `git` means repository metadata moved, so status may differ. Protected paths, `.git/objects`, lock files and dependency or build directories (`node_modules`, `target` and similar) are not reported. All sockets for one workspace share one watcher, which stops with the last of them.
 
 Text replies: `{path,content,version}`. Existing-file writes require the last-read version and return 409 on conflict. Creates omit the version. Files are atomically replaced; application writes are serialized. Independent host processes can still modify files.
 

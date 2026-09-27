@@ -11,6 +11,7 @@ mod directories;
 mod embedded;
 mod environment;
 mod file_search;
+mod file_watch;
 mod installation;
 mod model_catalog;
 mod native_config;
@@ -61,6 +62,7 @@ struct AppState {
     native_bridge: PathBuf,
     chat_bridge: PathBuf,
     chats: conversations::ChatManager,
+    watches: file_watch::FileWatches,
     accounts: accounts::AccountManager,
     security: security::Security,
     claude_manual_mode: bool,
@@ -531,6 +533,7 @@ async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         native_bridge: installation::native_bridge(&state_dir),
         chat_bridge: bridge::script(&state_dir, "AGENTDOCK_CHAT_BRIDGE", "chat.mjs"),
         chats: conversations::ChatManager::default(),
+        watches: file_watch::FileWatches::default(),
         accounts: accounts::AccountManager::new(),
         state_dir,
         browse_roots,
@@ -584,6 +587,7 @@ fn router(state: AppState) -> Router {
         .merge(checkouts::routes())
         .merge(preferences::routes())
         .merge(conversations::routes())
+        .merge(file_watch::routes())
         .route("/api/health", get(health))
         .route("/api/auth", get(security::status).post(security::login))
         .route(

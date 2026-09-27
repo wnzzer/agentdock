@@ -178,7 +178,7 @@ fn relative_string(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
-fn is_protected_path(relative: &Path) -> bool {
+pub(crate) fn is_protected_path(relative: &Path) -> bool {
     // AgentDock must never mutate repository metadata, credentials, or
     // provider configuration.  These names are intentionally conservative.
     const PROTECTED: &[&str] = &[

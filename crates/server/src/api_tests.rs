@@ -71,6 +71,7 @@ impl Fixture {
             native_bridge: PathBuf::from("packages/native-bridge/history.mjs"),
             chat_bridge: PathBuf::from("packages/native-bridge/chat.mjs"),
             chats: conversations::ChatManager::default(),
+            watches: file_watch::FileWatches::default(),
             accounts: accounts::AccountManager::default(),
             security: security::Security::for_test(address, token),
             claude_manual_mode: true,
@@ -928,6 +929,63 @@ async fn origin_auth_and_asset_range() {
         &to_bytes(response.into_body(), 100).await.unwrap()[..],
         b"2345"
     );
+}
+
+#[tokio::test]
+async fn file_socket_reports_changes_on_disk() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let f = Fixture::new(addr, None);
+    let repo = f.path.join("repo");
+    fs::create_dir(repo.join("src")).unwrap();
+    let w = f
+        .state
+        .store
+        .create_workspace("watch", repo.to_str().unwrap())
+        .unwrap();
+    let app = f.app();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let mut req = format!("ws://{addr}/api/workspaces/{}/files/ws", w.id)
+        .into_client_request()
+        .unwrap();
+    req.headers_mut()
+        .insert("origin", format!("http://{addr}").parse().unwrap());
+    let (mut ws, _) = connect_async(req).await.unwrap();
+    async fn message(
+        ws: &mut tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+    ) -> Value {
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), ws.next())
+                .await
+                .expect("file socket message")
+            {
+                Some(Ok(WsMessage::Text(text))) => return serde_json::from_str(&text).unwrap(),
+                Some(Ok(_)) => continue,
+                other => panic!("file socket ended: {other:?}"),
+            }
+        }
+    }
+    assert_eq!(message(&mut ws).await["type"], "ready");
+    fs::write(repo.join("src/new.ts"), "export {};\n").unwrap();
+    fs::create_dir(repo.join("node_modules")).unwrap();
+    let mut seen = Vec::new();
+    while !seen.iter().any(|path| path == "src/new.ts") {
+        let change = message(&mut ws).await;
+        assert_eq!(change["type"], "changed");
+        seen.extend(
+            change["paths"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|path| path.as_str().unwrap().to_owned()),
+        );
+    }
+    assert!(!seen.iter().any(|path| path.starts_with("node_modules")));
+    server.abort();
 }
 
 #[tokio::test]

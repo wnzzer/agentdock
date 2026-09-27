@@ -8,6 +8,7 @@ import type { TreeDirectory, TreeRow } from "./tree-model";
 import { readTreeViewState, saveTreeViewState } from "./tree-state";
 import { createFileSearch, highlight } from "./file-search";
 import { nameTaken, newFilePath, renamedPath } from "./file-actions";
+import { directoriesToReload, onFilesChanged } from "./file-watch";
 import type { SearchResults } from "./file-search";
 import Icon from "./Icon.vue";
 import { filePane } from "./pane-context";
@@ -383,7 +384,20 @@ watch(() => props.workspaceId, (workspaceId, previousId) => {
 }, { immediate: true });
 watch(() => props.refreshToken, () => void refresh());
 watch(() => props.selectedPath, path => { selected.value = path ?? ""; });
-onBeforeUnmount(() => { rememberView(props.workspaceId); generation++; revealRevision++; pressEnd(); });
+/**
+ * Changes on the host reload only the folders already loaded that they touch,
+ * in place, so the tree neither flickers nor loses its expansion. A listing
+ * already in flight may predate the change, so it is repeated after.
+ */
+const stopWatching = onFilesChanged((workspaceId, paths) => {
+  if (workspaceId !== props.workspaceId || refreshing.value) return;
+  const loaded = [...directories.value].filter(([, state]) => state.loaded).map(([path]) => path);
+  for (const path of directoriesToReload(paths, loaded) ?? loaded) {
+    const running = pending.get(path);
+    if (running) void running.then(() => loadDirectory(path, true)); else void loadDirectory(path, true);
+  }
+});
+onBeforeUnmount(() => { stopWatching(); rememberView(props.workspaceId); generation++; revealRevision++; pressEnd(); });
 defineExpose({ reveal });
 </script>
 <template>
