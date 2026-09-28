@@ -7,8 +7,14 @@ pub fn validate(values: &EnvironmentOverrides) -> Result<(), ApiError> {
     agentdock_domain::validate_environment(values).map_err(ApiError::bad)
 }
 
-pub fn apply(spec: &mut SpawnSpec, values: &EnvironmentOverrides) -> Result<(), ApiError> {
-    apply_with(spec, values, |key| std::env::var(key).ok())
+/// Secret references resolve from the server's environment, then from the
+/// secrets AgentDock stores (see secrets.rs).
+pub fn apply(
+    spec: &mut SpawnSpec,
+    values: &EnvironmentOverrides,
+    state_dir: &std::path::Path,
+) -> Result<(), ApiError> {
+    apply_with(spec, values, |key| crate::secrets::resolve(state_dir, key))
 }
 
 fn apply_with(

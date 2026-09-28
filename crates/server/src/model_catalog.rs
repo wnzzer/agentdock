@@ -152,17 +152,11 @@ pub async fn discover(
     {
         return native_codex_models(state_dir, profile).await;
     }
-    let secret =
-        if let Some(reference) = profile.secret_ref.as_deref() {
-            let key = reference
-                .strip_prefix("env:")
-                .ok_or_else(|| ApiError::bad("Invalid secret reference"))?;
-            Some(std::env::var(key).map_err(|_| {
-                ApiError::bad("The profile secret reference is not set on the server")
-            })?)
-        } else {
-            None
-        };
+    let secret = profile
+        .secret_ref
+        .as_deref()
+        .map(|reference| crate::secrets::resolve_reference(state_dir, reference))
+        .transpose()?;
     fetch(profile, secret.as_deref()).await
 }
 

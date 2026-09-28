@@ -1176,6 +1176,15 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Split": "双栏",
   "Markdown view": "Markdown 视图",
   "Double-click a passage to edit it": "双击某段即可编辑",
+  "Where the API key is kept": "API key 存放位置",
+  "Save the key in AgentDock": "保存在 AgentDock",
+  "Server environment variable": "服务器环境变量",
+  "API key": "API key",
+  "Saved · leave empty to keep it": "已保存 · 留空则保持不变",
+  "Empty for an endpoint without a key": "端点不需要 key 时留空",
+  "Kept as {name} in the state directory, readable only by you. It never returns to the browser.": "以 {name} 保存在状态目录中，仅你可读，不会再回传到浏览器。",
+  "Kept in the state directory, readable only by you, and usable at once. It never returns to the browser.": "保存在状态目录中，仅你可读，立即生效，不会再回传到浏览器。",
+  "Stop using this key": "不再使用这个 key",
 };
 
 export function normalizeLocale(value: unknown): Locale {

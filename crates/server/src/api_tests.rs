@@ -448,6 +448,60 @@ async fn workspace_file_git_layout_workflow() {
 }
 
 #[tokio::test]
+async fn a_key_saved_in_agentdock_reaches_the_client_and_never_comes_back() {
+    let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
+    let id = register(&f).await;
+    let name = "AGENTDOCK_SECRET_API_TEST_STORED";
+    let (status, saved) = call(
+        f.app(),
+        "PUT",
+        &format!("/api/secrets/{name}"),
+        json!({"value":"sk-stored-value"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved, json!({"name":name,"source":"agentdock"}));
+    let (status, listed) = call(f.app(), "GET", "/api/secrets", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["name"] == name)
+    );
+    assert!(!listed.to_string().contains("sk-stored-value"));
+    let (status, _) = call(f.app(), "PUT", "/api/secrets/HOME", json!({"value":"x"})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (_, profile) = call(f.app(), "POST", "/api/endpoint-profiles", json!({"name":"stored","provider":"codex","endpoint_url":"https://example.test/v1","secret_ref":format!("env:{name}")})).await;
+    let (_, created) = call(
+        f.app(),
+        "POST",
+        &format!("/api/workspaces/{id}/sessions"),
+        json!({"title":"uses stored key","provider":"codex","endpoint_profile_id":profile["id"]}),
+    )
+    .await;
+    let session: Session = serde_json::from_value(created).unwrap();
+    let spec = providers::build(&f.state, &session, f.path.join("repo")).unwrap();
+    assert_eq!(
+        spec.env.get("OPENAI_API_KEY").map(String::as_str),
+        Some("sk-stored-value")
+    );
+
+    let (status, removed) = call(
+        f.app(),
+        "DELETE",
+        &format!("/api/secrets/{name}"),
+        Value::Null,
+    )
+    .await;
+    assert_eq!((status, removed), (StatusCode::OK, json!({"removed":true})));
+    let error = providers::build(&f.state, &session, f.path.join("repo")).unwrap_err();
+    assert!(error.message.contains(name), "{}", error.message);
+}
+
+#[tokio::test]
 async fn profiles_validate_snapshot_and_session_states() {
     let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
     let id = register(&f).await;
@@ -2463,6 +2517,16 @@ async fn shared_canvas_uses_existing_authentication_and_health_capabilities() {
         .0,
         StatusCode::UNAUTHORIZED
     );
+    for (method, path) in [
+        ("GET", "/api/secrets"),
+        ("PUT", "/api/secrets/AGENTDOCK_SECRET_X"),
+    ] {
+        assert_eq!(
+            call(f.app(), method, path, json!({"value":"x"})).await.0,
+            StatusCode::UNAUTHORIZED,
+            "{method} {path}"
+        );
+    }
     let (status, health) = call(f.app(), "GET", "/api/health", Value::Null).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(health["api_version"], 2);
@@ -2484,7 +2548,8 @@ async fn shared_canvas_uses_existing_authentication_and_health_capabilities() {
             "ephemeral_sessions",
             "session_model",
             "workspace_file_search",
-            "session_terminal_escape"
+            "session_terminal_escape",
+            "stored_secrets"
         ])
     );
     let allowed = Request::builder()

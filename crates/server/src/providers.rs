@@ -214,7 +214,7 @@ pub fn build(state: &AppState, session: &Session, cwd: PathBuf) -> Result<SpawnS
     {
         spec.args.extend(["--name".into(), session.title.clone()]);
     }
-    crate::environment::apply(&mut spec, &session.environment)?;
+    crate::environment::apply(&mut spec, &session.environment, &state.state_dir)?;
     Ok(spec)
 }
 
@@ -360,18 +360,10 @@ fn build_base(state: &AppState, session: &Session, cwd: PathBuf) -> Result<Spawn
             .into_iter()
             .map(str::to_owned),
         );
-        let secret = if let Some(reference) = p.and_then(|p| p.secret_ref.as_deref()) {
-            let source = reference
-                .strip_prefix("env:")
-                .ok_or_else(|| ApiError::bad("Invalid secret reference"))?;
-            Some(env::var(source).map_err(|_| {
-                ApiError::bad(format!(
-                    "Secret reference {source} is not configured on the server"
-                ))
-            })?)
-        } else {
-            None
-        };
+        let secret = p
+            .and_then(|p| p.secret_ref.as_deref())
+            .map(|reference| crate::secrets::resolve_reference(&state.state_dir, reference))
+            .transpose()?;
         if let Some(model) = p.and_then(resolve_model) {
             args.extend(["--model".into(), model]);
         }

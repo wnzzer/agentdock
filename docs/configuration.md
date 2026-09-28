@@ -35,7 +35,12 @@ Path priority: `AGENTDOCK_STATE_DIR` → `AGENTDOCK_HOME` → an existing `./.ag
 
 Configuration directories are 0700, generated Codex config files are 0600. The native client manages its login cache. These paths can contain credentials; don't commit/share them. Use SQLite Online Backup for the DB and protect backups of native state separately.
 
-API-key profiles currently use a **reference**, e.g. `env:AGENTDOCK_SECRET_WORK`. Set that environment variable for the server; never enter the key into the profile form. AgentDock resolves the selected reference on the backend and injects its value into the selected child-process destination variable.
+API-key profiles hold a **reference**, e.g. `env:AGENTDOCK_SECRET_WORK`, never the key itself. The key behind it lives in one of two places:
+
+- **Saved in AgentDock** (the default in the profile form): paste the key and it is written to `<state>/secrets.toml` (0600, owner only) under a name made from the profile's name. It is usable at once, with no restart, and the API only ever lists names, never values. Deleting a profile removes a saved key no other profile uses.
+- **A server environment variable**: set `AGENTDOCK_SECRET_WORK` for the server (or as `secret-work` in `config.toml`) and restart. When both exist, the environment wins.
+
+AgentDock resolves the selected reference on the backend and injects its value into the selected child-process destination variable.
 
 New sessions without a host-reference profile use separate generated native configuration directories. **Loaded native histories are different:** resuming uses the original client configuration/login/history directory, after explicit confirmation. These loaded sessions share their source account/configuration, do not copy credentials into AgentDock, and do not add endpoint/model/permission-policy overrides. Structured mode supplies the required stdio transport flags separately. Explicit advanced environment overrides are optional. Metadata listing uses official SDK/app-server APIs, makes no model request, returns at most 500 workspace-scoped items, and reports truncation. Missing/incompatible native clients produce an actionable error rather than scraping terminal output.
 

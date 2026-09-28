@@ -20,6 +20,7 @@ mod paths;
 mod preferences;
 mod providers;
 mod resources;
+mod secrets;
 mod security;
 mod settings;
 mod workspace_io;
@@ -586,6 +587,7 @@ fn router(state: AppState) -> Router {
         .merge(resources::routes())
         .merge(checkouts::routes())
         .merge(preferences::routes())
+        .merge(secrets::routes())
         .merge(conversations::routes())
         .merge(file_watch::routes())
         .route("/api/health", get(health))
@@ -756,7 +758,7 @@ fn optional(value: Option<String>) -> Option<String> {
 }
 async fn health() -> Json<Value> {
     Json(
-        json!({"ok":true,"service":"agentdock-server","platform":env::consts::OS,"mode":"trusted-single-user","api_version":2,"capabilities":["shared_canvas","native_configurations","native_history","host_directories","endpoint_models","session_environment","structured_chat","official_accounts","session_configuration","session_archive","account_import_native","agent_clients","ephemeral_sessions","session_model","workspace_file_search","session_terminal_escape"],"instance_label":env::var("AGENTDOCK_INSTANCE_LABEL").ok(),"version":env!("CARGO_PKG_VERSION")}),
+        json!({"ok":true,"service":"agentdock-server","platform":env::consts::OS,"mode":"trusted-single-user","api_version":2,"capabilities":["shared_canvas","native_configurations","native_history","host_directories","endpoint_models","session_environment","structured_chat","official_accounts","session_configuration","session_archive","account_import_native","agent_clients","ephemeral_sessions","session_model","workspace_file_search","session_terminal_escape","stored_secrets"],"instance_label":env::var("AGENTDOCK_INSTANCE_LABEL").ok(),"version":env!("CARGO_PKG_VERSION")}),
     )
 }
 

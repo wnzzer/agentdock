@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import type { AgentProviderKind, EndpointProfile, ModelCatalog } from "@agentdock/protocol";
 import { errorMessage, json, providerLabel, request } from "./api";
 import { parseModelAliases, formatModelAliases } from "./endpoint-models";
@@ -13,6 +13,7 @@ import ModalDialog from "./ModalDialog.vue";
 import Icon from "./Icon.vue";
 import ProviderIcon from "./ProviderIcon.vue";
 import ModelPicker from "./ModelPicker.vue";
+import { ownStoredSecret, referencedSecret, secretNameFor, type SecretName } from "./secret-names";
 const { t } = useI18n();
 const props = defineProps<{ profiles: EndpointProfile[]; embedded?: boolean }>();
 const embedded = computed(() => props.embedded === true);
@@ -32,7 +33,44 @@ const environmentDirty = computed(() => profileEnvironmentDraftChanged(environme
 const environmentError = computed(() => { try { profileEnvironmentPayload(environmentDraft.value, backendCapabilities.environment, initialEnvironment.value); return ""; } catch (cause) { return errorMessage(cause); } });
 const pendingNavigation = ref<(() => void)>();
 const form = reactive({ name: "", provider: "claude_code" as AgentProviderKind, endpoint_url: "", model: "", effort: "", permission_mode: "native" as EndpointProfile["permission_mode"], secret_ref: "", proxy_url: "" });
-const secretValid = computed(() => !form.secret_ref || /^env:AGENTDOCK_SECRET_[A-Z0-9_]+$/.test(form.secret_ref));
+const secretValid = computed(() => secretMode.value === "stored" || !form.secret_ref || /^env:AGENTDOCK_SECRET_[A-Z0-9_]+$/.test(form.secret_ref));
+/**
+ * Where the endpoint's key lives. "stored": pasted here and kept by AgentDock
+ * in the state directory (secrets.rs), usable at once. "env": a variable set
+ * on the server by hand, as before. Either way the profile only ever holds
+ * the reference, and the key itself never comes back to the browser.
+ */
+const secretMode = ref<"stored" | "env">("stored"), apiKey = ref("");
+const storedSecrets = ref<SecretName[]>([]);
+const otherReferences = computed(() => props.profiles.filter(profile => profile.id !== editing.value).map(profile => profile.secret_ref));
+/** The stored key this profile uses now, shown as "saved". */
+const storedKey = computed(() => { const name = referencedSecret(form.secret_ref); return name && storedSecrets.value.some(entry => entry.name === name && entry.source === "agentdock") ? name : undefined; });
+async function loadSecrets() {
+  if (!backendCapabilities.storedSecrets) return;
+  try { storedSecrets.value = await request<SecretName[]>("/secrets"); } catch { /* The form still works with references. */ }
+}
+function chooseSecretMode(reference: string | null | undefined) {
+  const name = referencedSecret(reference);
+  secretMode.value = !backendCapabilities.storedSecrets || (name && !storedSecrets.value.some(entry => entry.name === name && entry.source === "agentdock")) ? "env" : "stored";
+}
+/** Store a pasted key and point the form at it. Its own key is replaced in
+ * place; otherwise a fresh name, so no other profile's key is overwritten. */
+async function storePastedKey() {
+  const value = apiKey.value.trim();
+  if (secretMode.value !== "stored" || !value) return;
+  const name = ownStoredSecret(form.secret_ref, storedSecrets.value, otherReferences.value)
+    ?? secretNameFor(form.name.trim() || providerLabel(form.provider), [...storedSecrets.value.map(entry => entry.name), ...otherReferences.value.map(referencedSecret).filter((item): item is string => !!item)]);
+  await request<SecretName>("/secrets/" + encodeURIComponent(name), json("PUT", { value }));
+  form.secret_ref = "env:" + name; apiKey.value = "";
+  await loadSecrets();
+}
+/** A stored key no profile points at any more is deleted with it. */
+async function releaseSecret(reference: string | null | undefined, remaining: Array<string | null | undefined>) {
+  const name = referencedSecret(reference);
+  if (!name || !storedSecrets.value.some(entry => entry.name === name && entry.source === "agentdock") || remaining.some(other => referencedSecret(other) === name)) return;
+  try { await request("/secrets/" + encodeURIComponent(name), json("DELETE")); } catch { /* An orphaned key is harmless. */ }
+  await loadSecrets();
+}
 const deletingProfile = computed(() => props.profiles.find(p => p.id === deleteId.value) ?? (editingRecord.value?.id === deleteId.value ? editingRecord.value : undefined));
 const aliases = computed(() => { try { return { value: parseModelAliases(aliasesText.value), error: "" }; } catch (cause) { return { value: {} as Record<string,string>, error: errorMessage(cause) }; } });
 const resolved = computed(() => aliases.value.value[form.model] ?? form.model);
@@ -64,10 +102,16 @@ function edit(p?: EndpointProfile) {
   resetDiscovery();editingRecord.value=p;
   editing.value=p?.id; formVisible.value=true; error.value=""; notice.value=""; deleteId.value=undefined;
   Object.assign(form,{name:p?.name??"",provider:p?.provider??"claude_code",endpoint_url:p?.endpoint_url??"",model:p?.model??"",effort:p?.effort??"",permission_mode:p?.permission_mode??"native",secret_ref:p?.secret_ref??"",proxy_url:p?.proxy_url??""});
+  apiKey.value = ""; chooseSecretMode(p?.secret_ref);
   aliasesText.value=formatModelAliases(p?.model_aliases); models.value=undefined; modelError.value="";
 }
 async function discover() {
   if (!backendCapabilities.models || editingNative.value || discovering.value || !secretValid.value || aliases.value.error) return;
+  // A pasted key is stored first: discovery resolves the reference on the
+  // server, and storing it changes the reference, which resets discovery.
+  if (secretMode.value === "stored" && apiKey.value.trim()) {
+    try { await storePastedKey(); await nextTick(); } catch (cause) { modelError.value = errorMessage(cause); return; }
+  }
   const revision=++discoveryRevision; discovering.value=true; modelError.value="";
   // Model discovery is not a child-process launch: never send draft environment
   // values or secret references to that endpoint.
@@ -79,7 +123,10 @@ async function save() {
   if(busy.value||!canSave.value)return;
   busy.value=true;error.value="";notice.value="";
   try{
+    const previous=editingProfile.value?.secret_ref;
+    await storePastedKey();
     const saved=await request<EndpointProfile>("/endpoint-profiles"+(editing.value?"/"+encodeURIComponent(editing.value):""),json(editing.value?"PATCH":"POST",payload()));
+    if(previous!==saved.secret_ref)await releaseSecret(previous,[saved.secret_ref,...otherReferences.value]);
     notice.value=editingNative.value?(backendCapabilities.environment?"Profile updated. Process environment overrides were saved without changing the native configuration.":"Profile name updated. The native configuration was not changed."):editing.value?"Profile updated. Existing session snapshots are unchanged.":"Profile created. Select it when creating a session.";
     // Stay on what was just saved; the notice says it took.
     const message=notice.value;pendingNavigation.value=undefined;edit(saved);notice.value=message;emit("changed",saved);
@@ -87,7 +134,8 @@ async function save() {
 }
 async function remove(){
   if(!deleteId.value||busy.value)return;const id=deleteId.value,native=!!deletingProfile.value?.native_config;busy.value=true;error.value="";
-  try{await request("/endpoint-profiles/"+encodeURIComponent(id),json("DELETE"));deleteId.value=undefined;if(editing.value===id){formVisible.value=false;editing.value=undefined;editingRecord.value=undefined;}notice.value=native?"Profile reference removed. Native settings, credentials and history remain on the host.":"Profile deleted; no credentials were deleted from the host.";emit("changed");}
+  const reference=deletingProfile.value?.secret_ref;
+  try{await request("/endpoint-profiles/"+encodeURIComponent(id),json("DELETE"));await releaseSecret(reference,props.profiles.filter(p=>p.id!==id).map(p=>p.secret_ref));deleteId.value=undefined;if(editing.value===id){formVisible.value=false;editing.value=undefined;editingRecord.value=undefined;}notice.value=native?"Profile reference removed. Native settings, credentials and history remain on the host.":"Profile deleted; no credentials were deleted from the host.";emit("changed");}
   catch(cause){error.value=errorMessage(cause);}finally{busy.value=false;}
 }
 /** One line per profile: the provider is already its icon, and the directory
@@ -107,6 +155,7 @@ function cancelForm() {
 }
 // Open on something to read rather than on a blank page that asks for a click.
 if (props.profiles.length) edit(props.profiles[0]);
+void loadSecrets().then(() => chooseSecretMode(form.secret_ref));
 onBeforeUnmount(()=>{discoveryRevision++;});
 </script>
 
@@ -139,8 +188,18 @@ onBeforeUnmount(()=>{discoveryRevision++;});
           <label>{{ t('Endpoint URL') }}<input v-model="form.endpoint_url" type="url" :placeholder="t('Official endpoint when empty')" autocomplete="off" /></label>
           <label>{{ t('Proxy URL') }}<input v-model="form.proxy_url" type="url" placeholder="http://127.0.0.1:7890" autocomplete="off" /></label>
           <p class="form-help">{{ t('Applied on the server. Empty uses the host network.') }}<template v-if="form.provider==='claude_code'"> {{ t('Claude Code does not support SOCKS.') }}</template></p>
-          <label>{{ t('Secret reference') }} <small>{{ t('never an API key') }}</small><input v-model="form.secret_ref" placeholder="env:AGENTDOCK_SECRET_PROVIDER_KEY" autocomplete="off" spellcheck="false" /></label>
-          <p :class="secretValid?'form-help':'inline-error'">{{ secretValid?t('Name a server environment variable such as env:AGENTDOCK_SECRET_WORK. Its value never reaches the browser.'):t('Enter an environment reference, not the secret itself.') }}</p>
+          <div v-if="backendCapabilities.storedSecrets" class="secret-mode" role="radiogroup" :aria-label="t('Where the API key is kept')">
+            <label><input v-model="secretMode" type="radio" value="stored" />{{ t('Save the key in AgentDock') }}</label>
+            <label><input v-model="secretMode" type="radio" value="env" />{{ t('Server environment variable') }}</label>
+          </div>
+          <template v-if="secretMode==='stored'">
+            <label>{{ t('API key') }}<input v-model="apiKey" type="password" autocomplete="new-password" spellcheck="false" :placeholder="storedKey ? t('Saved · leave empty to keep it') : t('Empty for an endpoint without a key')" /></label>
+            <p class="form-help">{{ storedKey ? t('Kept as {name} in the state directory, readable only by you. It never returns to the browser.', { name: storedKey }) : t('Kept in the state directory, readable only by you, and usable at once. It never returns to the browser.') }}<button v-if="storedKey" type="button" class="text-button danger-text secret-clear" @click="form.secret_ref=''">{{ t('Stop using this key') }}</button></p>
+          </template>
+          <template v-else>
+            <label>{{ t('Secret reference') }} <small>{{ t('never an API key') }}</small><input v-model="form.secret_ref" placeholder="env:AGENTDOCK_SECRET_PROVIDER_KEY" autocomplete="off" spellcheck="false" /></label>
+            <p :class="secretValid?'form-help':'inline-error'">{{ secretValid?t('Name a server environment variable such as env:AGENTDOCK_SECRET_WORK. Its value never reaches the browser.'):t('Enter an environment reference, not the secret itself.') }}</p>
+          </template>
           <div class="model-fetch"><strong>{{ t('Model selection') }}</strong><button type="button" class="small-button" :disabled="discovering||!backendCapabilities.models||!secretValid||!!aliases.error" :title="!backendCapabilities.models?t('Backend upgrade required'):t('Reads the endpoint\'s model list. No model is run.')" @click="discover"><Icon name="refresh" :size="14" />{{ discovering?t('Loading models…'):t('Load models from endpoint') }}</button></div>
           <div v-if="modelError" class="inline-error" role="alert">{{ modelError }}<p>{{ t('You can still enter a model ID or alias manually.') }}</p></div>
           <p v-if="models" class="form-help">{{ t('{count} models returned', {count:models.models.length}) }} · <span>{{ models.source_url }}</span><br v-if="models.has_more" /><span v-if="models.has_more">{{ t('The endpoint has more models; this is the first page.') }}</span></p>
@@ -165,6 +224,9 @@ onBeforeUnmount(()=>{discoveryRevision++;});
   </ModalDialog>
 </template>
 <style scoped>
+.secret-mode{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:11px;color:var(--ink-soft)}
+.secret-mode>label{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.secret-clear{margin-left:8px;font-size:inherit}
 .model-fetch {display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid #e7ecef;padding-top:12px;}
 .model-fetch strong {font-size:12px;}.model-effective {margin:0;color:#087e73;font-size:12px;}.form-help {overflow-wrap:anywhere;}
 .shared-config-panel{border:1px solid #d9e9e3;border-radius:8px;background:#f5fbf8;padding:12px}.shared-config-panel>strong{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:550;color:#3d8071}.shared-config-panel>code{display:block;margin-top:8px;font-size:10px;overflow-wrap:anywhere;color:#567e78}.shared-config-panel p{font-size:10px;line-height:18px;color:#6e8584;margin-top:8px}.shared-config-consent{padding:12px;border:1px solid #ece4c8;border-radius:8px;background:#fffaf0}.shared-config-consent p{font-size:10px;line-height:18px;color:#837e66;margin:0 0 8px}.shared-config-consent>label{flex-direction:row;align-items:flex-start;gap:8px;line-height:17px;color:#626b5b}.shared-config-consent input{width:14px;height:14px;margin-top:2px;flex-shrink:0;accent-color:#258672}.profile-card .shared-profile-label{color:#478b7d}.profile-card .profile-path{max-width:143px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#98aaa6}
