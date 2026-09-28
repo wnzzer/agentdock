@@ -9,10 +9,16 @@
  * The panel is whatever the caller slots in — a list of choices, a slider, a
  * form. Dismissal (pointer outside, Escape, choosing something) is handled here
  * once rather than re-implemented per control.
+ *
+ * On a phone the panel is a bottom sheet instead: a panel pinned above a
+ * 44px chip leaves no room for a thumb, and a sheet is where a phone expects
+ * a choice to appear.
  */
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { chipPanelOffset } from './chip-menu-position';
 import Icon from './Icon.vue';
+import BottomSheet from './BottomSheet.vue';
+import { useMobile } from './mobile';
 
 defineProps<{
   /** The chip's own text. Truncated rather than wrapped: the row is one line. */
@@ -23,7 +29,12 @@ defineProps<{
   /** A chip whose current setting is worth being uneasy about. */
   tone?: 'danger';
   disabled?: boolean;
+  /** What the control is, for a sheet's heading and a settings row. */
+  caption?: string;
 }>();
+const mobile = useMobile();
+const opened = ref(false);
+const sheet = ref<InstanceType<typeof BottomSheet>>();
 const root = ref<HTMLDetailsElement>();
 const panel = ref<HTMLElement>();
 /** Measured when it opens rather than guessed at from the chip's position: how
@@ -39,7 +50,8 @@ defineExpose({ close });
  */
 async function place() {
   const menu = root.value;
-  if (!menu?.open) return;
+  opened.value = !!menu?.open;
+  if (!menu?.open || mobile.value) return;
   await nextTick();
   const chip = menu.querySelector('summary')?.getBoundingClientRect(), width = panel.value?.offsetWidth ?? 0;
   if (!chip) return;
@@ -60,6 +72,11 @@ function containingBlock(element: Element): HTMLElement | undefined {
   return undefined;
 }
 function close(focus = false) {
+  // The sheet slides away first and then closes the menu (`finish`).
+  if (mobile.value && opened.value && sheet.value) { sheet.value.close(); return; }
+  finish(focus);
+}
+function finish(focus = false) {
   const menu = root.value;
   if (!menu?.open) return;
   menu.open = false;
@@ -67,7 +84,8 @@ function close(focus = false) {
 }
 function onOutside(event: PointerEvent) {
   const menu = root.value;
-  if (menu?.open && !menu.contains(event.target as Node)) menu.open = false;
+  // The sheet lives in the body, outside the menu, and closes itself.
+  if (menu?.open && !menu.contains(event.target as Node) && !(event.target as Element).closest?.('.bottom-sheet, .sheet-backdrop')) menu.open = false;
 }
 /** A disabled chip must not open; `<summary>` has no disabled attribute. */
 function guard(event: Event) {
@@ -83,10 +101,12 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onOutside); 
   <details ref="root" class="chip-menu" :class="{ 'is-active': active, 'is-disabled': disabled, 'is-danger': tone === 'danger' }" :data-locked="disabled ? 'true' : 'false'" @keydown.esc.stop.prevent="close(true)" @toggle="place">
     <summary :title="title ?? label" :aria-disabled="disabled ? 'true' : undefined" @click="guard">
       <slot name="mark" />
-      <span class="chip-menu-label">{{ label }}</span>
+      <span v-if="caption" class="chip-menu-caption">{{ caption }}</span>
+      <span class="chip-menu-label" :data-repeats="label === caption ? 'true' : undefined">{{ label }}</span>
       <Icon class="chip-menu-caret" name="chevron" :size="12" />
     </summary>
-    <div ref="panel" class="chip-menu-panel" :style="{ '--chip-left': position.left + 'px', '--chip-bottom': position.bottom + 'px' }"><slot :close="close" /></div>
+    <div v-if="!mobile" ref="panel" class="chip-menu-panel" :style="{ '--chip-left': position.left + 'px', '--chip-bottom': position.bottom + 'px' }"><slot :close="close" /></div>
+    <BottomSheet v-else-if="opened" ref="sheet" :sheet-class="['chip-menu-sheet', $attrs.class]" :title="caption ?? title ?? label" @close="finish()"><slot :close="close" /></BottomSheet>
   </details>
 </template>
 
@@ -109,6 +129,20 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onOutside); 
 .chip-menu>summary>svg{flex:0 0 auto;opacity:.8}
 .chip-menu.is-active>summary>svg,.chip-menu.is-danger>summary>svg{opacity:1}
 .chip-menu-label{overflow:hidden;text-overflow:ellipsis}
+.chip-menu-caption{display:none}
+/* Inside a settings sheet (see .chip-rows) each chip is a full-width row:
+   what it is on the left, what it is set to on the right. */
+.chip-rows .chip-menu{width:100%}
+.chip-rows .chip-menu>summary{min-height:54px;gap:12px;padding:0 12px;border-radius:12px;background:none;border-color:transparent;font-size:15px;color:var(--ink)}
+.chip-rows .chip-menu>summary:active,.chip-rows .chip-menu[open]>summary{background:var(--teal-soft)}
+.chip-rows .chip-menu>summary>svg:first-child{width:18px;height:18px}
+.chip-rows .chip-menu-caption{display:block;flex:1;min-width:0;font-weight:400;overflow:hidden;text-overflow:ellipsis}
+.chip-rows .chip-menu-label{flex:0 1 auto;max-width:55%;color:var(--ink-soft);font-size:14px;font-weight:400}
+.chip-rows .chip-menu.is-active .chip-menu-label{color:var(--teal-deep);font-weight:600}
+.chip-rows .chip-menu.is-danger .chip-menu-label{color:#a85c4e;font-weight:600}
+.chip-rows .chip-menu.is-active>summary,.chip-rows .chip-menu.is-danger>summary{background:none;border-color:transparent}
+.chip-rows .chip-menu-label[data-repeats]{display:none}
+.chip-rows .chip-menu-caret,.chip-rows .chip-menu[open] .chip-menu-caret{transform:none}
 .chip-menu-caret{transform:rotate(90deg);flex:0 0 auto;opacity:.55}
 .chip-menu[open] .chip-menu-caret{transform:rotate(-90deg)}
 .chip-menu-panel{position:fixed;bottom:var(--chip-bottom);left:var(--chip-left);z-index:60;background:var(--surface);border:1px solid var(--border);border-radius:13px;box-shadow:0 12px 35px #243b4c24}

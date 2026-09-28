@@ -123,3 +123,33 @@
 .dialog { display: flex; flex-direction: column; width: min(100%, 440px); max-height: calc(100dvh - 48px); min-height: 0; overflow: hidden; border-radius: 13px; border: 1px solid #e3e9eb; background: white; box-shadow: 0 18px 85px #132f4833; }.dialog.wide { width: min(100%, 760px); }.dialog-header { display: flex; align-items: center; justify-content: space-between; padding: 18px 21px; border-bottom: 1px solid #edf1f3; flex-shrink: 0; }.dialog-header h2 { color: #526975; font-size: 16px; font-weight: 580; letter-spacing: -.3px; }.dialog-content { padding: 21px; overflow: auto; min-height: 0; }.form-description { color: #91a0ab; font-size: 11px; line-height: 19px; margin-bottom: 4px; }.form-description>strong { color: #778d99; font-weight: 550; }.form-stack { display: flex; flex-direction: column; gap: 15px; }.form-stack label { display: flex; flex-direction: column; gap: 7px; color: #8395a0; font-size: 10px; font-weight: 550; }.form-stack label>small { font-weight: 400; color: #a8b5bd; font-size: 8px; }.form-stack input, .form-stack select { display: block; width: 100%; border: 1px solid #dfe7ec; background: #fcfdfe; border-radius: 6px; padding: 10px 11px; color: #6a818f; font-size: 11px; line-height: 16px; }.form-stack input::placeholder { color: #b1bdc5; }.form-stack input:focus, .form-stack select:focus { border-color: #b5d6c8; }.form-help { color: #a1aeb6; font-size: 10px; line-height: 18px; }.form-stack .inline-error, .form-stack .inline-notice, .form-stack .inline-success { margin: 0; }.dialog-actions { display: flex; align-items: center; justify-content: flex-end; gap: 9px; border-top: 1px solid #edf1f3; padding-top: 16px; margin-top: 4px; }.form-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }.form-stack>h3 { color: #84949f; font-size: 12px; font-weight: 500; margin-bottom: 1px; }
 .profiles-layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 21px; margin-top: 20px; }.profiles-list { border-right: 1px solid #edf1f3; padding-right: 17px; min-width: 0; }.profiles-list>.secondary-button { width: 100%; margin-bottom: 13px; font-size: 10px; }.profile-card { display: flex; align-items: flex-start; gap: 8px; width: 100%; min-width: 0; padding: 10px 8px; border: 1px solid transparent; background: none; border-radius: 7px; margin-bottom: 5px; text-align: left; }.profile-card:hover { background: #f8fafb; }.profile-card.selected { background: #f4f1fa; border-color: #e9e3f3; }.profile-card>span:last-child { min-width: 0; }.profile-card strong { display: block; font-size: 10px; line-height: 16px; color: #85909c; overflow-wrap: anywhere; font-weight: 550; }.profile-card small { display: block; font-size: 8px; color: #a5adb8; margin-top: 3px; line-height: 13px; overflow-wrap: anywhere; }.profile-details { min-width: 0; }.profile-details>.pane-empty { min-height: 280px; }.profile-details .dialog-actions>.text-button { font-size: 9px; }.profile-details>.inline-error, .profile-details>.inline-success { margin: 0 0 13px; }
 @media (max-width: 760px) { .modal-backdrop { padding: 14px; }.dialog { max-height: calc(100dvh - 28px); }.dialog-header { padding: 15px; }.dialog-content { padding: 17px; }.profiles-layout { grid-template-columns: minmax(0, 1fr); gap: 17px; }.profiles-list { border: 0; border-bottom: 1px solid #edf1f3; padding: 0 0 10px; display: flex; flex-wrap: wrap; gap: 5px; }.profiles-list>.secondary-button { width: auto; align-self: center; margin: 0; }.profile-card { width: auto; flex: 1; min-width: 130px; margin: 0; }.profile-details>.pane-empty { min-height: 180px; }.session-control { padding: 8px; }.session-identity .provider-mark { width: 25px; height: 25px; }.content-toolbar { padding: 5px 7px; }.form-columns { gap: 10px; }.pane-empty { padding: 20px 15px; } }
+
+/* Git on a phone: the change list fills the pane with the commit box beneath
+   it, like a composer; a file's diff slides in over the list. */
+.git-pane.is-phone .content-toolbar { min-height: 48px; padding: 6px 12px; font-size: 14px; }
+.git-pane.is-phone .git-content { display: flex; flex-direction: column; position: relative; overflow: hidden; }
+.git-pane.is-phone .git-sidebar { display: flex; flex-direction: column; flex: 1; min-height: 0; border: 0; background: var(--surface); }
+.git-pane.is-phone .git-groups { order: 1; flex: 1; overflow: auto; }
+.git-pane.is-phone .git-discard-confirm { order: 2; font-size: 13px; }
+.git-pane.is-phone .commit-form { order: 3; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); border: 0; border-top: 1px solid #edf1f3; align-self: stretch; }
+.git-pane.is-phone .commit-form>textarea { font-size: 16px; line-height: 1.5; min-height: 44px; resize: none; field-sizing: content; max-height: 30vh; border-radius: 12px; padding: 10px 12px; }
+.git-pane.is-phone .commit-form>.primary-button { min-height: 44px; border-radius: 12px; font-size: 14px; }
+.git-pane.is-phone .git-group { padding: 6px 0; }
+.git-pane.is-phone .git-group>header { padding: 8px 14px; }
+.git-pane.is-phone .git-group>header>strong { font-size: 13px; }
+.git-pane.is-phone .git-group .text-button { font-size: 13px; padding: 6px 4px; }
+.git-pane.is-phone .git-file { margin: 0 6px; border-radius: 10px; }
+.git-pane.is-phone .git-file-open { gap: 10px; min-height: 48px; padding: 8px 8px; font-size: 14px; color: var(--ink); }
+.git-pane.is-phone .git-file-code { font-size: 13px; min-width: 12px; }
+.git-pane.is-phone .git-file .icon-button { width: 40px; height: 44px; font-size: 17px; }
+.git-pane.is-phone .group-empty { font-size: 13px; padding: 6px 14px 10px; }
+.git-pane.is-phone .diff-view { position: absolute; inset: 0; z-index: 2; background: var(--surface); transform: translateX(100%); visibility: hidden; transition: transform .26s cubic-bezier(.2,.8,.2,1), visibility 0s .26s; }
+.git-pane.is-phone.show-diff .diff-view { transform: none; visibility: visible; transition: transform .26s cubic-bezier(.2,.8,.2,1); }
+.git-pane.is-phone .diff-title { min-height: 48px; padding: 4px 8px 4px 2px; font-size: 12px; }
+.git-pane.is-phone .git-back { width: 44px; height: 44px; color: var(--ink); }
+.git-pane.is-phone .git-back>svg { transform: rotate(180deg); }
+.git-pane.is-phone .diff-badge { font-size: 11px; padding: 3px 6px; }
+.git-pane.is-phone .diff-lines { font-size: 12px; line-height: 20px; }
+.git-pane.is-phone .line-number { font-size: 11px; }
+.git-pane.is-phone.show-diff>.content-toolbar { display: none; }
+

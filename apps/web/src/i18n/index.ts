@@ -1163,6 +1163,16 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Stage": "暂存",
   "Discard changes…": "丢弃更改…",
   "Pane actions": "窗格操作",
+  "Switch view": "切换视图",
+  "Open views": "已打开",
+  "New session with options…": "自定义新建会话…",
+  "Drag down to close": "下拉关闭",
+  "Branch": "分支",
+  "Session settings": "会话设置",
+  "Steer the agent…": "引导 Agent…",
+  "Message {provider}…": "给 {provider} 发消息…",
+  "Back to changes": "返回变更列表",
+  "Back": "返回",
 };
 
 export function normalizeLocale(value: unknown): Locale {

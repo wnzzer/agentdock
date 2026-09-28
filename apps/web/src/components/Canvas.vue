@@ -39,6 +39,9 @@ const props = withDefaults(defineProps<{
   /** Owner veto for a close gesture. Layout still never ends a session by
    * itself; the owner decides whether a bound resource may be released first. */
   confirmClosePane?: (pane: PaneNode) => boolean | Promise<boolean>;
+  /** A phone: only the selected pane, full-bleed, with no tab strip or layout
+   * tools. The saved geometry is untouched, so a wider screen gets it back. */
+  compact?: boolean;
 }>(), { minWidth: 280, minHeight: 180 });
 const emit = defineEmits<{ "update:modelValue": [document: LayoutDocument]; "select-pane": [pane: PaneNode]; "open-pane": [pane: PaneNode]; "create-session": [targetId: string, provider: ProviderKind, ephemeral: boolean]; "reveal-session": [sessionId: string] }>();
 defineSlots<{ pane(props: { pane: PaneNode }): unknown }>();
@@ -78,6 +81,7 @@ const visible = computed(() => {
   const focused = maximized.value ? findNode(working.value.root, maximized.value) : undefined;
   return focused?.type === "pane" ? focused : projected.value;
 });
+const compactPane = computed(() => panes.value.find((pane) => pane.id === selected.value) ?? panes.value[0]);
 const collapsedCount = computed(() => findNodes(projected.value, (node) => node.type === "stack" && !!node.collapsedFrom).length);
 
 function commit(root: Node) {
@@ -233,12 +237,19 @@ onBeforeUnmount(() => {
 <template>
   <div class="dock-canvas" :class="{ 'is-resizing': resizing }">
     <div v-if="notice" class="dock-canvas-notice" role="status">{{ t(notice) }}<button type="button" :aria-label="t('Dismiss layout notice')" @click="notice = ''">×</button></div>
-    <div ref="stage" class="dock-canvas-stage">
+    <div v-if="compact" ref="stage" class="dock-canvas-stage is-compact">
+      <div v-if="compactPane" :key="compactPane.id" :id="`dock-panel-${compactPane.id}`" class="dock-compact-content" :data-kind="compactPane.kind"><slot name="pane" :pane="compactPane" /></div>
+      <div v-else class="dock-compact-empty">
+        <span class="dock-empty-symbol"><Icon name="spark" :size="28" /></span><strong>{{ t('A little room for your next idea') }}</strong>
+        <button type="button" class="primary-button" @click="emit('create-session', working.root.id, 'claude_code', false)"><Icon name="plus" :size="15" />{{ t('New session') }}</button>
+      </div>
+    </div>
+    <div v-else ref="stage" class="dock-canvas-stage">
       <LayoutNode :node="visible" :selected="selected" :maximized="maximized" :located-pane-id="locatedPaneId" :workspace-labels="workspaceLabels" :mixed-workspaces="mixedWorkspaces" :workspace-branches="workspaceBranches" :session-branches="sessionBranches" :session-providers="sessionProviders" :ephemeral-session-ids="ephemeralSessionIds" :ephemeral-supported="ephemeralSupported" @select="selectPane" @split="split" @resize="resize" @resizing="resizing = $event" @close="close" @maximize="maximize" @drop-pane="dropFromPointer" @add-pane="add" @create-session="(id,provider,ephemeral)=>emit('create-session',id,provider,ephemeral)" @reveal-session="emit('reveal-session', $event)">
         <template #pane="scope"><slot name="pane" :pane="scope.pane" /></template>
       </LayoutNode>
     </div>
-    <div class="dock-canvas-hint">
+    <div v-if="!compact" class="dock-canvas-hint">
       <span class="dock-arrange-hint">{{ t('Drag tabs to arrange · edges split · center stacks') }}</span>
       <div class="dock-layout-tools">
         <span v-if="collapsedCount && !maximized" class="dock-adaptive-label" :title="t('Panes expand automatically when more space is available')">{{ t('Responsive tabs') }}</span>
@@ -270,6 +281,14 @@ onBeforeUnmount(() => {
 .dock-canvas-hint { display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:27px;color:#9caab3;font-size:9px;line-height:14px;padding:3px 1px 0;box-sizing:border-box; }.dock-arrange-hint { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
 .dock-canvas-notice { display:flex;justify-content:space-between;background:#fff7e7;border:1px solid #e9d3a7;border-radius:6px;padding:7px 9px;color:#957534;font-size:11px;margin-bottom:6px; }.dock-canvas-notice button { border:0;background:transparent;cursor:pointer;color:inherit; }
 .is-resizing { user-select:none; }
+.dock-canvas-stage.is-compact { display:flex;flex-direction:column; }
+.dock-compact-content { display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;overflow:hidden;background:var(--surface); }
+/* Files and Git arrive like a pushed page. */
+.dock-compact-content:is([data-kind="git_diff"],[data-kind="editor"],[data-kind="file_preview"]) { animation:dock-push .26s cubic-bezier(.2,.8,.2,1); }
+@keyframes dock-push { from { transform:translateX(28%);opacity:.5; } }
+.dock-compact-empty { flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;text-align:center;color:var(--ink-soft);font-size:15px; }
+.dock-compact-empty .dock-empty-symbol { display:grid;place-items:center;width:60px;height:60px;border-radius:18px;background:var(--teal-soft);color:var(--teal); }
+.dock-compact-empty .primary-button { min-height:44px;padding:0 18px;border-radius:12px;font-size:14px; }
 @media(max-width:700px) { .dock-adaptive-label { display:none; }.dock-canvas-hint { font-size:8px; } }
 @media(pointer:coarse) { .dock-layout-menu>summary,.dock-restore { min-height:40px; }.dock-layout-options>button { min-height:44px; } }
 </style>
