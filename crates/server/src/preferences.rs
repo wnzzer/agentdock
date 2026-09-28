@@ -29,9 +29,16 @@ pub struct Preferences {
     pub claude_code: ProviderPreference,
     #[serde(default)]
     pub codex: ProviderPreference,
+    /// Whether sessions get AgentDock's own tools (agent.rs). On unless
+    /// turned off: `None` is the default, not a choice to disable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_tools: Option<bool>,
 }
 
 impl Preferences {
+    pub fn agent_tools(&self) -> bool {
+        self.agent_tools != Some(false)
+    }
     pub fn for_provider(&self, provider: &ProviderKind) -> Option<&ProviderPreference> {
         match provider {
             ProviderKind::ClaudeCode => Some(&self.claude_code),
@@ -52,6 +59,16 @@ fn permission_modes(provider: &ProviderKind) -> &'static [&'static str] {
 
 pub fn routes() -> Router<AppState> {
     Router::new().route("/api/preferences", get(read).put(write))
+}
+
+/// For a launch already on a blocking thread (providers::build).
+pub fn load_blocking(state: &AppState) -> Preferences {
+    state
+        .store
+        .preferences()
+        .ok()
+        .and_then(|stored| serde_json::from_value(stored).ok())
+        .unwrap_or_default()
 }
 
 pub async fn load(state: &AppState) -> Result<Preferences> {

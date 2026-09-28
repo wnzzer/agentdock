@@ -105,6 +105,80 @@ pub fn launch_environment(state: &AppState, session: SessionId) -> [(String, Str
     ]
 }
 
+/// Give a launch AgentDock's tools, unless the person turned them off.
+///
+/// Only through this launch's flags: the person's own client configuration
+/// (`~/.claude`, `~/.codex`, or a host configuration a profile points at) is
+/// never written. Claude reads a small private file named by `--mcp-config`,
+/// and the tools are allowed up front, because what needs the person's word
+/// is asked in AgentDock itself. Codex takes the same as `-c` overrides.
+/// A terminal gets the environment only.
+pub fn equip(
+    state: &AppState,
+    session: &Session,
+    spec: &mut agentdock_runtime::SpawnSpec,
+) -> Result<(), ApiError> {
+    if !crate::preferences::load_blocking(state).agent_tools() {
+        return Ok(());
+    }
+    let identity = launch_environment(state, session.id);
+    for (key, value) in &identity {
+        spec.env_remove.retain(|removed| removed != key);
+        spec.env.insert(key.clone(), value.clone());
+    }
+    if session.provider == agentdock_domain::ProviderKind::Terminal {
+        return Ok(());
+    }
+    let program = std::env::current_exe()
+        .map_err(ApiError::internal)?
+        .to_string_lossy()
+        .into_owned();
+    let environment: serde_json::Map<String, Value> = identity
+        .iter()
+        .map(|(key, value)| (key.clone(), json!(value)))
+        .collect();
+    match session.provider {
+        agentdock_domain::ProviderKind::ClaudeCode => {
+            let directory = crate::providers::private_dir(&state.state_dir.join("agent-mcp"))?;
+            let path = directory.join(format!("{}.json", session.id));
+            let config = json!({ "mcpServers": { "agentdock": {
+                "type": "stdio", "command": program, "args": ["mcp"], "env": environment,
+            } } });
+            crate::security::write_owner_only(&path, &config.to_string())
+                .map_err(ApiError::internal)?;
+            // `=` form: both flags take several values and would swallow the
+            // argument after them.
+            spec.args
+                .push(format!("--mcp-config={}", path.to_string_lossy()));
+            spec.args.push("--allowedTools=mcp__agentdock".into());
+        }
+        agentdock_domain::ProviderKind::Codex => {
+            let string = |value: &str| serde_json::to_string(value).expect("string");
+            let table = identity
+                .iter()
+                .map(|(key, value)| format!("{key}={}", string(value)))
+                .collect::<Vec<_>>()
+                .join(",");
+            // First, so they are global options before any subcommand.
+            let overrides = [
+                format!("mcp_servers.agentdock.command={}", string(&program)),
+                r#"mcp_servers.agentdock.args=["mcp"]"#.to_owned(),
+                format!("mcp_servers.agentdock.env={{{table}}}"),
+                // A call waiting on the person's confirmation outlasts the default.
+                "mcp_servers.agentdock.tool_timeout_sec=600".to_owned(),
+            ];
+            let mut args: Vec<String> = overrides
+                .into_iter()
+                .flat_map(|value| ["-c".to_owned(), value])
+                .collect();
+            args.append(&mut spec.args);
+            spec.args = args;
+        }
+        agentdock_domain::ProviderKind::Terminal => {}
+    }
+    Ok(())
+}
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/agent/tools", get(list_tools))

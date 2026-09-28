@@ -448,6 +448,121 @@ async fn workspace_file_git_layout_workflow() {
     );
 }
 
+/// A launch's arguments without the ones that give it AgentDock's own tools
+/// (agent::equip), for tests about everything else a launch carries.
+fn without_agentdock(args: &[String]) -> Vec<String> {
+    let mut kept = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        if arg.starts_with("--mcp-config=") || arg == "--allowedTools=mcp__agentdock" {
+            index += 1;
+        } else if arg == "-c"
+            && args
+                .get(index + 1)
+                .is_some_and(|value| value.starts_with("mcp_servers.agentdock."))
+        {
+            index += 2;
+        } else {
+            kept.push(arg.clone());
+            index += 1;
+        }
+    }
+    kept
+}
+
+#[tokio::test]
+async fn every_client_launch_carries_agentdock_tools_unless_turned_off() {
+    let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
+    let workspace = f
+        .state
+        .store
+        .create_workspace("equip", f.path.join("repo").to_str().unwrap())
+        .unwrap();
+    let cwd = f.path.join("repo");
+    let claude = f
+        .state
+        .store
+        .create_session(workspace.id, ProviderKind::ClaudeCode, "claude")
+        .unwrap();
+    let spec = providers::build(&f.state, &claude, cwd.clone()).unwrap();
+    let token = spec.env["AGENTDOCK_AGENT_TOKEN"].clone();
+    let config = spec
+        .args
+        .iter()
+        .find_map(|arg| arg.strip_prefix("--mcp-config="))
+        .expect("mcp config flag");
+    assert!(
+        spec.args
+            .contains(&"--allowedTools=mcp__agentdock".to_owned())
+    );
+    let written: Value = serde_json::from_str(&fs::read_to_string(config).unwrap()).unwrap();
+    let server = &written["mcpServers"]["agentdock"];
+    assert_eq!(server["args"], json!(["mcp"]));
+    assert_eq!(server["env"]["AGENTDOCK_AGENT_TOKEN"], token);
+    assert_eq!(server["env"]["AGENTDOCK_SESSION_ID"], claude.id.to_string());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(config).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    // A relaunch replaces the token; the old one names no one.
+    let again = providers::build(&f.state, &claude, cwd.clone()).unwrap();
+    assert_ne!(again.env["AGENTDOCK_AGENT_TOKEN"], token);
+
+    let codex = f
+        .state
+        .store
+        .create_session(workspace.id, ProviderKind::Codex, "codex")
+        .unwrap();
+    let spec = providers::build(&f.state, &codex, cwd.clone()).unwrap();
+    assert_eq!(spec.args[0], "-c");
+    assert_eq!(
+        spec.args[1],
+        "mcp_servers.agentdock.command=".to_owned()
+            + &serde_json::to_string(&std::env::current_exe().unwrap().to_string_lossy()).unwrap()
+    );
+    let env = spec
+        .args
+        .iter()
+        .find(|arg| arg.starts_with("mcp_servers.agentdock.env="))
+        .unwrap();
+    assert!(env.contains(&format!(
+        "AGENTDOCK_AGENT_TOKEN={}",
+        serde_json::to_string(&spec.env["AGENTDOCK_AGENT_TOKEN"]).unwrap()
+    )));
+    assert!(
+        spec.args
+            .contains(&"mcp_servers.agentdock.tool_timeout_sec=600".to_owned())
+    );
+
+    let terminal = f
+        .state
+        .store
+        .create_session(workspace.id, ProviderKind::Terminal, "shell")
+        .unwrap();
+    let spec = providers::build(&f.state, &terminal, cwd.clone()).unwrap();
+    assert!(spec.env.contains_key("AGENTDOCK_AGENT_TOKEN"));
+    assert_eq!(without_agentdock(&spec.args), spec.args);
+
+    let (status, _) = call(
+        f.app(),
+        "PUT",
+        "/api/preferences",
+        json!({"agent_tools": false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, preferences) = call(f.app(), "GET", "/api/preferences", Value::Null).await;
+    assert_eq!(preferences["agent_tools"], false);
+    let spec = providers::build(&f.state, &claude, cwd).unwrap();
+    assert!(!spec.env.keys().any(|key| key.starts_with("AGENTDOCK_")));
+    assert_eq!(without_agentdock(&spec.args), spec.args);
+}
+
 /// A request to the agent tools the way `agentdock mcp` makes one.
 async fn agent_request(
     app: Router,
@@ -1663,7 +1778,7 @@ async fn opening_a_structured_session_in_a_terminal_resumes_its_own_configuratio
     let record: Session = serde_json::from_value(terminal).unwrap();
     let spec = providers::build(&f.state, &record, cwd).unwrap();
     assert_eq!(
-        spec.args,
+        without_agentdock(&spec.args),
         vec!["--resume", "11111111-2222-3333-4444-555555555555"]
     );
     // The whole point of the escape hatch: the resume points at the home the
@@ -1892,7 +2007,7 @@ async fn imported_native_profiles_create_new_sessions_without_copying_or_overrid
             assert!(matches!(session.status, SessionStatus::Stopped));
             let spec = providers::build(&f.state, &session, cwd.clone()).unwrap();
             assert!(
-                spec.args.is_empty(),
+                without_agentdock(&spec.args).is_empty(),
                 "Do not inject login, endpoint, model, permission or resume flags"
             );
             assert_eq!(spec.cwd, cwd);

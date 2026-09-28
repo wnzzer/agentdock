@@ -52,6 +52,16 @@ test('Claude launch accepts a concrete session name for the native client',()=>{
   assert.deepEqual(options.args.slice(0,2),['--name','Review billing']);
 });
 
+test('AgentDock tools reach both clients as the server injects them (agent::equip)',()=>{
+  const claude=claudeLaunch({cwd:'/fixture',args:['--resume=saved-session','--mcp-config=/state/agent-mcp/s.json','--allowedTools=mcp__agentdock']});
+  const at=claude.args.indexOf('--mcp-config');
+  assert.equal(claude.args[at+1],'/state/agent-mcp/s.json');
+  assert.equal(claude.args[claude.args.indexOf('--allowedTools')+1],'mcp__agentdock');
+  const codex=codexLaunch({cwd:'/fixture',args:['-c','mcp_servers.agentdock.command="/bin/agentdock"','-c','mcp_servers.agentdock.args=["mcp"]','-c','mcp_servers.agentdock.env={AGENTDOCK_AGENT_TOKEN="adk_1"}','-c','mcp_servers.agentdock.tool_timeout_sec=600','resume','saved-thread']});
+  assert.deepEqual(codex.args,['app-server','-c','mcp_servers.agentdock.command="/bin/agentdock"','-c','mcp_servers.agentdock.args=["mcp"]','-c','mcp_servers.agentdock.env={AGENTDOCK_AGENT_TOKEN="adk_1"}','-c','mcp_servers.agentdock.tool_timeout_sec=600']);
+  assert.equal(codex.resume,'saved-thread');
+});
+
 for(const provider of ['codex','claude_code']){
   test(`${provider}: ready performs no prompt; structured deltas and native session IDs appear only after explicit input`,async()=>fixture(provider,async({send,wait,log})=>{
     assert.ok(!(await log()).some(item=>item.method==='turn/start'||item.method==='thread/start'||item.type==='user'));

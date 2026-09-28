@@ -1185,6 +1185,8 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Kept as {name} in the state directory, readable only by you. It never returns to the browser.": "以 {name} 保存在状态目录中，仅你可读，不会再回传到浏览器。",
   "Kept in the state directory, readable only by you, and usable at once. It never returns to the browser.": "保存在状态目录中，仅你可读，立即生效，不会再回传到浏览器。",
   "Stop using this key": "不再使用这个 key",
+  "AgentDock tools for agents": "给 agent 的 AgentDock 工具",
+  "Claude Code and Codex sessions can look at AgentDock and, once you confirm here, change it: endpoints, defaults, workspaces. Takes effect when a session next starts.": "Claude Code 和 Codex 会话可以查看 AgentDock，并在你确认后修改端点、默认设置和工作区。会话下次启动时生效。",
 };
 
 export function normalizeLocale(value: unknown): Locale {

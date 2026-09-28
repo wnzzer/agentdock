@@ -35,6 +35,15 @@ async function update(provider: PreferenceProvider, field: 'endpoint_profile_id'
   catch (cause) { error.value = errorMessage(cause); }
   finally { saving.value = false; }
 }
+/** Off is stored as `false`; on is the default, so it is stored as nothing. */
+async function setAgentTools(on: boolean) {
+  const next: Preferences = JSON.parse(JSON.stringify(preferences.value));
+  if (on) delete next.agent_tools; else next.agent_tools = false;
+  saving.value = true; error.value = ''; saved.value = false;
+  try { await savePreferences(next); saved.value = true; }
+  catch (cause) { error.value = errorMessage(cause); }
+  finally { saving.value = false; }
+}
 const pick = (provider: PreferenceProvider, field: 'endpoint_profile_id' | 'effort' | 'permission') => (event: Event) => update(provider, field, (event.target as HTMLSelectElement).value);
 </script>
 
@@ -78,6 +87,12 @@ const pick = (provider: PreferenceProvider, field: 'endpoint_profile_id' | 'effo
         </label>
         <p v-if="preferences[provider].permission==='danger'" class="preference-note danger">{{ t('New sessions will run tools without asking. Only choose this for directories you trust completely.') }}</p>
       </article>
+      <article class="preference-card">
+        <label class="preference-row first">
+          <span><strong>{{ t('AgentDock tools for agents') }}</strong><small>{{ t('Claude Code and Codex sessions can look at AgentDock and, once you confirm here, change it: endpoints, defaults, workspaces. Takes effect when a session next starts.') }}</small></span>
+          <input type="checkbox" class="preference-switch" role="switch" :checked="preferences.agent_tools !== false" :disabled="saving" :aria-label="t('AgentDock tools for agents')" @change="setAgentTools(($event.target as HTMLInputElement).checked)" />
+        </label>
+      </article>
     </template>
   </section>
 </template>
@@ -95,6 +110,11 @@ const pick = (provider: PreferenceProvider, field: 'endpoint_profile_id' | 'effo
 .preference-mark.claude_code{background:#FFF0E5;color:#B75B27}
 .preference-row{display:flex;align-items:center;gap:14px;padding:9px 0;border-top:1px solid var(--border)}
 .preference-row.first{border-top:0;padding-top:0}
+.preference-switch{appearance:none;flex:none;position:relative;width:38px;height:22px;margin:0;border-radius:11px;background:#cfd8de;cursor:pointer;transition:background .15s}
+.preference-switch::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px #1b2a3633;transition:transform .15s}
+.preference-switch:checked{background:var(--teal)}
+.preference-switch:checked::after{transform:translateX(16px)}
+.preference-switch:focus-visible{outline:2px solid var(--focus,#51b4a3);outline-offset:2px}
 .preference-row>span{flex:1;min-width:0}
 .preference-row strong{display:block;font-size:12px;font-weight:550;color:var(--ink)}
 .preference-row small{display:block;margin-top:2px;font-size:10.5px;line-height:1.5;color:var(--muted)}

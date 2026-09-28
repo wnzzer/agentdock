@@ -98,7 +98,7 @@ pub fn resolve_token(
 /// Deliberately not `providers::write_private`, which refuses to overwrite: a
 /// token file left too short by an earlier attempt has to be replaced, and
 /// there the no-op would keep the value that was already rejected.
-fn write_owner_only(path: &std::path::Path, content: &str) -> std::io::Result<()> {
+pub(crate) fn write_owner_only(path: &std::path::Path, content: &str) -> std::io::Result<()> {
     use std::io::Write;
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);

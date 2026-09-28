@@ -8,8 +8,9 @@ import { json, request } from "./api";
  * new-session dialog and the session's own chips can still change.
  */
 export interface ProviderPreference { endpoint_profile_id?: string | null; effort?: string | null; permission?: string | null }
-export interface Preferences { claude_code: ProviderPreference; codex: ProviderPreference }
-export type PreferenceProvider = keyof Preferences;
+/** `agent_tools`: whether sessions get AgentDock's own tools. Absent means on. */
+export interface Preferences { claude_code: ProviderPreference; codex: ProviderPreference; agent_tools?: boolean }
+export type PreferenceProvider = "claude_code" | "codex";
 
 export const PERMISSION_CHOICES: Record<PreferenceProvider, readonly string[]> = {
   claude_code: ["ask", "plan", "accept_edits", "danger"],
