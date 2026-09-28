@@ -1,5 +1,5 @@
-import { defineComponent, h } from 'vue';
-import { markdownBlocks, markdownInline, workspaceImagePath, type MarkdownInline } from './chat-model';
+import { cloneVNode, defineComponent, h } from 'vue';
+import { markdownBlocksWithLines, markdownInline, workspaceImagePath, type MarkdownInline } from './chat-model';
 import { openLightbox } from './image-lightbox';
 
 /**
@@ -21,6 +21,9 @@ export const MarkdownContent = defineComponent({
     /** Opens a file a message points at. Without one, references render as
      * the text they were written as. */
     openFile: { type: Function as unknown as () => (reference: { path: string; line?: number }) => void, required: false },
+    /** Marks each block with the source line it starts on (`data-line`), so an
+     * editor beside it can keep the two aligned. */
+    sourceLines: { type: Boolean, default: false },
   },
   setup(props) {
     const inline = (text: string) =>
@@ -55,7 +58,8 @@ export const MarkdownContent = defineComponent({
             ? part.text
             : h(part.type === 'strong' ? 'strong' : part.type === 'em' ? 'em' : 'code', part.text));
     return () =>
-      h('div', { class: 'chat-markdown' }, markdownBlocks(props.text).map(block =>
+      h('div', { class: 'chat-markdown' }, markdownBlocksWithLines(props.text).map(({ block, line }) => {
+        const node =
         block.type === 'code'
           ? h('div', { class: 'chat-code' }, [block.language ? h('small', block.language) : null, h('pre', [h('code', block.text)])])
           : block.type === 'table'
@@ -66,6 +70,8 @@ export const MarkdownContent = defineComponent({
               ])])
           : block.type === 'list'
             ? h(block.ordered ? 'ol' : 'ul', block.items.map(item => h('li', inline(item))))
-            : h(block.type === 'heading' ? `h${Math.min(block.level ?? 3, 6)}` : block.type === 'quote' ? 'blockquote' : 'p', inline(block.text))));
+            : h(block.type === 'heading' ? `h${Math.min(block.level ?? 3, 6)}` : block.type === 'quote' ? 'blockquote' : 'p', inline(block.text));
+        return props.sourceLines ? cloneVNode(node, { 'data-line': line }) : node;
+      }));
   },
 });

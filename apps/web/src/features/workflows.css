@@ -32,8 +32,8 @@
 /* The highlighted copy and the textarea must lay text out identically, or the
    two drift apart as the file scrolls. Every property that affects metrics is
    declared once here and inherited by both. */
-.code-surface { position: relative; flex: 1; min-height: 0; display: flex; }
-.code-surface > .code-highlight, .code-surface > .code-editor {
+.code-surface { position: relative; flex: 1; min-height: 0; min-width: 0; display: flex; overflow: hidden; }
+.code-surface > .code-highlight, .code-surface > .code-editor, .code-surface > .code-mirror {
   margin: 0; padding: 15px 14px; border: 0;
   font: 11px/21px "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   tab-size: 2; white-space: pre; overflow-wrap: normal;
@@ -50,7 +50,7 @@
 /* Prose has no column to keep, so it wraps rather than running off the edge.
    Both layers take the same rule and the same width, or the highlighted copy
    would break its lines somewhere the text above it does not. */
-.code-surface.is-wrapped > .code-highlight, .code-surface.is-wrapped > .code-editor { white-space: pre-wrap; overflow-wrap: break-word; }
+.code-surface.is-wrapped > .code-highlight, .code-surface.is-wrapped > .code-editor, .code-surface.is-wrapped > .code-mirror { white-space: pre-wrap; overflow-wrap: break-word; }
 .code-surface.is-wrapped .code-highlight code { width: 100%; }
 /* Transparent text over the layer, but a caret and selection that still read. */
 .code-editor.is-overlaid {
@@ -153,3 +153,14 @@
 .git-pane.is-phone .line-number { font-size: 11px; }
 .git-pane.is-phone.show-diff>.content-toolbar { display: none; }
 
+/* Markdown: source and preview side by side, or one of them (FilePane). The
+   hidden copy of the source is only measured, never seen. */
+.text-body { flex: 1; min-height: 0; display: flex; }
+.text-body.is-split > .code-surface, .text-body.is-split > .markdown-preview { flex: 1 1 0; min-width: 0; }
+.text-body.is-split > .markdown-preview { border-left: 1px solid #e8eef1; }
+.code-mirror { position: absolute; top: 0; left: 0; visibility: hidden; pointer-events: none; }
+.md-modes { display: inline-flex; gap: 2px; padding: 2px; border-radius: 7px; background: #eef2f4; }
+.md-modes>button { min-height: 22px; padding: 2px 9px; border: 0; border-radius: 5px; background: none; font: inherit; font-size: 10px; color: #6f808b; cursor: pointer; white-space: nowrap; }
+.md-modes>button:hover { color: #3d505d; }
+.md-modes>button.active { background: #fff; color: var(--teal); font-weight: 600; box-shadow: 0 1px 2px #1b2a3614; }
+@media (pointer: coarse) { .md-modes>button { min-height: 34px; padding: 0 14px; font-size: 13px; } }

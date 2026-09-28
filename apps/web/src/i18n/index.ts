@@ -1173,6 +1173,9 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Message {provider}…": "给 {provider} 发消息…",
   "Back to changes": "返回变更列表",
   "Back": "返回",
+  "Split": "双栏",
+  "Markdown view": "Markdown 视图",
+  "Double-click a passage to edit it": "双击某段即可编辑",
 };
 
 export function normalizeLocale(value: unknown): Locale {

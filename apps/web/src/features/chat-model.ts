@@ -299,16 +299,21 @@ function tableCells(line: string): string[] {
   return cells;
 }
 const TABLE_DIVIDER = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
-export function markdownBlocks(text: string): MarkdownBlock[] {
-  const lines = text.replace(/\r\n/g, '\n').split('\n'), blocks: MarkdownBlock[] = [];
+/**
+ * The same blocks, each with the 0-based source line it starts on. The file
+ * pane uses it to keep its source and preview aligned; messages do not need it.
+ */
+export function markdownBlocksWithLines(text: string): Array<{ block: MarkdownBlock; line: number }> {
+  const lines = text.replace(/\r\n/g, '\n').split('\n'), blocks: Array<{ block: MarkdownBlock; line: number }> = [];
   for (let i = 0; i < lines.length;) {
     const line = lines[i];
     if (!line.trim()) { i++; continue; }
+    const start = i;
     const fence = line.match(/^\s*```([^`]*)$/);
-    if (fence) { const body: string[] = []; i++; while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) body.push(lines[i++]); if (i < lines.length) i++; blocks.push({ type: 'code', language: fence[1].trim(), text: body.join('\n') }); continue; }
+    if (fence) { const body: string[] = []; i++; while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) body.push(lines[i++]); if (i < lines.length) i++; blocks.push({ line: start, block: { type: 'code', language: fence[1].trim(), text: body.join('\n') } }); continue; }
     const heading = line.match(/^(#{1,6})\s+(.*)$/);
-    if (heading) { blocks.push({ type: 'heading', level: heading[1].length, text: heading[2] }); i++; continue; }
-    if (/^>\s?/.test(line)) { blocks.push({ type: 'quote', text: line.replace(/^>\s?/, '') }); i++; continue; }
+    if (heading) { blocks.push({ line: start, block: { type: 'heading', level: heading[1].length, text: heading[2] } }); i++; continue; }
+    if (/^>\s?/.test(line)) { blocks.push({ line: start, block: { type: 'quote', text: line.replace(/^>\s?/, '') } }); i++; continue; }
     // A GFM table: a row, a divider of dashes, then rows until one without a pipe.
     if (line.includes('|') && i + 1 < lines.length && TABLE_DIVIDER.test(lines[i + 1])) {
       const header = tableCells(line), divider = tableCells(lines[i + 1]);
@@ -316,20 +321,23 @@ export function markdownBlocks(text: string): MarkdownBlock[] {
         const align = divider.map(cell => cell.startsWith(':') && cell.endsWith(':') ? 'center' as const : cell.endsWith(':') ? 'right' as const : cell.startsWith(':') ? 'left' as const : undefined);
         const rows: string[][] = []; i += 2;
         while (i < lines.length && lines[i].trim() && lines[i].includes('|')) { const cells = tableCells(lines[i++]); rows.push(header.map((_, index) => cells[index] ?? '')); }
-        blocks.push({ type: 'table', header, align, rows }); continue;
+        blocks.push({ line: start, block: { type: 'table', header, align, rows } }); continue;
       }
     }
     const list = line.match(/^\s*(?:([-*+])|(\d+)\.)\s+(.*)$/);
     if (list) {
       const ordered = !!list[2], items: string[] = [];
       while (i < lines.length) { const item = lines[i].match(/^\s*(?:([-*+])|(\d+)\.)\s+(.*)$/); if (!item || !!item[2] !== ordered) break; items.push(item[3]); i++; }
-      blocks.push({ type: 'list', ordered, items }); continue;
+      blocks.push({ line: start, block: { type: 'list', ordered, items } }); continue;
     }
     const body = [line]; i++;
     while (i < lines.length && lines[i].trim() && !/^(?:\s*```|#{1,6}\s|>\s?|\s*(?:[-*+]|\d+\.)\s)/.test(lines[i]) && !(lines[i].includes('|') && TABLE_DIVIDER.test(lines[i + 1] ?? ''))) body.push(lines[i++]);
-    blocks.push({ type: 'paragraph', text: body.join('\n') });
+    blocks.push({ line: start, block: { type: 'paragraph', text: body.join('\n') } });
   }
   return blocks;
+}
+export function markdownBlocks(text: string): MarkdownBlock[] {
+  return markdownBlocksWithLines(text).map(entry => entry.block);
 }
 
 const IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i;
