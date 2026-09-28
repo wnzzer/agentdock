@@ -215,6 +215,12 @@ pub fn build(state: &AppState, session: &Session, cwd: PathBuf) -> Result<SpawnS
         spec.args.extend(["--name".into(), session.title.clone()]);
     }
     crate::environment::apply(&mut spec, &session.environment, &state.state_dir)?;
+    // Last, so no session environment override can replace the session's own
+    // identity with another's.
+    for (key, value) in crate::agent::launch_environment(state, session.id) {
+        spec.env_remove.retain(|removed| *removed != key);
+        spec.env.insert(key, value);
+    }
     Ok(spec)
 }
 

@@ -1103,6 +1103,7 @@ mod tests {
                 ),
                 claude_manual_mode: true,
                 operations: Arc::new(tokio::sync::Mutex::new(())),
+                agents: crate::agent::AgentRegistry::default(),
             };
             Self { state, root }
         }

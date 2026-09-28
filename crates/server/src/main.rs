@@ -1,4 +1,5 @@
 mod accounts;
+mod agent;
 #[cfg(test)]
 mod api_tests;
 mod bridge;
@@ -13,6 +14,7 @@ mod environment;
 mod file_search;
 mod file_watch;
 mod installation;
+mod mcp;
 mod model_catalog;
 mod native_config;
 mod native_history;
@@ -68,6 +70,7 @@ struct AppState {
     security: security::Security,
     claude_manual_mode: bool,
     operations: Arc<tokio::sync::Mutex<()>>,
+    agents: agent::AgentRegistry,
 }
 
 #[derive(Debug)]
@@ -359,6 +362,8 @@ const HELP: &str = r#"AgentDock — a host workspace for Claude Code and Codex
   agentdock logs            What the background gateway has said
   agentdock serve           Run in the foreground instead (no background process)
   agentdock init            Create user state without starting anything
+  agentdock mcp             AgentDock's agent tools as a stdio MCP server, e.g.
+                            claude mcp add agentdock -- agentdock mcp
 
   --version                 Print the version
   --help                    This text
@@ -455,6 +460,11 @@ async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         println!("agentdock {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
+    // A relay to the running server: no state directory, database or port.
+    // Its stdout is the protocol, so nothing else may print there.
+    if action == "mcp" {
+        return mcp::serve().await;
+    }
     if !matches!(
         action.as_str(),
         "serve" | "init" | "start" | "stop" | "restart" | "status" | "logs"
@@ -543,6 +553,7 @@ async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         security,
         claude_manual_mode,
         operations: Arc::new(tokio::sync::Mutex::new(())),
+        agents: agent::AgentRegistry::default(),
     };
     let app = router(state.clone());
     // Reconcile only after startup has passed all configuration, binding and
@@ -588,6 +599,7 @@ fn router(state: AppState) -> Router {
         .merge(checkouts::routes())
         .merge(preferences::routes())
         .merge(secrets::routes())
+        .merge(agent::routes())
         .merge(conversations::routes())
         .merge(file_watch::routes())
         .route("/api/health", get(health))

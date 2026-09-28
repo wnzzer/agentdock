@@ -76,6 +76,7 @@ impl Fixture {
             security: security::Security::for_test(address, token),
             claude_manual_mode: true,
             operations: Arc::new(tokio::sync::Mutex::new(())),
+            agents: agent::AgentRegistry::default(),
         };
         Self { state, path }
     }
@@ -445,6 +446,247 @@ async fn workspace_file_git_layout_workflow() {
         .0,
         StatusCode::BAD_REQUEST
     );
+}
+
+/// A request to the agent tools the way `agentdock mcp` makes one.
+async fn agent_request(
+    app: Router,
+    method: &str,
+    path: &str,
+    bearer: Option<&str>,
+    client: Option<&str>,
+    body: Value,
+) -> (StatusCode, Value) {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(path)
+        .header("host", "127.0.0.1:8787")
+        .header("content-type", "application/json");
+    if let Some(token) = bearer {
+        request = request.header("authorization", format!("Bearer {token}"));
+    }
+    if let Some(client) = client {
+        request = request.header("x-agentdock-client", client);
+    }
+    let response = app
+        .oneshot(request.body(Body::from(body.to_string())).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+fn tool_text(result: &Value) -> Value {
+    serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap_or(Value::Null)
+}
+
+#[tokio::test]
+async fn agent_tools_know_their_caller_and_a_session_token_opens_nothing_else() {
+    const DEPLOYMENT: &str = "deployment-token-for-agent-tests-0123456789";
+    let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), Some(DEPLOYMENT));
+    let workspace = f
+        .state
+        .store
+        .create_workspace("agents", f.path.join("repo").to_str().unwrap())
+        .unwrap();
+    let session = f
+        .state
+        .store
+        .create_session(workspace.id, ProviderKind::Terminal, "worker")
+        .unwrap();
+    let spec = providers::build(&f.state, &session, f.path.join("repo")).unwrap();
+    let token = spec.env["AGENTDOCK_AGENT_TOKEN"].clone();
+    assert_eq!(spec.env["AGENTDOCK_SESSION_ID"], session.id.to_string());
+    assert_eq!(spec.env["AGENTDOCK_URL"], "http://127.0.0.1:8787");
+    let status = json!({"name":"agentdock_status"});
+
+    // Issued but not running: the token identifies no one yet.
+    let (code, _) = agent_request(
+        f.app(),
+        "POST",
+        "/api/agent/call",
+        Some(&token),
+        Some("agent"),
+        status.clone(),
+    )
+    .await;
+    assert_eq!(code, StatusCode::UNAUTHORIZED);
+
+    f.state
+        .runtime
+        .start(
+            session.id.to_string(),
+            agentdock_runtime::SpawnSpec {
+                program: waiting_process(&["-i"]).0,
+                args: waiting_process(&["-i"]).1,
+                cwd: f.path.join("repo"),
+                env: BTreeMap::new(),
+                env_remove: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let (code, tools) = agent_request(
+        f.app(),
+        "GET",
+        "/api/agent/tools",
+        Some(&token),
+        None,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert!(
+        tools["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("agentdock_status")
+    );
+    let names: Vec<_> = tools["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"agentdock_status") && names.contains(&"agentdock_list"));
+
+    let (code, result) = agent_request(
+        f.app(),
+        "POST",
+        "/api/agent/call",
+        Some(&token),
+        Some("agent"),
+        status.clone(),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(result["isError"], false);
+    let you = &tool_text(&result)["you"];
+    assert_eq!(you["kind"], "session");
+    assert_eq!(you["session"]["id"], session.id.to_string());
+    assert_eq!(you["workspace"]["name"], "agents");
+
+    // The session's token reaches the agent tools and nothing else.
+    for (method, path) in [
+        ("GET", "/api/sessions"),
+        ("GET", "/api/secrets"),
+        ("GET", "/api/endpoint-profiles"),
+    ] {
+        let (code, _) = agent_request(
+            f.app(),
+            method,
+            path,
+            Some(&token),
+            Some("web"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(code, StatusCode::UNAUTHORIZED, "{path}");
+    }
+    // A mutation still has to say it comes from an agent (or the web app).
+    let (code, _) = agent_request(
+        f.app(),
+        "POST",
+        "/api/agent/call",
+        Some(&token),
+        None,
+        status.clone(),
+    )
+    .await;
+    assert_eq!(code, StatusCode::FORBIDDEN);
+    // `agent` is no password for the rest of the API.
+    let (code, _) = agent_request(
+        f.app(),
+        "POST",
+        "/api/workspaces",
+        Some(DEPLOYMENT),
+        Some("agent"),
+        json!({"name":"x","root_path":"/"}),
+    )
+    .await;
+    assert_eq!(code, StatusCode::FORBIDDEN);
+
+    // The deployment's own token is an external caller.
+    let (_, result) = agent_request(
+        f.app(),
+        "POST",
+        "/api/agent/call",
+        Some(DEPLOYMENT),
+        Some("agent"),
+        status.clone(),
+    )
+    .await;
+    assert_eq!(tool_text(&result)["you"]["kind"], "external");
+    let (_, unknown) = agent_request(
+        f.app(),
+        "POST",
+        "/api/agent/call",
+        Some(DEPLOYMENT),
+        Some("agent"),
+        json!({"name":"agentdock_nothing"}),
+    )
+    .await;
+    assert_eq!(unknown["isError"], true);
+
+    // Listing endpoints says how a key is set, never what it is.
+    crate::secrets::store(
+        &f.state.state_dir,
+        "AGENTDOCK_SECRET_AGENT_LIST",
+        "sk-never-listed",
+    )
+    .unwrap();
+    let (_, profile) = agent_request(f.app(), "POST", "/api/endpoint-profiles", Some(DEPLOYMENT), Some("web"), json!({"name":"listed","provider":"codex","endpoint_url":"https://example.test/v1","secret_ref":"env:AGENTDOCK_SECRET_AGENT_LIST"})).await;
+    assert_eq!(profile.get("error"), None, "{profile}");
+    let (_, listed) = agent_request(
+        f.app(),
+        "POST",
+        "/api/agent/call",
+        Some(&token),
+        Some("agent"),
+        json!({"name":"agentdock_list","arguments":{"what":"endpoints"}}),
+    )
+    .await;
+    assert!(!listed.to_string().contains("sk-never-listed"));
+    assert_eq!(tool_text(&listed)[0]["key"], "saved");
+    let (_, sessions) = agent_request(
+        f.app(),
+        "POST",
+        "/api/agent/call",
+        Some(&token),
+        Some("agent"),
+        json!({"name":"agentdock_list","arguments":{"what":"sessions"}}),
+    )
+    .await;
+    assert_eq!(tool_text(&sessions)[0]["title"], "worker");
+
+    // Once the process ends, so does the token.
+    f.state.runtime.stop(&session.id.to_string()).await.unwrap();
+    for _ in 0..50 {
+        if !f
+            .state
+            .runtime
+            .get(&session.id.to_string())
+            .is_some_and(|r| r.running())
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let (code, _) = agent_request(
+        f.app(),
+        "POST",
+        "/api/agent/call",
+        Some(&token),
+        Some("agent"),
+        status,
+    )
+    .await;
+    assert_eq!(code, StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -1654,7 +1896,14 @@ async fn imported_native_profiles_create_new_sessions_without_copying_or_overrid
                 "Do not inject login, endpoint, model, permission or resume flags"
             );
             assert_eq!(spec.cwd, cwd);
-            assert_eq!(spec.env.len(), 1);
+            // Only the configuration directory, besides the session's own
+            // AgentDock identity (agent.rs), which every launch carries.
+            let own: Vec<_> = spec
+                .env
+                .keys()
+                .filter(|name| !name.starts_with("AGENTDOCK_"))
+                .collect();
+            assert_eq!(own, [key]);
             assert_eq!(spec.env[key], config.to_str().unwrap());
             assert!(f.state.runtime.get(&session.id.to_string()).is_none());
             assert!(

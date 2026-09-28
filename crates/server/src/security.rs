@@ -36,6 +36,20 @@ fn minimum_from(raw: Option<&str>) -> usize {
     }
 }
 
+/// The token a client on this machine should present, if the deployment has
+/// one: the environment's, else the one kept in the state directory. Never
+/// creates one -- that is the server's business at startup.
+pub fn existing_token() -> Option<String> {
+    if let Some(explicit) = env::var("AGENTDOCK_TOKEN").ok().filter(|v| !v.is_empty()) {
+        return Some(explicit);
+    }
+    let state_dir = crate::installation::state_directory().ok()?;
+    std::fs::read_to_string(token_file(&state_dir))
+        .ok()
+        .map(|token| token.trim().to_owned())
+        .filter(|token| !token.is_empty())
+}
+
 fn token_file(state_dir: &std::path::Path) -> std::path::PathBuf {
     state_dir.join("token")
 }
@@ -130,6 +144,10 @@ pub struct Security {
     port: u16,
 }
 impl Security {
+    /// This server as a process on the same machine reaches it.
+    pub fn local_url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
     pub fn new(
         address: SocketAddr,
         token: Option<String>,
@@ -303,13 +321,19 @@ pub async fn guard(State(state): State<AppState>, request: Request, next: Next) 
     let path = request.uri().path();
     if path.starts_with("/api/") {
         let public = path == "/api/health" || path == "/api/auth";
-        if !public && !state.security.authenticated(headers) {
+        // A session's agent token opens the agent tools and nothing else; the
+        // rest of the API still takes the deployment's own credentials.
+        let agent_path = path.starts_with("/api/agent/");
+        let agent = agent_path && crate::agent::is_agent_request(&state, headers);
+        if !public && !agent && !state.security.authenticated(headers) {
             return error(StatusCode::UNAUTHORIZED, "Authentication required");
         }
         if !matches!(
             *request.method(),
             Method::GET | Method::HEAD | Method::OPTIONS
-        ) && headers.get("x-agentdock-client").is_none_or(|v| v != "web")
+        ) && headers
+            .get("x-agentdock-client")
+            .is_none_or(|v| v != "web" && !(agent_path && v == "agent"))
         {
             return error(
                 StatusCode::FORBIDDEN,
