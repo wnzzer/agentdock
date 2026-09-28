@@ -2,6 +2,7 @@ mod accounts;
 mod activity;
 mod agent;
 mod agent_config;
+mod agent_sessions;
 #[cfg(test)]
 mod api_tests;
 mod bridge;

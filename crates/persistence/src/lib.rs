@@ -31,7 +31,7 @@ impl Store {
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 14 {
+        if version > 15 {
             return Err(rusqlite::Error::InvalidQuery);
         }
         let tx = connection.transaction()?;
@@ -111,6 +111,9 @@ impl Store {
         if version < 14 {
             tx.execute_batch(include_str!("../../../migrations/0014_preferences.sql"))?;
         }
+        if version < 15 {
+            tx.execute_batch(include_str!("../../../migrations/0015_agent_children.sql"))?;
+        }
         // Capture the endpoint settings for legacy M0 sessions once, before templates change.
         let legacy = {
             let mut stmt = tx.prepare("SELECT s.id,p.id FROM sessions s JOIN endpoint_profiles p ON p.id=s.endpoint_profile_id WHERE s.endpoint_snapshot IS NULL")?;
@@ -129,7 +132,7 @@ impl Store {
                 params![snapshot, id],
             )?;
         }
-        tx.pragma_update(None, "user_version", 14)?;
+        tx.pragma_update(None, "user_version", 15)?;
         tx.commit()?;
         Ok(Self {
             connection: Mutex::new(connection),
@@ -457,6 +460,38 @@ impl Store {
     }
 
     /// The stored preferences document, or `null` when none was ever saved.
+    /// Record that `parent` started `child` through the agent tools.
+    pub fn set_agent_parent(&self, child: SessionId, parent: SessionId) -> Result<()> {
+        self.connection.lock().expect("sqlite lock").execute(
+            "INSERT OR REPLACE INTO agent_children (session_id,parent_session_id,created_at) VALUES (?1,?2,?3)",
+            params![child.to_string(), parent.to_string(), Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+    /// The session that started `child`, if an agent did.
+    pub fn agent_parent(&self, child: SessionId) -> Result<Option<SessionId>> {
+        let connection = self.connection.lock().expect("sqlite lock");
+        let parent: Option<String> = connection
+            .query_row(
+                "SELECT parent_session_id FROM agent_children WHERE session_id=?1",
+                [child.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(parent.and_then(|value| value.parse().ok()))
+    }
+    /// The sessions `parent` started, oldest first.
+    pub fn agent_children(&self, parent: SessionId) -> Result<Vec<SessionId>> {
+        let connection = self.connection.lock().expect("sqlite lock");
+        let mut statement = connection.prepare(
+            "SELECT session_id FROM agent_children WHERE parent_session_id=?1 ORDER BY created_at",
+        )?;
+        let ids = statement
+            .query_map([parent.to_string()], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>>>()?;
+        Ok(ids.into_iter().filter_map(|id| id.parse().ok()).collect())
+    }
+
     pub fn preferences(&self) -> Result<serde_json::Value> {
         let raw: Option<String> = self
             .connection
@@ -1782,7 +1817,7 @@ mod tests {
                     .unwrap()
                     .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                     .unwrap(),
-                14
+                15
             );
             let current = store.get_endpoint_profile(profile.id).unwrap().unwrap();
             assert!(current.native_config.is_none());
@@ -2172,7 +2207,7 @@ mod tests {
                     .unwrap()
                     .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                     .unwrap(),
-                14
+                15
             );
             assert!(matches!(
                 store.get_session(session_id).unwrap().unwrap().status,

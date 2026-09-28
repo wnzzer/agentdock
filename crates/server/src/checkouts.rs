@@ -219,6 +219,23 @@ async fn set_checkout(
     Ok(Json(session_record(&state, id).await?))
 }
 
+/// For the agent tools: move a session that has not started onto a branch's
+/// worktree, making the branch when it does not exist yet.
+pub(crate) async fn move_to_branch(
+    state: &AppState,
+    id: SessionId,
+    branch: String,
+) -> Result<Session> {
+    let choice = CheckoutChoice {
+        branch: Some(branch),
+        create: true,
+        path: None,
+    };
+    set_checkout(State(state.clone()), Path(id), Json(choice))
+        .await
+        .map(|Json(session)| session)
+}
+
 /// A worktree for a branch, made or found, without moving any session.
 async fn worktree(
     State(state): State<AppState>,

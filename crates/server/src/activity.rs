@@ -194,6 +194,19 @@ impl Activity {
     /// Tell the person what an agent changed. `message` is a template like
     /// `ask`'s title.
     pub fn notify(&self, who: Value, message: &str, values: Value, undo: Option<Undo>) {
+        self.notify_with(who, message, values, undo, None);
+    }
+
+    /// A notice that also offers to open something, such as a session an
+    /// agent just started.
+    pub fn notify_with(
+        &self,
+        who: Value,
+        message: &str,
+        values: Value,
+        undo: Option<Undo>,
+        open: Option<Value>,
+    ) {
         let id = Uuid::new_v4();
         let undoable = undo.is_some();
         if let Some(undo) = undo {
@@ -204,8 +217,23 @@ impl Activity {
             }
         }
         let _ = self.inner.events.send(json!({
-            "type": "notice", "id": id, "who": who, "message": message, "values": values, "undoable": undoable,
+            "type": "notice", "id": id, "who": who, "message": message, "values": values, "undoable": undoable, "open": open,
         }));
+    }
+
+    /// Point every open window at something: a file and line, a diff, a
+    /// session. Nothing to point with no window open, and the agent is told.
+    pub fn show(&self, who: Value, target: Value) -> Result<(), ApiError> {
+        if !self.watched() {
+            return Err(ApiError::conflict(
+                "No AgentDock window is open to show this in.",
+            ));
+        }
+        let _ = self
+            .inner
+            .events
+            .send(json!({ "type": "show", "who": who, "target": target }));
+        Ok(())
     }
 
     fn take_undo(&self, id: Uuid) -> Option<Undo> {

@@ -1216,6 +1216,10 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Existing sessions keep the settings they started with.": "已有会话保留启动时的设置。",
   "Sessions on this profile share its sign-in and settings; nothing is copied.": "使用该配置的会话共享它的登录和设置，不会复制任何内容。",
   "Every tool call in new sessions will run without your confirmation.": "新会话中的每一次工具调用都不会再等你确认。",
+  "Started session “{title}”": "启动了会话「{title}」",
+  "Start a {client} session": "启动一个 {client} 会话",
+  "Task": "任务",
+  "It runs on its own. This session may then start more without asking, read their replies and message them.": "它会独立运行。之后这个会话可以不经询问继续启动会话，并读取它们的回复、给它们发消息。",
 };
 
 export function normalizeLocale(value: unknown): Locale {

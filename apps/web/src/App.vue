@@ -23,7 +23,7 @@ import AuthDialog from "./features/AuthDialog.vue";
 import Icon from "./features/Icon.vue";
 import TabIcon from "./features/TabIcon.vue";
 import BottomSheet from "./features/BottomSheet.vue";
-import AgentActivity from "./features/AgentActivity.vue";
+import AgentActivity, { type ShowTarget } from "./features/AgentActivity.vue";
 import { useMobile } from "./features/mobile";
 import { useI18n } from "./i18n";
 import { ApiConnectionError, ApiError, errorMessage, json, providerLabel, request, workspacePath } from "./features/api";
@@ -119,6 +119,17 @@ function switchPane(pane: PaneNode) { switcherOpen.value = false; void canvas.va
 async function closeOpenPane(pane: PaneNode) { await canvas.value?.closePane(pane.id); }
 /** An agent changed something: show it without waiting for the next poll. */
 function agentChanged() { void refreshProfiles(); void refreshResources(); void loadPreferences(true); }
+/** An agent pointed at something (agentdock_show), or a notice's Open. */
+async function agentShow(target: ShowTarget) {
+  if (target.kind === "file") void openReference(target.workspace_id, { path: target.path, line: target.line ?? undefined, checkout: target.checkout });
+  else if (target.kind === "changes") openChanges(target.workspace_id);
+  else {
+    // A session an agent just started may not be in the list yet.
+    let session = sessions.value.find(item => item.id === target.session_id);
+    if (!session) { await refreshSessions(); session = sessions.value.find(item => item.id === target.session_id); }
+    if (session) openSession(session);
+  }
+}
 function sheetAction(action: () => void) { switcherOpen.value = false; action(); }
 /**
  * Files and Git open like a pushed page: the top bar trades its menu for a
@@ -761,7 +772,7 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
   <WorkspaceDialog v-if="showWorkspace" :initial-path="workspaceInitialPath" @close="showWorkspace=false;workspaceInitialPath=undefined" @created="workspaceCreated"/>
   <HostFilePreview v-if="hostPreview" :key="hostPreview.path" :path="hostPreview.path" :line="hostPreview.line" @close="hostPreview=undefined" @add-workspace="folder=>{hostPreview=undefined;workspaceInitialPath=folder;showWorkspace=true}"/>
   <ImageLightbox />
-  <AgentActivity :enabled="!showAuth && apiOnline" @changed="agentChanged" />
+  <AgentActivity :enabled="!showAuth && apiOnline" @changed="agentChanged" @show="agentShow" />
   <BottomSheet v-if="switcherOpen" :title="t('Open views')" @close="switcherOpen=false">
     <div class="switcher-list">
       <div v-for="pane in openPanes" :key="pane.id" :class="['switcher-item', { current: pane.id === focusedPane?.id }]">

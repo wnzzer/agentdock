@@ -812,7 +812,7 @@ fn view(state: &AppState, id: Uuid) -> Result<AccountView> {
     }
     Ok(view)
 }
-async fn list(State(state): State<AppState>) -> Result<Json<Vec<AccountView>>> {
+pub(crate) async fn list(State(state): State<AppState>) -> Result<Json<Vec<AccountView>>> {
     tokio::task::spawn_blocking(move || {
         let _guard = state
             .accounts

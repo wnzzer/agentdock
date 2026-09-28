@@ -73,7 +73,7 @@ pub fn tools() -> Vec<Value> {
 }
 
 /// Who the person is told is asking.
-async fn who(state: &AppState, caller: Caller) -> Value {
+pub(crate) async fn who(state: &AppState, caller: Caller) -> Value {
     match caller {
         Caller::External => json!({ "kind": "external" }),
         Caller::Session(id) => {

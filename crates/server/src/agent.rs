@@ -37,6 +37,9 @@ pub enum Caller {
 #[derive(Clone, Default)]
 pub struct AgentRegistry {
     tokens: Arc<Mutex<HashMap<String, SessionId>>>,
+    /// Sessions the person has let start other sessions (agent_sessions.rs),
+    /// until the server restarts.
+    spawners: Arc<Mutex<std::collections::HashSet<SessionId>>>,
 }
 
 impl AgentRegistry {
@@ -52,6 +55,12 @@ impl AgentRegistry {
         tokens.retain(|_, owner| *owner != session);
         tokens.insert(token.clone(), session);
         token
+    }
+    pub fn may_spawn(&self, session: SessionId) -> bool {
+        self.spawners.lock().expect("spawners").contains(&session)
+    }
+    pub fn allow_spawning(&self, session: SessionId) {
+        self.spawners.lock().expect("spawners").insert(session);
     }
     fn session_for(&self, token: &str) -> Option<SessionId> {
         self.tokens
@@ -71,7 +80,7 @@ fn bearer(headers: &HeaderMap) -> Option<&str> {
 
 /// Whether a session has a process running now, in either interface. A token
 /// outlives nothing: once its process has ended it identifies no one.
-fn live(state: &AppState, session: SessionId) -> bool {
+pub(crate) fn live(state: &AppState, session: SessionId) -> bool {
     state.chats.get(session).is_some_and(|chat| chat.running())
         || state
             .runtime
@@ -194,6 +203,9 @@ AgentDock is the workspace this agent may be running in: a local web app that ru
 - agentdock_endpoint creates, changes, tests or imports endpoint profiles. To set up an API endpoint, call create with the provider, URL and model: the person confirms in the AgentDock window and types the key there. Then call test to check it works.
 - Never ask the person to paste an API key into the conversation, and never put one in a tool argument. AgentDock collects keys in its own window.
 - agentdock_preferences sets what new sessions start with; agentdock_workspace adds a directory as a workspace.
+- agentdock_spawn starts another Claude Code or Codex session with a self-contained task, optionally on its own branch, for independent work worth doing in parallel. Follow it with agentdock_session (wait, result, message). You can only follow sessions you started, and a session you start cannot start more.
+- agentdock_show opens a file at a line, your Git changes, or a session in the person's AgentDock window: use it to point at what you changed instead of describing where it is.
+- agentdock_usage reports the quota your official account last reported.
 - Changes that matter are confirmed by the person in the AgentDock window, and a call waits up to 5 minutes for that answer. If they decline, do not retry the same change unasked.";
 
 pub(crate) fn tool(name: &str, description: &str, schema: Value) -> Value {
@@ -223,6 +235,7 @@ pub fn tools() -> Vec<Value> {
         ),
     ];
     tools.extend(crate::agent_config::tools());
+    tools.extend(crate::agent_sessions::tools());
     tools
 }
 
@@ -272,6 +285,10 @@ async fn call_tool(
             crate::agent_config::preferences(&state, caller, &arguments).await
         }
         "agentdock_workspace" => crate::agent_config::workspace(&state, caller, &arguments).await,
+        "agentdock_spawn" => crate::agent_sessions::spawn(&state, caller, &arguments).await,
+        "agentdock_session" => crate::agent_sessions::session(&state, caller, &arguments).await,
+        "agentdock_show" => crate::agent_sessions::show(&state, caller, &arguments).await,
+        "agentdock_usage" => crate::agent_sessions::usage(&state, caller).await,
         other => Err(ApiError::bad(format!("Unknown AgentDock tool {other:?}"))),
     })
 }

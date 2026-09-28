@@ -756,3 +756,190 @@ for await (const line of createInterface({input:process.stdin})) {
         "owned descendant still executing: {status}"
     );
 }
+
+/// A running structured session and a token that speaks for it.
+async fn agent_chat(fixture: &Fixture) -> (Uuid, String) {
+    let id = new_chat(fixture).await;
+    let (status, _) = call(
+        fixture.app(),
+        "POST",
+        &format!("/api/sessions/{id}/start"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let session = fixture.state.store.get_session(id).unwrap().unwrap();
+    // A fresh launch spec reissues the session's token; the chat is running,
+    // so the new one identifies it.
+    let token = providers::build(&fixture.state, &session, fixture.path.join("repo"))
+        .unwrap()
+        .env["AGENTDOCK_AGENT_TOKEN"]
+        .clone();
+    (id, token)
+}
+
+async fn tool(fixture: &Fixture, token: &str, name: &str, arguments: Value) -> Value {
+    agent_request(
+        fixture.app(),
+        "POST",
+        "/api/agent/call",
+        Some(token),
+        Some("agent"),
+        json!({"name":name,"arguments":arguments}),
+    )
+    .await
+    .1
+}
+
+#[tokio::test]
+async fn a_session_starts_another_follows_its_reply_and_only_its_own() {
+    let fixture = chat_fixture();
+    let (parent, token) = agent_chat(&fixture).await;
+    let mut events = fixture.state.activity.subscribe();
+
+    // The first start is the person's call.
+    let app = fixture.app();
+    let spawn = {
+        let token = token.clone();
+        tokio::spawn(async move {
+            agent_request(app, "POST", "/api/agent/call", Some(&token), Some("agent"), json!({"name":"agentdock_spawn","arguments":{"provider":"codex","prompt":"Try the other approach","title":"Other approach"}})).await.1
+        })
+    };
+    let request = next_event(&mut events, "request").await;
+    assert_eq!(request["title"], "Start a {client} session");
+    assert_eq!(request["who"]["session_id"], parent.to_string());
+    call(
+        fixture.app(),
+        "POST",
+        &format!(
+            "/api/agent-activity/requests/{}",
+            request["id"].as_str().unwrap()
+        ),
+        json!({"approve":true}),
+    )
+    .await;
+    let started = spawn.await.unwrap();
+    assert_eq!(started["isError"], false, "{started}");
+    let child: Uuid = tool_text(&started)["started"]["id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(
+        fixture.state.store.agent_parent(child).unwrap(),
+        Some(parent)
+    );
+    let session = fixture.state.store.get_session(child).unwrap().unwrap();
+    assert!(
+        session.ephemeral,
+        "a started session is temporary unless kept"
+    );
+    let notice = next_event(&mut events, "notice").await;
+    assert_eq!(notice["open"]["session_id"], child.to_string());
+
+    let waited = tool_text(
+        &tool(
+            &fixture,
+            &token,
+            "agentdock_session",
+            json!({"action":"wait","id":child,"seconds":5}),
+        )
+        .await,
+    );
+    assert_eq!(waited["finished_waiting"], true, "{waited}");
+    assert_eq!(waited["last_reply"], "fixture reply");
+    assert_eq!(waited["last_turn"], "completed");
+
+    let sent = tool(
+        &fixture,
+        &token,
+        "agentdock_session",
+        json!({"action":"message","id":child,"text":"And now?"}),
+    )
+    .await;
+    assert_eq!(sent["isError"], false, "{sent}");
+    let listed = tool_text(
+        &tool(
+            &fixture,
+            &token,
+            "agentdock_session",
+            json!({"action":"list"}),
+        )
+        .await,
+    );
+    assert_eq!(listed[0]["id"], child.to_string());
+
+    // After the first, no more questions.
+    let again = tool(
+        &fixture,
+        &token,
+        "agentdock_spawn",
+        json!({"provider":"codex","prompt":"A third look"}),
+    )
+    .await;
+    assert_eq!(again["isError"], false, "{again}");
+
+    // A started session cannot start more, nor read what it did not start.
+    let child_session = fixture.state.store.get_session(child).unwrap().unwrap();
+    let child_token = providers::build(&fixture.state, &child_session, fixture.path.join("repo"))
+        .unwrap()
+        .env["AGENTDOCK_AGENT_TOKEN"]
+        .clone();
+    let refused = tool(
+        &fixture,
+        &child_token,
+        "agentdock_spawn",
+        json!({"provider":"codex","prompt":"Grandchild"}),
+    )
+    .await;
+    assert_eq!(refused["isError"], true);
+    let prying = tool(
+        &fixture,
+        &child_token,
+        "agentdock_session",
+        json!({"action":"result","id":parent}),
+    )
+    .await;
+    assert_eq!(prying["isError"], true);
+    assert!(
+        prying["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("not a session you started")
+    );
+
+    // Pointing at a file reaches the window; the usage of a native sign-in is unknown.
+    let shown = tool(
+        &fixture,
+        &token,
+        "agentdock_show",
+        json!({"file":"README.md","line":3}),
+    )
+    .await;
+    assert_eq!(shown["isError"], false, "{shown}");
+    let show = next_event(&mut events, "show").await;
+    assert_eq!(show["target"]["kind"], "file");
+    assert_eq!(show["target"]["line"], 3);
+    let usage = tool_text(&tool(&fixture, &token, "agentdock_usage", json!({})).await);
+    assert_eq!(usage["known"], false);
+
+    let renamed = tool(
+        &fixture,
+        &token,
+        "agentdock_session",
+        json!({"action":"rename","title":"Lead"}),
+    )
+    .await;
+    assert_eq!(renamed["isError"], false);
+    assert_eq!(
+        fixture
+            .state
+            .store
+            .get_session(parent)
+            .unwrap()
+            .unwrap()
+            .title,
+        "Lead"
+    );
+    fixture.state.chats.shutdown().await;
+}

@@ -18,10 +18,12 @@ import { useI18n } from "../i18n";
 interface Who { kind: "session" | "external"; session_id?: string; title?: string | null; provider?: ProviderKind | null }
 interface Row { label: string; value: string }
 interface AgentRequest { id: string; who: Who; title: string; values: Record<string, string>; rows: Row[]; notes: string[]; key: { label: string; optional: boolean } | null }
-interface Notice { id: string; who: Who; message: string; values: Record<string, string>; undoable: boolean; undone?: boolean }
+interface Notice { id: string; who: Who; message: string; values: Record<string, string>; undoable: boolean; undone?: boolean; open?: { session_id: string } | null }
+/** Where an agent pointed the person: a file and line, a diff, a session. */
+export type ShowTarget = { kind: "file"; workspace_id: string; path: string; line?: number | null; checkout?: string | null } | { kind: "changes"; workspace_id: string } | { kind: "session"; session_id: string };
 
 const props = defineProps<{ enabled: boolean }>();
-const emit = defineEmits<{ changed: [] }>();
+const emit = defineEmits<{ changed: []; show: [target: ShowTarget] }>();
 const { t } = useI18n();
 const requests = ref<AgentRequest[]>([]), notices = ref<Notice[]>([]);
 const keys = reactive<Record<string, string>>({}), errors = reactive<Record<string, string>>({});
@@ -49,6 +51,7 @@ function received(event: MessageEvent) {
     timers.set(notice.id, setTimeout(() => dismiss(notice.id), NOTICE_MS));
     emit("changed");
   }
+  else if (message.type === "show") emit("show", (message as unknown as { target: ShowTarget }).target);
 }
 function connect() {
   if (stopped || !props.enabled || socket) return;
@@ -110,6 +113,7 @@ async function undo(notice: Notice) {
     <div v-for="notice in notices" :key="notice.id" class="agent-notice" role="status">
       <Icon :name="notice.undone ? 'refresh' : 'check'" :size="14" />
       <span><b>{{ who(notice.who) }}</b> · {{ notice.undone ? t('Undone') : t(notice.message, notice.values) }}</span>
+      <button v-if="notice.open" type="button" class="text-button" @click="emit('show', { kind: 'session', session_id: notice.open.session_id }); dismiss(notice.id)">{{ t('Open') }}</button>
       <button v-if="notice.undoable && !notice.undone" type="button" class="text-button" @click="undo(notice)">{{ t('Undo') }}</button>
       <button type="button" class="icon-button" :aria-label="t('Dismiss')" @click="dismiss(notice.id)"><Icon name="close" :size="13" /></button>
     </div>

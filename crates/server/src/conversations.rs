@@ -57,6 +57,20 @@ impl ChatRuntime {
             && !self.busy.load(Ordering::Acquire)
             && self.approvals.lock().expect("approvals").is_empty()
     }
+    /// What the client is doing, for an agent following a session it started.
+    pub(crate) fn activity(&self) -> &'static str {
+        if !self.running() {
+            "stopped"
+        } else if !self.approvals.lock().expect("approvals").is_empty() {
+            "waiting_for_approval"
+        } else if !self.ready.load(Ordering::Acquire) {
+            "starting"
+        } else if self.busy.load(Ordering::Acquire) {
+            "working"
+        } else {
+            "idle"
+        }
+    }
     async fn ready(&self) -> Result<()> {
         tokio::time::timeout(Duration::from_secs(15),async {
             loop {let changed=self.changed.notified();if !self.running(){return Err(ApiError::conflict("Native chat could not initialize; check the client installation and configuration"));}
@@ -148,6 +162,28 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/sessions/{id}/configuration", patch(configuration))
         .route("/api/sessions/{id}/chat/ws", get(socket))
+}
+
+/// For the agent tools (agent_sessions.rs): start a session's conversation.
+pub(crate) async fn open(state: &AppState, id: SessionId) -> Result<()> {
+    open_conversation(State(state.clone()), Path(id))
+        .await
+        .map(|_| ())
+}
+/// For the agent tools: send a message, exactly as the composer does.
+pub(crate) async fn say(state: &AppState, id: SessionId, content: String) -> Result<()> {
+    let input = MessageInput {
+        id: uuid::Uuid::new_v4().to_string(),
+        content,
+        configuration_revision: None,
+    };
+    message(State(state.clone()), Path(id), Json(input))
+        .await
+        .map(|_| ())
+}
+/// For the agent tools: the stored conversation.
+pub(crate) async fn stored(state: &AppState, id: SessionId) -> Result<Value> {
+    snapshot(state, id).await
 }
 
 async fn snapshot(state: &AppState, id: SessionId) -> Result<Value> {

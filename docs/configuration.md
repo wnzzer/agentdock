@@ -14,6 +14,7 @@ Commands, state directory, credentials, host-configuration reuse, per-session en
 | `agentdock stop`    | Stop the background server                                     |
 | `agentdock serve`   | Run in the foreground (for systemd or another supervisor)      |
 | `agentdock init`    | Create the state directory without starting anything           |
+| `agentdock mcp`     | AgentDock's [agent tools](agent-tools.md) as a stdio MCP server |
 
 If a start fails, the command prints the reason from the log and exits with a non-zero code. On Windows, `agentdock stop` ends the gateway and its agents at once, since Windows has no gentler signal to send a background console program.
 

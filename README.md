@@ -109,7 +109,7 @@ The Rust server handles the protocol, auth, persistence and process supervision,
 
 ## Documentation
 
-[Configuration](docs/configuration.md) · [Endpoint profiles](docs/endpoint-profiles.md) · [Official accounts](docs/official-accounts.md) · [Sessions and canvas](docs/sessions-and-canvas.md) · [Structured agent UI](docs/structured-agent-ui.md) · [Security](docs/security.md) · [Permission boundary](docs/permission-boundary.md) · [API](docs/api.md) · [Architecture](docs/architecture.md) · [Upgrading](docs/settings-update.md) · [Development](docs/development.md)
+[Configuration](docs/configuration.md) · [Endpoint profiles](docs/endpoint-profiles.md) · [Official accounts](docs/official-accounts.md) · [Sessions and canvas](docs/sessions-and-canvas.md) · [Structured agent UI](docs/structured-agent-ui.md) · [Agent tools](docs/agent-tools.md) · [Security](docs/security.md) · [Permission boundary](docs/permission-boundary.md) · [API](docs/api.md) · [Architecture](docs/architecture.md) · [Upgrading](docs/settings-update.md) · [Development](docs/development.md)
 
 ## Development
 
