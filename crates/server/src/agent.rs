@@ -191,15 +191,17 @@ AgentDock is the workspace this agent may be running in: a local web app that ru
 
 - Start with agentdock_status to learn which session, workspace and endpoint you are.
 - agentdock_list shows workspaces, sessions (titles and status only, never conversations), endpoint profiles and installed clients.
-- Never ask the person to paste an API key into the conversation. AgentDock collects keys in its own window.
-- Changes that matter are confirmed by the person in the AgentDock window; a call may wait for that answer.";
+- agentdock_endpoint creates, changes, tests or imports endpoint profiles. To set up an API endpoint, call create with the provider, URL and model: the person confirms in the AgentDock window and types the key there. Then call test to check it works.
+- Never ask the person to paste an API key into the conversation, and never put one in a tool argument. AgentDock collects keys in its own window.
+- agentdock_preferences sets what new sessions start with; agentdock_workspace adds a directory as a workspace.
+- Changes that matter are confirmed by the person in the AgentDock window, and a call waits up to 5 minutes for that answer. If they decline, do not retry the same change unasked.";
 
-fn tool(name: &str, description: &str, schema: Value) -> Value {
+pub(crate) fn tool(name: &str, description: &str, schema: Value) -> Value {
     json!({ "name": name, "description": description, "inputSchema": schema })
 }
 
 pub fn tools() -> Vec<Value> {
-    vec![
+    let mut tools = vec![
         tool(
             "agentdock_status",
             "Who you are in AgentDock: the calling session, its workspace and directory, its endpoint profile and model, and the AgentDock version.",
@@ -219,7 +221,9 @@ pub fn tools() -> Vec<Value> {
                 "additionalProperties": false
             }),
         ),
-    ]
+    ];
+    tools.extend(crate::agent_config::tools());
+    tools
 }
 
 async fn list_tools() -> Json<Value> {
@@ -263,11 +267,16 @@ async fn call_tool(
     result(match input.name.as_str() {
         "agentdock_status" => status(&state, caller).await,
         "agentdock_list" => list(&state, caller, &arguments).await,
+        "agentdock_endpoint" => crate::agent_config::endpoint(&state, caller, &arguments).await,
+        "agentdock_preferences" => {
+            crate::agent_config::preferences(&state, caller, &arguments).await
+        }
+        "agentdock_workspace" => crate::agent_config::workspace(&state, caller, &arguments).await,
         other => Err(ApiError::bad(format!("Unknown AgentDock tool {other:?}"))),
     })
 }
 
-fn text<'a>(arguments: &'a Value, key: &str) -> Option<&'a str> {
+pub(crate) fn text<'a>(arguments: &'a Value, key: &str) -> Option<&'a str> {
     arguments
         .get(key)
         .and_then(Value::as_str)
@@ -292,7 +301,7 @@ fn key_state(state_dir: &std::path::Path, reference: Option<&str>) -> &'static s
     }
 }
 
-fn endpoint_view(
+pub(crate) fn endpoint_view(
     state_dir: &std::path::Path,
     profile: &agentdock_domain::EndpointProfile,
 ) -> Value {

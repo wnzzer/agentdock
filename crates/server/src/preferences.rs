@@ -39,6 +39,20 @@ impl Preferences {
     pub fn agent_tools(&self) -> bool {
         self.agent_tools != Some(false)
     }
+}
+
+/// A client's defaults, empty for one that has none.
+pub fn for_provider_owned(
+    preferences: &Preferences,
+    provider: &ProviderKind,
+) -> ProviderPreference {
+    preferences
+        .for_provider(provider)
+        .cloned()
+        .unwrap_or_default()
+}
+
+impl Preferences {
     pub fn for_provider(&self, provider: &ProviderKind) -> Option<&ProviderPreference> {
         match provider {
             ProviderKind::ClaudeCode => Some(&self.claude_code),
@@ -86,6 +100,13 @@ async fn write(
     State(state): State<AppState>,
     Json(input): Json<Preferences>,
 ) -> Result<Json<Preferences>> {
+    save(&state, &input).await?;
+    Ok(Json(input))
+}
+
+/// Check and store a whole preferences document; the agent tools save
+/// through here too, so both follow the same rules.
+pub async fn save(state: &AppState, input: &Preferences) -> Result<()> {
     for (provider, preference) in [
         (ProviderKind::ClaudeCode, &input.claude_code),
         (ProviderKind::Codex, &input.codex),
@@ -97,7 +118,7 @@ async fn write(
             return Err(ApiError::bad("Unsupported permission mode."));
         }
         if let Some(id) = preference.endpoint_profile_id {
-            let profile = db(&state, move |s| s.get_endpoint_profile(id))
+            let profile = db(state, move |s| s.get_endpoint_profile(id))
                 .await?
                 .ok_or_else(|| ApiError::missing("Profile"))?;
             if profile.provider != provider {
@@ -105,9 +126,9 @@ async fn write(
             }
         }
     }
-    let value = serde_json::to_value(&input).map_err(ApiError::internal)?;
-    db(&state, move |s| s.set_preferences(&value)).await?;
-    Ok(Json(input))
+    let value = serde_json::to_value(input).map_err(ApiError::internal)?;
+    db(state, move |s| s.set_preferences(&value)).await?;
+    Ok(())
 }
 
 /// The permission mode a session's client should switch to when it starts.

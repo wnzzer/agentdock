@@ -23,6 +23,7 @@ import AuthDialog from "./features/AuthDialog.vue";
 import Icon from "./features/Icon.vue";
 import TabIcon from "./features/TabIcon.vue";
 import BottomSheet from "./features/BottomSheet.vue";
+import AgentActivity from "./features/AgentActivity.vue";
 import { useMobile } from "./features/mobile";
 import { useI18n } from "./i18n";
 import { ApiConnectionError, ApiError, errorMessage, json, providerLabel, request, workspacePath } from "./features/api";
@@ -116,6 +117,8 @@ function paneDetail(pane: PaneNode) {
 const focusedSession = computed(() => focusedPane.value ? paneSession(focusedPane.value, sessions.value) : undefined);
 function switchPane(pane: PaneNode) { switcherOpen.value = false; void canvas.value?.focusPane(pane.id); }
 async function closeOpenPane(pane: PaneNode) { await canvas.value?.closePane(pane.id); }
+/** An agent changed something: show it without waiting for the next poll. */
+function agentChanged() { void refreshProfiles(); void refreshResources(); void loadPreferences(true); }
 function sheetAction(action: () => void) { switcherOpen.value = false; action(); }
 /**
  * Files and Git open like a pushed page: the top bar trades its menu for a
@@ -758,6 +761,7 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
   <WorkspaceDialog v-if="showWorkspace" :initial-path="workspaceInitialPath" @close="showWorkspace=false;workspaceInitialPath=undefined" @created="workspaceCreated"/>
   <HostFilePreview v-if="hostPreview" :key="hostPreview.path" :path="hostPreview.path" :line="hostPreview.line" @close="hostPreview=undefined" @add-workspace="folder=>{hostPreview=undefined;workspaceInitialPath=folder;showWorkspace=true}"/>
   <ImageLightbox />
+  <AgentActivity :enabled="!showAuth && apiOnline" @changed="agentChanged" />
   <BottomSheet v-if="switcherOpen" :title="t('Open views')" @close="switcherOpen=false">
     <div class="switcher-list">
       <div v-for="pane in openPanes" :key="pane.id" :class="['switcher-item', { current: pane.id === focusedPane?.id }]">

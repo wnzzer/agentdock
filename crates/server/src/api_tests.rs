@@ -77,6 +77,7 @@ impl Fixture {
             claude_manual_mode: true,
             operations: Arc::new(tokio::sync::Mutex::new(())),
             agents: agent::AgentRegistry::default(),
+            activity: activity::Activity::default(),
         };
         Self { state, path }
     }
@@ -802,6 +803,260 @@ async fn agent_tools_know_their_caller_and_a_session_token_opens_nothing_else() 
     )
     .await;
     assert_eq!(code, StatusCode::UNAUTHORIZED);
+}
+
+/// The next event of one type from the activity stream, as a browser gets it.
+async fn next_event(events: &mut tokio::sync::broadcast::Receiver<Value>, kind: &str) -> Value {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let event = events.recv().await.unwrap();
+            if event["type"] == kind {
+                return event;
+            }
+        }
+    })
+    .await
+    .expect("activity event")
+}
+
+#[tokio::test]
+async fn an_agent_endpoint_waits_for_the_person_and_its_key_never_passes_through_the_agent() {
+    let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
+    let create = json!({"name":"agentdock_endpoint","arguments":{"action":"create","name":"Team relay","provider":"codex","endpoint_url":"https://relay.example.test/v1","model":"gpt-test"}});
+
+    // No window open: nobody can answer, so the agent is told at once.
+    let (_, result) = agent_request(
+        f.app(),
+        "POST",
+        "/api/agent/call",
+        None,
+        Some("agent"),
+        create.clone(),
+    )
+    .await;
+    assert_eq!(result["isError"], true);
+    assert!(
+        result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("No AgentDock window")
+    );
+
+    let mut events = f.state.activity.subscribe();
+    let app = f.app();
+    let pending = tokio::spawn({
+        let create = create.clone();
+        async move { agent_request(app, "POST", "/api/agent/call", None, Some("agent"), create).await }
+    });
+    let request = next_event(&mut events, "request").await;
+    assert_eq!(request["title"], "Create endpoint profile “{name}”");
+    assert_eq!(request["values"]["name"], "Team relay");
+    assert_eq!(request["key"]["optional"], false);
+    assert!(
+        request["rows"].as_array().unwrap().iter().any(
+            |row| row["label"] == "Endpoint" && row["value"] == "https://relay.example.test/v1"
+        )
+    );
+    let id = request["id"].as_str().unwrap().to_owned();
+    // A key it asked for is required to approve.
+    let (status, _) = call(
+        f.app(),
+        "POST",
+        &format!("/api/agent-activity/requests/{id}"),
+        json!({"approve":true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = call(
+        f.app(),
+        "POST",
+        &format!("/api/agent-activity/requests/{id}"),
+        json!({"approve":true,"secret":"sk-typed-in-agentdock"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, result) = pending.await.unwrap();
+    assert_eq!(result["isError"], false, "{result}");
+    assert!(!result.to_string().contains("sk-typed-in-agentdock"));
+    let created = &tool_text(&result)["created"];
+    assert_eq!(created["key"], "saved");
+    assert_eq!(created["model"], "gpt-test");
+    assert_eq!(
+        crate::secrets::resolve(&f.state.state_dir, "AGENTDOCK_SECRET_TEAM_RELAY").as_deref(),
+        Some("sk-typed-in-agentdock")
+    );
+    let notice = next_event(&mut events, "notice").await;
+    assert_eq!(notice["message"], "Created endpoint profile “{name}”");
+    assert_eq!(notice["undoable"], true);
+    assert_eq!(notice["who"]["kind"], "external");
+
+    // Undo takes the profile and its key away again.
+    let (status, _) = call(
+        f.app(),
+        "POST",
+        &format!(
+            "/api/agent-activity/notices/{}/undo",
+            notice["id"].as_str().unwrap()
+        ),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, profiles) = call(f.app(), "GET", "/api/endpoint-profiles", Value::Null).await;
+    assert_eq!(profiles, json!([]));
+    assert!(crate::secrets::resolve(&f.state.state_dir, "AGENTDOCK_SECRET_TEAM_RELAY").is_none());
+
+    // Declining changes nothing, and says so.
+    let app = f.app();
+    let call_again = tokio::spawn({
+        let create = create.clone();
+        async move { agent_request(app, "POST", "/api/agent/call", None, Some("agent"), create).await }
+    });
+    let request = next_event(&mut events, "request").await;
+    call(
+        f.app(),
+        "POST",
+        &format!(
+            "/api/agent-activity/requests/{}",
+            request["id"].as_str().unwrap()
+        ),
+        json!({"approve":false}),
+    )
+    .await;
+    let (_, result) = call_again.await.unwrap();
+    assert_eq!(result["isError"], true);
+    assert!(
+        result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("declined")
+    );
+    let (_, profiles) = call(f.app(), "GET", "/api/endpoint-profiles", Value::Null).await;
+    assert_eq!(profiles, json!([]));
+}
+
+#[tokio::test]
+async fn defaults_change_at_once_with_an_undo_and_only_running_unasked_is_confirmed() {
+    let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
+    let mut events = f.state.activity.subscribe();
+    let (_, result) = agent_request(f.app(), "POST", "/api/agent/call", None, Some("agent"), json!({"name":"agentdock_preferences","arguments":{"action":"set","provider":"claude_code","effort":"high"}})).await;
+    assert_eq!(result["isError"], false, "{result}");
+    assert_eq!(tool_text(&result)["saved"]["claude_code"]["effort"], "high");
+    let notice = next_event(&mut events, "notice").await;
+    call(
+        f.app(),
+        "POST",
+        &format!(
+            "/api/agent-activity/notices/{}/undo",
+            notice["id"].as_str().unwrap()
+        ),
+        Value::Null,
+    )
+    .await;
+    let (_, preferences) = call(f.app(), "GET", "/api/preferences", Value::Null).await;
+    assert_eq!(preferences["claude_code"].get("effort"), None);
+
+    let app = f.app();
+    let danger = tokio::spawn(async move {
+        agent_request(app, "POST", "/api/agent/call", None, Some("agent"), json!({"name":"agentdock_preferences","arguments":{"action":"set","provider":"codex","permission":"danger"}})).await
+    });
+    let request = next_event(&mut events, "request").await;
+    assert_eq!(request["values"]["client"], "Codex");
+    call(
+        f.app(),
+        "POST",
+        &format!(
+            "/api/agent-activity/requests/{}",
+            request["id"].as_str().unwrap()
+        ),
+        json!({"approve":true}),
+    )
+    .await;
+    assert_eq!(danger.await.unwrap().1["isError"], false);
+
+    let (_, added) = agent_request(f.app(), "POST", "/api/agent/call", None, Some("agent"), json!({"name":"agentdock_workspace","arguments":{"action":"add","path":f.path.join("repo")}})).await;
+    assert_eq!(tool_text(&added)["added"]["name"], "repo");
+}
+
+#[tokio::test]
+async fn a_session_token_can_neither_see_nor_answer_the_persons_questions() {
+    const DEPLOYMENT: &str = "deployment-token-for-activity-tests-012345";
+    let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), Some(DEPLOYMENT));
+    let workspace = f
+        .state
+        .store
+        .create_workspace("q", f.path.join("repo").to_str().unwrap())
+        .unwrap();
+    let session = f
+        .state
+        .store
+        .create_session(workspace.id, ProviderKind::Terminal, "asker")
+        .unwrap();
+    let token = providers::build(&f.state, &session, f.path.join("repo"))
+        .unwrap()
+        .env["AGENTDOCK_AGENT_TOKEN"]
+        .clone();
+    f.state
+        .runtime
+        .start(
+            session.id.to_string(),
+            agentdock_runtime::SpawnSpec {
+                program: waiting_process(&["-i"]).0,
+                args: waiting_process(&["-i"]).1,
+                cwd: f.path.join("repo"),
+                env: BTreeMap::new(),
+                env_remove: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let mut events = f.state.activity.subscribe();
+    let app = f.app();
+    let asking = tokio::spawn({
+        let token = token.clone();
+        async move {
+            agent_request(app, "POST", "/api/agent/call", Some(&token), Some("agent"), json!({"name":"agentdock_endpoint","arguments":{"action":"create","name":"x","provider":"codex","key":"none"}})).await
+        }
+    });
+    let request = next_event(&mut events, "request").await;
+    assert_eq!(request["who"]["kind"], "session");
+    assert_eq!(request["who"]["title"], "asker");
+    let id = request["id"].as_str().unwrap();
+    for client in ["agent", "web"] {
+        let (status, _) = agent_request(
+            f.app(),
+            "POST",
+            &format!("/api/agent-activity/requests/{id}"),
+            Some(&token),
+            Some(client),
+            json!({"approve":true}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{client}");
+    }
+    let (status, _) = agent_request(
+        f.app(),
+        "GET",
+        "/api/agent-activity/ws",
+        Some(&token),
+        None,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // The person can.
+    let (status, _) = agent_request(
+        f.app(),
+        "POST",
+        &format!("/api/agent-activity/requests/{id}"),
+        Some(DEPLOYMENT),
+        Some("web"),
+        json!({"approve":true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(asking.await.unwrap().1["isError"], false);
+    f.state.runtime.stop(&session.id.to_string()).await.unwrap();
 }
 
 #[tokio::test]

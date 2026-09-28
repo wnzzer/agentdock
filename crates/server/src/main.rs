@@ -1,5 +1,7 @@
 mod accounts;
+mod activity;
 mod agent;
+mod agent_config;
 #[cfg(test)]
 mod api_tests;
 mod bridge;
@@ -71,6 +73,7 @@ struct AppState {
     claude_manual_mode: bool,
     operations: Arc<tokio::sync::Mutex<()>>,
     agents: agent::AgentRegistry,
+    activity: activity::Activity,
 }
 
 #[derive(Debug)]
@@ -554,6 +557,7 @@ async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         claude_manual_mode,
         operations: Arc::new(tokio::sync::Mutex::new(())),
         agents: agent::AgentRegistry::default(),
+        activity: activity::Activity::default(),
     };
     let app = router(state.clone());
     // Reconcile only after startup has passed all configuration, binding and
@@ -600,6 +604,7 @@ fn router(state: AppState) -> Router {
         .merge(preferences::routes())
         .merge(secrets::routes())
         .merge(agent::routes())
+        .merge(activity::routes())
         .merge(conversations::routes())
         .merge(file_watch::routes())
         .route("/api/health", get(health))
