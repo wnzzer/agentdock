@@ -3168,7 +3168,8 @@ async fn shared_canvas_uses_existing_authentication_and_health_capabilities() {
             "session_model",
             "workspace_file_search",
             "session_terminal_escape",
-            "stored_secrets"
+            "stored_secrets",
+            "agent_tools"
         ])
     );
     let allowed = Request::builder()
@@ -3769,4 +3770,105 @@ async fn an_agent_lists_and_closes_canvas_tabs_and_asks_before_discarding_a_work
     assert!(f.state.store.get_session(temporary.id).unwrap().is_none());
     let (_, current) = call(f.app(), "GET", "/api/canvas/layout", Value::Null).await;
     assert_eq!(current["layout"]["root"]["panes"], json!([]));
+}
+
+#[tokio::test]
+async fn a_session_can_have_the_agent_tools_on_or_off_whatever_the_preference() {
+    const DEPLOYMENT: &str = "deployment-token-for-session-switch-012345";
+    let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), Some(DEPLOYMENT));
+    let workspace = f
+        .state
+        .store
+        .create_workspace("switch", f.path.join("repo").to_str().unwrap())
+        .unwrap();
+    let claude = f
+        .state
+        .store
+        .create_session(workspace.id, ProviderKind::ClaudeCode, "claude")
+        .unwrap();
+    let cwd = f.path.join("repo");
+    let equipped = |spec: &agentdock_runtime::SpawnSpec| {
+        spec.args.iter().any(|arg| arg.starts_with("--mcp-config="))
+    };
+    let web = |method: &'static str, path: String, body: Value| {
+        agent_request(
+            f.app(),
+            method,
+            path.leak(),
+            Some(DEPLOYMENT),
+            Some("web"),
+            body,
+        )
+    };
+    let path = format!("/api/sessions/{}/agent-tools", claude.id);
+
+    let (status, view) = web("GET", path.clone(), Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(view, json!({"choice":null,"default":true,"enabled":true}));
+
+    // Off for this session, though the preference is on.
+    let (_, view) = web("PUT", path.clone(), json!({"choice":false})).await;
+    assert_eq!(view["enabled"], false);
+    let spec = providers::build(&f.state, &claude, cwd.clone()).unwrap();
+    assert!(!equipped(&spec) && !spec.env.contains_key("AGENTDOCK_AGENT_TOKEN"));
+
+    // On for this session, though the preference is off.
+    web(
+        "PUT",
+        "/api/preferences".into(),
+        json!({"claude_code":{},"codex":{},"agent_tools":false}),
+    )
+    .await;
+    let (_, view) = web("PUT", path.clone(), json!({"choice":true})).await;
+    assert_eq!(view, json!({"choice":true,"default":false,"enabled":true}));
+    assert!(equipped(
+        &providers::build(&f.state, &claude, cwd.clone()).unwrap()
+    ));
+
+    // Back to following the preference.
+    let (_, view) = web("PUT", path.clone(), json!({"choice":null})).await;
+    assert_eq!(view["enabled"], false);
+    assert!(!equipped(
+        &providers::build(&f.state, &claude, cwd.clone()).unwrap()
+    ));
+
+    let (status, _) = web(
+        "PUT",
+        format!("/api/sessions/{}/agent-tools", Uuid::new_v4()),
+        json!({"choice":true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // A session cannot switch its own tools: its token opens /api/agent/ only.
+    web("PUT", path.clone(), json!({"choice":true})).await;
+    let token = providers::build(&f.state, &claude, cwd.clone())
+        .unwrap()
+        .env["AGENTDOCK_AGENT_TOKEN"]
+        .clone();
+    f.state
+        .runtime
+        .start(
+            claude.id.to_string(),
+            agentdock_runtime::SpawnSpec {
+                program: waiting_process(&["-i"]).0,
+                args: waiting_process(&["-i"]).1,
+                cwd: cwd.clone(),
+                env: BTreeMap::new(),
+                env_remove: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let (status, _) = agent_request(
+        f.app(),
+        "PUT",
+        &path,
+        Some(&token),
+        Some("web"),
+        json!({"choice":false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    f.state.runtime.stop(&claude.id.to_string()).await.unwrap();
 }

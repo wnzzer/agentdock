@@ -31,7 +31,7 @@ impl Store {
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 15 {
+        if version > 16 {
             return Err(rusqlite::Error::InvalidQuery);
         }
         let tx = connection.transaction()?;
@@ -114,6 +114,11 @@ impl Store {
         if version < 15 {
             tx.execute_batch(include_str!("../../../migrations/0015_agent_children.sql"))?;
         }
+        if version < 16 {
+            tx.execute_batch(include_str!(
+                "../../../migrations/0016_session_agent_tools.sql"
+            ))?;
+        }
         // Capture the endpoint settings for legacy M0 sessions once, before templates change.
         let legacy = {
             let mut stmt = tx.prepare("SELECT s.id,p.id FROM sessions s JOIN endpoint_profiles p ON p.id=s.endpoint_profile_id WHERE s.endpoint_snapshot IS NULL")?;
@@ -132,7 +137,7 @@ impl Store {
                 params![snapshot, id],
             )?;
         }
-        tx.pragma_update(None, "user_version", 15)?;
+        tx.pragma_update(None, "user_version", 16)?;
         tx.commit()?;
         Ok(Self {
             connection: Mutex::new(connection),
@@ -490,6 +495,45 @@ impl Store {
             .query_map([parent.to_string()], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>>>()?;
         Ok(ids.into_iter().filter_map(|id| id.parse().ok()).collect())
+    }
+
+    /// A session's own choice about AgentDock's agent tools; `None` follows
+    /// the preference.
+    pub fn session_agent_tools(&self, id: SessionId) -> Result<Option<bool>> {
+        self.connection
+            .lock()
+            .expect("sqlite lock")
+            .query_row(
+                "SELECT enabled FROM session_agent_tools WHERE session_id=?1",
+                [id.to_string()],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map(|value| value.map(|enabled| enabled != 0))
+    }
+    /// Set a session's own choice, or `None` to follow the preference again.
+    /// False when there is no such session.
+    pub fn set_session_agent_tools(&self, id: SessionId, enabled: Option<bool>) -> Result<bool> {
+        let connection = self.connection.lock().expect("sqlite lock");
+        let exists = connection
+            .query_row(
+                "SELECT 1 FROM sessions WHERE id=?1",
+                [id.to_string()],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !exists {
+            return Ok(false);
+        }
+        match enabled {
+            None => connection.execute("DELETE FROM session_agent_tools WHERE session_id=?1", [id.to_string()])?,
+            Some(on) => connection.execute(
+                "INSERT INTO session_agent_tools (session_id,enabled) VALUES (?1,?2) ON CONFLICT(session_id) DO UPDATE SET enabled=excluded.enabled",
+                params![id.to_string(), on as i64],
+            )?,
+        };
+        Ok(true)
     }
 
     pub fn preferences(&self) -> Result<serde_json::Value> {
@@ -1817,7 +1861,7 @@ mod tests {
                     .unwrap()
                     .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                     .unwrap(),
-                15
+                16
             );
             let current = store.get_endpoint_profile(profile.id).unwrap().unwrap();
             assert!(current.native_config.is_none());
@@ -2207,7 +2251,7 @@ mod tests {
                     .unwrap()
                     .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                     .unwrap(),
-                15
+                16
             );
             assert!(matches!(
                 store.get_session(session_id).unwrap().unwrap().status,

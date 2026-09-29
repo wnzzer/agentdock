@@ -127,7 +127,7 @@ pub fn equip(
     session: &Session,
     spec: &mut agentdock_runtime::SpawnSpec,
 ) -> Result<(), ApiError> {
-    if !crate::preferences::load_blocking(state).agent_tools() {
+    if !tools_enabled(state, session.id) {
         return Ok(());
     }
     let identity = launch_environment(state, session.id);
@@ -188,10 +188,63 @@ pub fn equip(
     Ok(())
 }
 
+/// Whether a session's launches carry the tools: its own choice, else the
+/// preference for every session.
+fn tools_enabled(state: &AppState, session: SessionId) -> bool {
+    state
+        .store
+        .session_agent_tools(session)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| crate::preferences::load_blocking(state).agent_tools())
+}
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/agent/tools", get(list_tools))
         .route("/api/agent/call", post(call_tool))
+        // Deliberately outside /api/agent/: a session's own token cannot
+        // switch its tools on or off.
+        .route(
+            "/api/sessions/{id}/agent-tools",
+            get(session_tools).put(set_session_tools),
+        )
+}
+
+async fn session_tools_view(state: &AppState, id: SessionId) -> Result<Json<Value>, ApiError> {
+    let choice = db(state, move |s| s.session_agent_tools(id)).await?;
+    let default = crate::preferences::load(state).await?.agent_tools();
+    Ok(Json(
+        json!({ "choice": choice, "default": default, "enabled": choice.unwrap_or(default) }),
+    ))
+}
+
+async fn session_tools(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<SessionId>,
+) -> Result<Json<Value>, ApiError> {
+    db(&state, move |s| s.get_session(id))
+        .await?
+        .ok_or_else(|| ApiError::missing("Session"))?;
+    session_tools_view(&state, id).await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionToolsInput {
+    /// `true` or `false` for this session, `null` to follow the preference.
+    choice: Option<bool>,
+}
+
+async fn set_session_tools(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<SessionId>,
+    Json(input): Json<SessionToolsInput>,
+) -> Result<Json<Value>, ApiError> {
+    if !db(&state, move |s| s.set_session_agent_tools(id, input.choice)).await? {
+        return Err(ApiError::missing("Session"));
+    }
+    session_tools_view(&state, id).await
 }
 
 /// What the MCP server hands the model at connection time.

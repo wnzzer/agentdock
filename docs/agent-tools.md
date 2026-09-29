@@ -17,7 +17,7 @@ Such a caller is *external*: it has no session of its own, so the session tools 
 
 Each launch also gets `AGENTDOCK_URL`, `AGENTDOCK_SESSION_ID` and its own `AGENTDOCK_AGENT_TOKEN`. The token is good only while that session's process runs, and only for `/api/agent/`.
 
-Turn it off under **Settings → Preferences → AgentDock tools for agents**. It applies from each session's next start.
+Turn it off for every session under **Settings → Preferences → AgentDock tools for agents**, or for one session from its **⋯** menu (**AgentDock tools: Default / On / Off**; one session's choice wins over the preference). Either applies from the session's next start, when the tools are injected. A session cannot change its own setting: the switch is not reachable with its agent token.
 
 ## Tools
 

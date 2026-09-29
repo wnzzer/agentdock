@@ -1224,6 +1224,12 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Closed {count} tabs": "关闭了 {count} 个页签",
   "Temporary session": "临时会话",
   "Temporary sessions still working are stopped and discarded with their tab.": "仍在运行的临时会话会随页签一起停止并丢弃。",
+  "AgentDock tools": "AgentDock 工具",
+  "Default · on": "默认 · 开",
+  "Default · off": "默认 · 关",
+  "On": "开",
+  "Off": "关",
+  "Takes effect when this session next starts.": "会话下次启动时生效。",
 };
 
 export function normalizeLocale(value: unknown): Locale {
