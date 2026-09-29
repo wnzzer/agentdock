@@ -218,6 +218,22 @@ export class CodexChat extends ChatBase {
         if(decision==='cancel'&&this.active){this.active.interrupted=true;void this.sendInterrupt(this.active);}
       });return;
     }
+    // Codex asks before an MCP tool runs, as an MCP elicitation: a form with no
+    // fields is a plain yes or no. AgentDock's own tools already ask the person
+    // in AgentDock for anything that matters (server activity.rs), so asking
+    // here too would ask twice; Claude sessions allow them up front the same
+    // way. Any other server's call is the person's to approve.
+    if(method==='mcpServer/elicitation/request'){
+      const schema=p.requestedSchema,fields=schema&&typeof schema==='object'&&schema.properties&&typeof schema.properties==='object'?Object.keys(schema.properties):[];
+      if(!['form','openai/form','openaiForm'].includes(p.mode)||fields.length){this.reject(message,'This MCP server asked for a form AgentDock cannot show.');return;}
+      if(p.serverName==='agentdock'){this.port.send({id:message.id,result:{action:'accept',content:{}}});return;}
+      const text=JSON.stringify({server:p.serverName,message:p.message});
+      if(Buffer.byteLength(text)>MAX_TEXT){this.reject(message,'Native approval is too large to display safely.');return;}
+      this.approval(key,{title:'Approve MCP tool call',text:clip(text),choices:['accept','decline','cancel']},decision=>{
+        this.port.send({id:message.id,result:{action:decision,content:decision==='accept'?{}:null}});
+        if(decision==='cancel'&&this.active){this.active.interrupted=true;void this.sendInterrupt(this.active);}
+      });return;
+    }
     this.reject(message);
   }
 }

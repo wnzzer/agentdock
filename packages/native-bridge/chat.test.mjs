@@ -196,6 +196,22 @@ test('oversized native question option lists fail closed before emitting an inco
     assert.equal(events.some(event=>event.type==='approval'),false);assert.equal(events.some(event=>event.type==='error'),true);assert.equal(sent.length,1);
   }
 });
+test('Codex MCP tool confirmations: AgentDock\'s own pass, others ask the person, forms fail closed',()=>{
+  const events=[],sent=[],chat=new CodexChat({},event=>events.push(event));chat.active={id:'active'};chat.nativeSessionId='fixture-thread';chat.port={send:message=>sent.push(message)};
+  const ask=(id,params)=>chat.request({id,method:'mcpServer/elicitation/request',params:{threadId:'fixture-thread',mode:'form',requestedSchema:{type:'object',properties:{}},message:'Allow tool?',...params}});
+  ask('own',{serverName:'agentdock'});
+  assert.deepEqual(sent.pop(),{id:'own',result:{action:'accept',content:{}}});
+  assert.equal(events.some(event=>event.type==='approval'),false);
+  ask('other',{serverName:'github'});
+  const approval=events.find(event=>event.type==='approval');
+  assert.equal(approval.title,'Approve MCP tool call');assert.match(approval.text,/github/);assert.equal(sent.length,0);
+  chat.answer({request_id:approval.id,decision:'decline'});
+  assert.deepEqual(sent.pop(),{id:'other',result:{action:'decline',content:null}});
+  ask('form',{serverName:'github',requestedSchema:{type:'object',properties:{name:{type:'string'}}}});
+  assert.equal(sent.pop().error.code,-32601);
+  ask('url',{serverName:'github',mode:'url',url:'https://example.test',elicitationId:'e'});
+  assert.equal(sent.pop().error.code,-32601);
+});
 test('an idle message limit rejection closes the host pending turn, but busy rejection never completes another turn',()=>{
   const events=[],chat=new ChatBase({},event=>events.push(event));chat.ready=true;chat.seen=new Map(Array.from({length:4096},(_,index)=>[String(index),'hash']));
   assert.equal(chat.begin({id:'over-limit',content:'new'}),undefined);assert.ok(events.some(event=>event.type==='turn'&&event.id==='over-limit'&&event.status==='failed'));
