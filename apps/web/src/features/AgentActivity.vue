@@ -125,7 +125,8 @@ async function undo(notice: Notice) {
 .agent-activity>*{pointer-events:auto}
 .agent-request{display:flex;flex-direction:column;gap:8px;padding:14px 15px 12px;border:1px solid var(--border);border-radius:14px;background:var(--surface);box-shadow:0 14px 40px #1b2a3629;animation:agent-in .22s ease-out}
 .agent-request>header{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--ink-soft)}
-.agent-who{font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agent-who{flex:0 1 auto;min-width:0;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agent-request>header>small,.agent-request>header>svg,.agent-request>header>span:first-child{flex:none}
 .agent-title{font-size:13.5px;font-weight:600;color:var(--ink);line-height:1.4}
 .agent-request dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0;font-size:12px}
 .agent-request dt{color:var(--ink-soft)}
