@@ -23,7 +23,7 @@ interface Notice { id: string; who: Who; message: string; values: Record<string,
 export type ShowTarget = { kind: "file"; workspace_id: string; path: string; line?: number | null; checkout?: string | null } | { kind: "changes"; workspace_id: string } | { kind: "session"; session_id: string };
 
 const props = defineProps<{ enabled: boolean }>();
-const emit = defineEmits<{ changed: []; show: [target: ShowTarget] }>();
+const emit = defineEmits<{ changed: []; show: [target: ShowTarget]; canvas: [revision: number] }>();
 const { t } = useI18n();
 const requests = ref<AgentRequest[]>([]), notices = ref<Notice[]>([]);
 const keys = reactive<Record<string, string>>({}), errors = reactive<Record<string, string>>({});
@@ -52,6 +52,7 @@ function received(event: MessageEvent) {
     emit("changed");
   }
   else if (message.type === "show") emit("show", (message as unknown as { target: ShowTarget }).target);
+  else if (message.type === "canvas") emit("canvas", Number((message as unknown as { revision: number }).revision));
 }
 function connect() {
   if (stopped || !props.enabled || socket) return;

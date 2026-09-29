@@ -206,6 +206,7 @@ AgentDock is the workspace this agent may be running in: a local web app that ru
 - agentdock_spawn starts another Claude Code or Codex session with a self-contained task, optionally on its own branch, for independent work worth doing in parallel. Follow it with agentdock_session (wait, result, message). You can only follow sessions you started, and a session you start cannot start more.
 - agentdock_show opens a file at a line, your Git changes, or a session in the person's AgentDock window: use it to point at what you changed instead of describing where it is.
 - agentdock_usage reports the quota your official account last reported.
+- agentdock_canvas lists the tabs open on the canvas and closes some or all of them. Closing a tab never ends a session, except a temporary one.
 - Changes that matter are confirmed by the person in the AgentDock window, and a call waits up to 5 minutes for that answer. If they decline, do not retry the same change unasked.";
 
 pub(crate) fn tool(name: &str, description: &str, schema: Value) -> Value {
@@ -236,6 +237,7 @@ pub fn tools() -> Vec<Value> {
     ];
     tools.extend(crate::agent_config::tools());
     tools.extend(crate::agent_sessions::tools());
+    tools.extend(crate::agent_canvas::tools());
     tools
 }
 
@@ -289,6 +291,7 @@ async fn call_tool(
         "agentdock_session" => crate::agent_sessions::session(&state, caller, &arguments).await,
         "agentdock_show" => crate::agent_sessions::show(&state, caller, &arguments).await,
         "agentdock_usage" => crate::agent_sessions::usage(&state, caller).await,
+        "agentdock_canvas" => crate::agent_canvas::canvas(&state, caller, &arguments).await,
         other => Err(ApiError::bad(format!("Unknown AgentDock tool {other:?}"))),
     })
 }

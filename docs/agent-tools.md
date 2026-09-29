@@ -32,6 +32,7 @@ Turn it off under **Settings → Preferences → AgentDock tools for agents**. I
 | `agentdock_session` | Follow sessions it started (`list`, `result`, `wait`, `message`); rename or keep its own | — |
 | `agentdock_show` | Open a file at a line, the Git changes, or a session in your window | — |
 | `agentdock_usage` | The quota its official account last reported | — |
+| `agentdock_canvas` | List the tabs on the canvas; close some or all | Only when it would discard a temporary session still working |
 
 ## What you see
 

@@ -1220,6 +1220,10 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Start a {client} session": "启动一个 {client} 会话",
   "Task": "任务",
   "It runs on its own. This session may then start more without asking, read their replies and message them.": "它会独立运行。之后这个会话可以不经询问继续启动会话，并读取它们的回复、给它们发消息。",
+  "Close {count} tabs": "关闭 {count} 个页签",
+  "Closed {count} tabs": "关闭了 {count} 个页签",
+  "Temporary session": "临时会话",
+  "Temporary sessions still working are stopped and discarded with their tab.": "仍在运行的临时会话会随页签一起停止并丢弃。",
 };
 
 export function normalizeLocale(value: unknown): Locale {

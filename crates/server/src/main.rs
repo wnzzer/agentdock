@@ -1,6 +1,7 @@
 mod accounts;
 mod activity;
 mod agent;
+mod agent_canvas;
 mod agent_config;
 mod agent_sessions;
 #[cfg(test)]

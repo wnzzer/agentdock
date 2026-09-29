@@ -119,6 +119,23 @@ function switchPane(pane: PaneNode) { switcherOpen.value = false; void canvas.va
 async function closeOpenPane(pane: PaneNode) { await canvas.value?.closePane(pane.id); }
 /** An agent changed something: show it without waiting for the next poll. */
 function agentChanged() { void refreshProfiles(); void refreshResources(); void loadPreferences(true); }
+/**
+ * An agent changed the shared canvas on the server (closing tabs). Load it,
+ * unless this window has a change of its own not yet saved: then it is the
+ * same situation as another window saving first, and the same bar asks.
+ */
+async function agentCanvas(revision: number) {
+  if (!canvasReady.value || !backendCapabilities.sharedCanvas || revision <= canvasRevision.value) return;
+  if (pendingLayout || canvasConflict.value) { canvasConflict.value = true; return; }
+  try {
+    const shared = await request<SharedCanvas>("/canvas/layout");
+    if (!shared.layout || !validateLayout(shared.layout) || shared.revision <= canvasRevision.value || pendingLayout) return;
+    canvasRevision.value = shared.revision;
+    suspendLayoutSave = true; layout.value = shared.layout;
+    if (!flattenPanes(shared.layout.root).some(pane => pane.id === selectedPaneId.value)) selectedPaneId.value = initialPane(shared.layout.root)?.id;
+    await nextTick(); suspendLayoutSave = false; cacheLayout(layout.value, false); layoutStatus.value = "Saved";
+  } catch (cause) { report(cause); }
+}
 /** An agent pointed at something (agentdock_show), or a notice's Open. */
 async function agentShow(target: ShowTarget) {
   if (target.kind === "file") void openReference(target.workspace_id, { path: target.path, line: target.line ?? undefined, checkout: target.checkout });
@@ -772,7 +789,7 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
   <WorkspaceDialog v-if="showWorkspace" :initial-path="workspaceInitialPath" @close="showWorkspace=false;workspaceInitialPath=undefined" @created="workspaceCreated"/>
   <HostFilePreview v-if="hostPreview" :key="hostPreview.path" :path="hostPreview.path" :line="hostPreview.line" @close="hostPreview=undefined" @add-workspace="folder=>{hostPreview=undefined;workspaceInitialPath=folder;showWorkspace=true}"/>
   <ImageLightbox />
-  <AgentActivity :enabled="!showAuth && apiOnline" @changed="agentChanged" @show="agentShow" />
+  <AgentActivity :enabled="!showAuth && apiOnline" @changed="agentChanged" @show="agentShow" @canvas="agentCanvas" />
   <BottomSheet v-if="switcherOpen" :title="t('Open views')" @close="switcherOpen=false">
     <div class="switcher-list">
       <div v-for="pane in openPanes" :key="pane.id" :class="['switcher-item', { current: pane.id === focusedPane?.id }]">

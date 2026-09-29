@@ -3630,3 +3630,143 @@ async fn steering_is_validated_like_a_message() {
         );
     }
 }
+
+#[tokio::test]
+async fn an_agent_lists_and_closes_canvas_tabs_and_asks_before_discarding_a_working_one() {
+    let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
+    let workspace = f
+        .state
+        .store
+        .create_workspace("tabs", f.path.join("repo").to_str().unwrap())
+        .unwrap();
+    let kept = f
+        .state
+        .store
+        .create_session(workspace.id, ProviderKind::Terminal, "kept")
+        .unwrap();
+    let temporary = f
+        .state
+        .store
+        .create_session_with_options(
+            workspace.id,
+            ProviderKind::Terminal,
+            "scratch",
+            None,
+            None,
+            None,
+            Default::default(),
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+    let pane = |id: &str, session: &Session| json!({"type":"pane","id":id,"kind":"terminal","title":session.title,"metadata":{"session_id":session.id,"workspace_id":workspace.id}});
+    let layout = json!({"version":1,"root":{"type":"split","id":"root","direction":"horizontal","ratio":0.5,
+        "first":{"type":"stack","kind":"stack","id":"left","activePaneId":"one","panes":[pane("one", &kept), pane("two", &temporary)]},
+        "second":{"type":"pane","id":"changes","kind":"git_diff","title":"Changes","metadata":{"workspace_id":workspace.id}}}});
+    let (status, saved) = call(
+        f.app(),
+        "PUT",
+        "/api/canvas/layout",
+        json!({"layout":layout,"expected_revision":0}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    f.state
+        .runtime
+        .start(
+            temporary.id.to_string(),
+            agentdock_runtime::SpawnSpec {
+                program: waiting_process(&["-i"]).0,
+                args: waiting_process(&["-i"]).1,
+                cwd: f.path.join("repo"),
+                env: BTreeMap::new(),
+                env_remove: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let canvas = |arguments: Value| {
+        agent_request(
+            f.app(),
+            "POST",
+            "/api/agent/call",
+            None,
+            Some("agent"),
+            json!({"name":"agentdock_canvas","arguments":arguments}),
+        )
+    };
+    let listed = tool_text(&canvas(json!({"action":"list"})).await.1);
+    let tabs = listed["tabs"].as_array().unwrap();
+    assert_eq!(tabs.len(), 3);
+    assert_eq!(tabs[1]["temporary"], true);
+    assert_eq!(tabs[1]["running"], true);
+
+    let mut events = f.state.activity.subscribe();
+    // A plain tab closes at once; the session behind it is untouched.
+    let closed = canvas(json!({"action":"close","pane_ids":["one"]})).await.1;
+    assert_eq!(tool_text(&closed)["closed"], 1, "{closed}");
+    assert_eq!(next_event(&mut events, "canvas").await["revision"], 2);
+    let notice = next_event(&mut events, "notice").await;
+    assert!(f.state.store.get_session(kept.id).unwrap().is_some());
+    let (_, current) = call(f.app(), "GET", "/api/canvas/layout", Value::Null).await;
+    assert_eq!(current["layout"]["root"]["first"]["activePaneId"], "two");
+    // Undo puts it back.
+    call(
+        f.app(),
+        "POST",
+        &format!(
+            "/api/agent-activity/notices/{}/undo",
+            notice["id"].as_str().unwrap()
+        ),
+        Value::Null,
+    )
+    .await;
+    let (_, current) = call(f.app(), "GET", "/api/canvas/layout", Value::Null).await;
+    assert_eq!(
+        current["layout"]["root"]["first"]["panes"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let unknown = canvas(json!({"action":"close","pane_ids":["nope"]}))
+        .await
+        .1;
+    assert_eq!(unknown["isError"], true);
+
+    // Closing everything takes a working temporary session with it: asked first.
+    let app = f.app();
+    let all = tokio::spawn(async move {
+        agent_request(
+            app,
+            "POST",
+            "/api/agent/call",
+            None,
+            Some("agent"),
+            json!({"name":"agentdock_canvas","arguments":{"action":"close","all":true}}),
+        )
+        .await
+        .1
+    });
+    let request = next_event(&mut events, "request").await;
+    assert_eq!(request["values"]["count"], 3);
+    assert_eq!(request["rows"][0]["value"], "scratch");
+    call(
+        f.app(),
+        "POST",
+        &format!(
+            "/api/agent-activity/requests/{}",
+            request["id"].as_str().unwrap()
+        ),
+        json!({"approve":true}),
+    )
+    .await;
+    let result = tool_text(&all.await.unwrap());
+    assert_eq!(result["discarded_temporary_sessions"], 1);
+    assert!(f.state.store.get_session(temporary.id).unwrap().is_none());
+    let (_, current) = call(f.app(), "GET", "/api/canvas/layout", Value::Null).await;
+    assert_eq!(current["layout"]["root"]["panes"], json!([]));
+}

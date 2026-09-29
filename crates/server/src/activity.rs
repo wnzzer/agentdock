@@ -51,6 +51,8 @@ pub enum Undo {
     RestoreProfile(Box<EndpointProfile>),
     /// Put back the preferences document as it was.
     Preferences(Value),
+    /// Put back the canvas layout as it was before tabs were closed.
+    Canvas(Box<Value>),
 }
 
 struct Pending {
@@ -236,6 +238,14 @@ impl Activity {
         Ok(())
     }
 
+    /// The shared canvas was changed on the server: windows load it.
+    pub fn canvas_changed(&self, revision: u64) {
+        let _ = self
+            .inner
+            .events
+            .send(json!({ "type": "canvas", "revision": revision }));
+    }
+
     fn take_undo(&self, id: Uuid) -> Option<Undo> {
         let mut kept = self.inner.undo.lock().expect("undo");
         let index = kept.iter().position(|(entry, _)| *entry == id)?;
@@ -353,6 +363,19 @@ async fn undo(
         }
         Undo::Preferences(value) => {
             db(&state, move |s| s.set_preferences(&value)).await?;
+        }
+        Undo::Canvas(layout) => {
+            let current = db(&state, |s| s.get_shared_canvas_layout()).await?.revision;
+            let store = state.store.clone();
+            let revision = tokio::task::spawn_blocking(move || {
+                crate::canvas::save_checked(&store, &layout, current)
+            })
+            .await
+            .map_err(ApiError::internal)??
+            .ok_or_else(|| {
+                ApiError::conflict("The canvas changed again; undo is no longer possible")
+            })?;
+            state.activity.canvas_changed(revision);
         }
     }
     Ok(Json(json!({ "undone": true })))

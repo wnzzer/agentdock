@@ -54,6 +54,21 @@ pub async fn save_layout(
     Ok(Json(json!({"revision":revision})))
 }
 
+/// Save a layout the way the save route does, for a change made on the
+/// server (agent_canvas.rs): same shape and ownership checks, same revision
+/// compare-and-swap. `None` when another client saved first.
+pub(crate) fn save_checked(
+    store: &Store,
+    layout: &Value,
+    expected_revision: u64,
+) -> Result<Option<u64>> {
+    validate_shape(layout)?;
+    validate_ownership(store, &layout["root"], &mut HashSet::new())?;
+    store
+        .save_shared_canvas_layout(&layout.to_string(), expected_revision)
+        .map_err(ApiError::internal)
+}
+
 fn validate_shape(layout: &Value) -> Result<()> {
     if !crate::valid_layout(layout) || layout.to_string().len() > MAX_LAYOUT_BYTES {
         return Err(ApiError::bad("Invalid or oversized shared canvas layout"));
