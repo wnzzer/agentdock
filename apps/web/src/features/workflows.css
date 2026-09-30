@@ -164,3 +164,6 @@
 .md-modes>button:hover { color: #3d505d; }
 .md-modes>button.active { background: #fff; color: var(--teal); font-weight: 600; box-shadow: 0 1px 2px #1b2a3614; }
 @media (pointer: coarse) { .md-modes>button { min-height: 34px; padding: 0 14px; font-size: 13px; } }
+
+.chat-code-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 8px}
+.chat-code-toolbar>small{color:var(--muted);font:11px ui-monospace,monospace}

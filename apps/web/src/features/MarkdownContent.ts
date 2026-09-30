@@ -1,6 +1,7 @@
 import { cloneVNode, defineComponent, h } from 'vue';
 import { markdownBlocksWithLines, markdownInline, workspaceImagePath, type MarkdownInline } from './chat-model';
 import { openLightbox } from './image-lightbox';
+import CopyButton from './CopyButton.vue';
 
 /**
  * Renders the markdown subset both the conversation and the file pane show.
@@ -61,7 +62,7 @@ export const MarkdownContent = defineComponent({
       h('div', { class: 'chat-markdown' }, markdownBlocksWithLines(props.text).map(({ block, line }) => {
         const node =
         block.type === 'code'
-          ? h('div', { class: 'chat-code' }, [block.language ? h('small', block.language) : null, h('pre', [h('code', block.text)])])
+          ? h('div', { class: 'chat-code' }, [h('div', { class: 'chat-code-toolbar' }, [h('small', block.language || ''), h(CopyButton, { text: block.text, label: 'Copy code' })]), h('pre', [h('code', block.text)])])
           : block.type === 'table'
             // Wide tables scroll inside their own box rather than the message.
             ? h('div', { class: 'chat-table' }, [h('table', [

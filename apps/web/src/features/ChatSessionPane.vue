@@ -31,6 +31,8 @@ import { acknowledgeReceipt } from './chat-model';
 import { useSessionMenuPosition } from './session-menu-position';
 import { canReopenInTerminal, terminalReopen } from './terminal-reopen';
 import { randomId } from './random-id';
+import CopyButton from './CopyButton.vue';
+import { copyText, preserveNativeContextMenu } from './clipboard';
 
 const props = defineProps<{ paneId?: string; session: Session; profiles: EndpointProfile[]; previewSnapshot?: ConversationSnapshot; consumeOpenIntent?: boolean }>();
 const emit = defineEmits<{ changed: []; environment: [id: string]; renameRequest: [id: string]; legacy: []; profiles: []; openSession: [session: Session]; openFile: [reference: { path: string; line?: number; checkout?: string | null }] }>();
@@ -308,7 +310,7 @@ function lastLine(activity: string) {
 }
 const clearAvailable = computed(() => canClearContext({ preview: isPreview.value, running: running.value, ready: view.value.ready, busy: turnBusy.value || actionBusy.value, connected: streamState.value === 'connected', commands: view.value.commands }));
 function openTimelineMenu(event: MouseEvent) {
-  if (isPreview.value) return;
+  if (isPreview.value || preserveNativeContextMenu(event, mobile.value)) return;
   event.preventDefault();
   timelineMenu.value = { x: event.clientX, y: event.clientY, text: String(window.getSelection() ?? '') };
 }
@@ -319,7 +321,7 @@ const timelineMenuStyle = computed(() => timelineMenu.value
 async function copyFromTimeline(value: string) {
   closeTimelineMenu();
   if (!value) return;
-  try { await navigator.clipboard.writeText(value); }
+  try { await copyText(value); }
   catch { error.value = t('Could not copy to the clipboard in this browser.'); }
 }
 /** Sends the client's own /clear rather than wiping the view locally: the
@@ -478,7 +480,7 @@ const statusLabel = computed(() => isPreview.value ? 'Read-only UI preview' : bo
 let generation = 0, readController: AbortController | undefined, stream: ReturnType<typeof createSessionStream> | undefined;
 
 function atBottom() { const el = viewport.value; followBottom.value = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 90; }
-async function scrollToLatest(force = false) { await nextTick(); const el = viewport.value; if (el && (force || followBottom.value)) { el.scrollTop = el.scrollHeight; followBottom.value = true; } }
+async function scrollToLatest(force = false) { await nextTick(); const el = viewport.value; if (el && (force || followBottom.value) && (force || !window.getSelection()?.toString())) { el.scrollTop = el.scrollHeight; followBottom.value = true; } }
 function updateSnapshot(raw: unknown) {
   const snapshot = parseConversationSnapshot(raw);
   const bounded = pruneChatEvents(snapshot.events);
@@ -666,8 +668,9 @@ async function pickAttachments(event: Event) {
 async function pasteFiles(event: ClipboardEvent) {
   const files = [...(event.clipboardData?.files ?? [])];
   if (isPreview.value || !files.length) return;
-  // Text on the clipboard still pastes normally; only files are intercepted.
-  event.preventDefault();
+  // Preserve native insertion (including the caret/selection and undo) for mixed
+  // text + image clipboards; suppress only a file-only paste.
+  if (!event.clipboardData?.getData('text/plain')) event.preventDefault();
   await uploadFiles(files.map(file => {
     if (file.name && file.name !== 'image.png') return file;
     const extension = file.type.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'bin';
@@ -888,7 +891,7 @@ function keydown(event: KeyboardEvent) {
       <p v-if="truncated" class="chat-history-notice">{{ t('Earlier display history was trimmed. Native history remains managed by the official client.') }}</p>
       <div v-if="!view.items.length" class="chat-welcome"><span class="chat-welcome-mark"><ProviderIcon :provider="session.provider" :size="32" /></span><h3>{{ t('What shall we build?') }}</h3><p>{{ t('A real conversation with your native agent, with room for tools, changes and your next idea.') }}</p><span class="chat-context-chip" :title="activeProfile?(activeProfile.native_config?t('Uses the sign-in and settings in {path}',{path:activeProfile.native_config.config_dir}):undefined):t('A fresh, empty client home: no host sign-in or settings, so it may ask you to log in.')"><ProviderIcon :provider="session.provider" :size="12"/>{{ endpointName }}</span><Transition name="chat-boot" :duration="240"><p v-if="booting" class="chat-boot" role="status"><span class="chat-boot-bar"><i/></span>{{ t('Starting {provider}… models and commands arrive with it.',{provider:providerLabel(session.provider)}) }}</p></Transition><div v-if="startersAvailable" class="chat-starters"><button v-for="(starter,index) in STARTERS" :key="starter.title" type="button" :style="{'--starter-delay':index*60+'ms'}" @click="useStarter(starter.prompt)"><span class="chat-starter-icon" :data-tone="starter.icon"><Icon :name="starter.icon" :size="16"/></span><span><strong>{{ t(starter.title) }}</strong><small>{{ t(starter.note) }}</small></span></button></div><p v-if="session.provider==='claude_code'" class="chat-trust-note">{{ t('Claude headless mode skips the interactive workspace-trust prompt. Send messages only for directories you trust; supported tool approvals still come from the native client.') }}</p></div>
       <template v-for="(item,index) in displayItems" :key="item.type+':'+index+':'+item.id">
-        <article v-if="item.type==='message'" :class="['chat-message',item.role]"><div class="chat-message-label"><ProviderIcon v-if="item.role==='assistant'" :provider="session.provider" :size="15" /><span>{{ item.role==='user'?t('You'):providerLabel(session.provider) }}</span><em v-if="item.steered" class="chat-steered" :title="t('Written while the agent worked, and read inside that turn')">{{ t('Steer') }}</em></div><div v-if="item.role==='user'&&attachedImagePaths(item.text).length" class="chat-attached-images"><img v-for="path in attachedImagePaths(item.text)" :key="path" :src="workspaceImage(path)" :alt="path" :title="path" loading="lazy" @click="openLightbox(workspaceImage(path), path)" /></div><MarkdownContent :text="item.text" :image-url="workspaceImage" :open-file="openReference" /></article>
+        <article v-if="item.type==='message'" :class="['chat-message',item.role]"><div class="chat-message-label"><ProviderIcon v-if="item.role==='assistant'" :provider="session.provider" :size="15" /><span>{{ item.role==='user'?t('You'):providerLabel(session.provider) }}</span><em v-if="item.steered" class="chat-steered" :title="t('Written while the agent worked, and read inside that turn')">{{ t('Steer') }}</em></div><div v-if="item.role==='user'&&attachedImagePaths(item.text).length" class="chat-attached-images"><img v-for="path in attachedImagePaths(item.text)" :key="path" :src="workspaceImage(path)" :alt="path" :title="path" loading="lazy" @click="openLightbox(workspaceImage(path), path)" /></div><MarkdownContent :text="item.text" :image-url="workspaceImage" :open-file="openReference" /><div class="chat-message-actions"><CopyButton :text="item.text" label="Copy message" /></div></article>
         <component :is="item.type==='tool_run'&&item.tools.length>1?'details':'div'" v-else-if="item.type==='tool_run'" :class="item.tools.length>1?['chat-tool-run',toolRunStatus(item)]:'chat-tool-solo'"><summary v-if="item.tools.length>1"><span :class="['tool-indicator',toolRunStatus(item)]">{{ toolRunStatus(item)==='completed'?'✓':toolRunStatus(item)==='failed'?'!':'↻' }}</span><strong>{{ t('{count} tool calls',{count:item.tools.length}) }}</strong><small>{{ toolRunStatus(item)==='running' ? runningLine(item) : toolRunNames(item) }}</small><Icon class="chat-tool-chevron" name="chevron" :size="14" /></summary><details v-for="tool in item.tools" :key="tool.id" class="chat-tool"><summary><span :class="['tool-indicator',tool.status]">{{ tool.status==='completed'?'✓':tool.status==='failed'?'!':'↻' }}</span><strong>{{ tool.name }}</strong><small>{{ tool.activity && tool.status==='running' ? lastLine(tool.activity) : t(tool.status==='running'?(running?'Working…':'Session ended'):tool.status==='failed'?'Failed':'Completed') }}</small><Icon class="chat-tool-chevron" name="chevron" :size="14" /></summary><pre v-if="tool.activity" class="tool-activity">{{ tool.activity }}</pre><pre v-if="tool.text">{{ tool.text }}</pre><p v-else-if="!tool.activity">{{ t('The client did not provide tool output.') }}</p></details></component>
         <article v-else-if="item.type==='approval'" :class="['chat-approval',{resolved:item.resolved}]"><header><Icon name="info" :size="18" /><strong>{{ item.title }}</strong><span v-if="item.resolved">{{ t('Resolved') }}</span></header><MarkdownContent :text="item.text" :open-file="openReference" /><template v-if="!item.resolved">
           <div v-for="question in item.questions" :key="question.id" class="chat-question"><label :for="'answer-'+session.id+'-'+item.id+'-'+question.id">{{ question.header }} {{ question.question }}</label>
@@ -1260,4 +1263,10 @@ function keydown(event: KeyboardEvent) {
 .chat-pane.is-phone .chat-tool-run>.chat-tool>summary{padding-left:22px}
 .chat-pane.is-phone .chat-tool pre{font-size:12px;max-height:50vh}
 .chat-pane.is-phone .chat-tool+.chat-message,.chat-pane.is-phone .chat-tool-solo+.chat-message,.chat-pane.is-phone .chat-tool-run+.chat-message{margin-top:10px}
+</style>
+
+<style scoped>
+.chat-message-actions{display:flex;margin-top:8px}
+.chat-message :deep(.chat-markdown){-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
+.chat-composer>textarea{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
 </style>

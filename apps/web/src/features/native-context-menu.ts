@@ -7,7 +7,7 @@
  * The browser's menu stays wherever it does real work: text being typed or
  * selected, links and images, and the terminal, which draws its own.
  */
-const NATIVE_TARGETS = 'input, textarea, select, [contenteditable=""], [contenteditable="true"], a[href], img, video, .xterm';
+const NATIVE_TARGETS = 'input, textarea, select, [contenteditable=""], [contenteditable="true"], a[href], img, video, .xterm, .chat-markdown';
 
 export function keepsNativeMenu(target: EventTarget | null, selection = '') {
   if (selection.trim()) return true;
