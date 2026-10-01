@@ -94,13 +94,23 @@
    has none of them. Floating over the terminal rather than taking a row of it:
    a full-screen program has already been told how tall the screen is, and
    shrinking it under the program would misalign every subsequent redraw. */
-.terminal-keys { position: absolute; right: 9px; bottom: 9px; z-index: 3; display: flex; gap: 5px; padding: 4px; border-radius: 9px; border: 1px solid #dde7ea; background: #ffffffe6; backdrop-filter: blur(6px); box-shadow: 0 3px 14px #1c3a4a1f; }
-.terminal-keys>button { display: flex; align-items: center; justify-content: center; width: 33px; height: 30px; border: 0; border-radius: 6px; background: #f3f7f8; color: #7e929b; padding: 0; }
+/* More keys than a phone is wide: the bar scrolls sideways rather than wrapping
+   onto a second row over the terminal. */
+.terminal-keys { position: absolute; right: 9px; bottom: 9px; z-index: 3; display: flex; gap: 5px; max-width: calc(100% - 18px); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; padding: 4px; border-radius: 9px; border: 1px solid #dde7ea; background: #ffffffe6; backdrop-filter: blur(6px); box-shadow: 0 3px 14px #1c3a4a1f; }
+.terminal-keys::-webkit-scrollbar { display: none; }
+.terminal-keys>button { display: flex; flex-shrink: 0; align-items: center; justify-content: center; width: 33px; height: 30px; border: 0; border-radius: 6px; background: #f3f7f8; color: #7e929b; padding: 0; }
+.terminal-keys>button.key-text { width: auto; min-width: 33px; padding: 0 7px; font: 600 11px/1 "SFMono-Regular", Consolas, monospace; }
 .terminal-keys>button:active { background: #dcebe6; color: #4d7f72; }
 .terminal-keys>button.armed { background: #cfe9e0; color: #2f7364; }
 /* The glyph set has one chevron, pointing right; the arrow keys are that
    chevron turned, so the two directions stay visually identical. */
-.terminal-keys .key-up { transform: rotate(-90deg); }.terminal-keys .key-down { transform: rotate(90deg); }
+.terminal-keys .key-up { transform: rotate(-90deg); }.terminal-keys .key-down { transform: rotate(90deg); }.terminal-keys .key-left { transform: rotate(180deg); }
+.terminal-paste { position: absolute; left: 9px; right: 9px; bottom: 52px; z-index: 4; display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 12px; border: 1px solid #dde7ea; background: #fff; box-shadow: 0 6px 24px #1c3a4a2e; }
+/* 16px keeps iOS from zooming the page when the field takes focus. */
+.terminal-paste>textarea { min-height: 88px; max-height: 40vh; resize: none; padding: 9px 10px; border: 1px solid #dfe7ec; border-radius: 8px; font: 16px/1.4 "SFMono-Regular", Consolas, monospace; color: #4d6270; background: #fcfdfe; }
+.terminal-paste>div { display: flex; justify-content: flex-end; gap: 8px; }
+.native-terminal.dark .terminal-paste { border-color: #2c3f4c; background: #1e2e39; box-shadow: 0 6px 24px #0009; }
+.native-terminal.dark .terminal-paste>textarea { border-color: #2c3f4c; background: #17232d; color: #dde6eb; }
 .native-terminal.dark .terminal-keys { border-color: #2c3f4c; background: #1e2e39e6; box-shadow: 0 3px 14px #0008; }
 .native-terminal.dark .terminal-keys>button { background: #253744; color: #9fb4bf; }
 .native-terminal.dark .terminal-keys>button:active { background: #2f4c53; color: #7fd4c3; }

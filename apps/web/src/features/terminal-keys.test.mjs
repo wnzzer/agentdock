@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { arrowSequence, repeatArrow, selectionPresses, isTap, ENTER_SEQUENCE } from './terminal-keys.ts';
+import { arrowSequence, repeatArrow, selectionPresses, isTap, ctrlSequence, ENTER_SEQUENCE, ESCAPE_SEQUENCE, TAB_SEQUENCE, BACKTAB_SEQUENCE } from './terminal-keys.ts';
 
 test('arrow keys use the encoding the terminal state asks for', () => {
   // Outside application cursor mode the CSI form is what a shell expects.
@@ -60,7 +60,7 @@ test('the terminal surface exposes the controls and keeps them out of the scroll
   // Without these the feature does not exist, however correct the helpers are.
   assert.match(source, /terminal-keys/);
   assert.match(source, /class="terminal-keys"/);
-  for (const label of ['Arrow up', 'Arrow down', 'Enter', 'Keyboard']) assert.ok(source.includes(`t('${label}')`), `${label} control is present`);
+  for (const label of ['Escape', 'Ctrl', 'Tab', 'Shift+Tab', 'Arrow left', 'Arrow up', 'Arrow down', 'Arrow right', 'Enter', 'Paste', 'Keyboard']) assert.ok(source.includes(`t('${label}')`), `${label} control is present`);
   const styles = readFileSync(new URL('./workflows.css', import.meta.url), 'utf8');
   // Floating, not a row of the terminal: a full-screen program has been told
   // how tall the screen is, and taking a row back would misalign its redraws.
@@ -79,4 +79,24 @@ test('tapping a row sends arrows only while that gesture is explicitly armed', (
   assert.match(source, /selectionPresses\(/);
   assert.ok(source.includes("t('Tap a row to select it')"), 'the mode is switchable from the bar');
   assert.match(source, /:aria-pressed="tapSelect"/, 'and says whether it is on');
+});
+
+test('ctrl is a one-shot modifier on what the soft keyboard types', () => {
+  const source = readFileSync(new URL('../components/TerminalPane.vue', import.meta.url), 'utf8');
+  // It rewrites the terminal's own input, so the soft keyboard supplies the
+  // letter, and it releases after one key so it cannot stick on unnoticed.
+  assert.match(source, /ctrlArmed\.value\) \{ ctrlArmed\.value = false; data = ctrlSequence\(data\)/);
+  assert.match(source, /:aria-pressed="ctrlArmed"/);
+});
+
+test('paste reads the clipboard where it may and falls back to a field where it may not', () => {
+  const source = readFileSync(new URL('../components/TerminalPane.vue', import.meta.url), 'utf8');
+  // The Clipboard API exists only in a secure context, and AgentDock is often
+  // reached over plain http on a private network; there the person pastes
+  // into an ordinary field, which every mobile browser supports.
+  assert.match(source, /navigator\.clipboard\?\.readText/);
+  assert.match(source, /class="terminal-paste"/);
+  // terminal.paste honours bracketed paste mode, so a multi-line paste is not
+  // run line by line as if each newline were Enter.
+  assert.match(source, /terminal\?\.paste\(/);
 });

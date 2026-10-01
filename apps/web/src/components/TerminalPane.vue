@@ -6,7 +6,7 @@ import Icon from "../features/Icon.vue";
 import { useI18n } from "../i18n";
 import { createSessionStream, TERMINAL_VIEW_ERROR } from "../features/session-stream";
 import type { SessionStreamState } from "../features/session-stream";
-import { arrowSequence, ENTER_SEQUENCE, isTap, repeatArrow, selectionPresses, type ArrowKey } from "../features/terminal-keys";
+import { arrowSequence, BACKTAB_SEQUENCE, ctrlSequence, ENTER_SEQUENCE, ESCAPE_SEQUENCE, isTap, repeatArrow, selectionPresses, TAB_SEQUENCE, type ArrowKey } from "../features/terminal-keys";
 const { t } = useI18n();
 
 const props = withDefaults(defineProps<{ sessionId: string; dark?: boolean }>(), { dark: false });
@@ -32,6 +32,14 @@ const touchDevice = ref(false);
  * exactly like a prompt -- so the person holding the phone says which it is.
  */
 const tapSelect = ref(false);
+/** One-shot Ctrl: the next character the soft keyboard types becomes a control code. */
+const ctrlArmed = ref(false);
+/**
+ * Text waiting to be pasted, when the clipboard could not be read directly.
+ * `undefined` means the paste field is closed.
+ */
+const pasteDraft = ref<string>();
+const pasteField = ref<HTMLTextAreaElement>();
 let terminal: Terminal | undefined;
 let fit: FitAddon | undefined;
 let observer: ResizeObserver | undefined;
@@ -82,6 +90,9 @@ function resize() {
 /** Send exactly the bytes the physical key would, so the client sees a key. */
 function sendKeys(sequence: string) {
   if (!sequence || !terminal) return;
+  // A key on the bar is the key Ctrl was armed for, if any; it never combines,
+  // so the modifier is released rather than left waiting for the keyboard.
+  ctrlArmed.value = false;
   stream.send(new TextEncoder().encode(sequence));
 }
 function pressArrow(key: ArrowKey) {
@@ -89,6 +100,32 @@ function pressArrow(key: ArrowKey) {
   sendKeys(arrowSequence(key, terminal.modes.applicationCursorKeysMode));
 }
 function pressEnter() { sendKeys(ENTER_SEQUENCE); }
+function pressEscape() { sendKeys(ESCAPE_SEQUENCE); }
+function pressTab(back: boolean) { sendKeys(back ? BACKTAB_SEQUENCE : TAB_SEQUENCE); }
+/**
+ * Paste from the clipboard.
+ *
+ * The Clipboard API is available only in a secure context, and a phone often
+ * reaches AgentDock over plain http on a private network. Where it cannot be
+ * read -- or the browser refuses -- an ordinary field opens instead, which
+ * every mobile browser can paste into with a long press.
+ */
+async function pressPaste() {
+  ctrlArmed.value = false;
+  try {
+    const text = await navigator.clipboard?.readText?.();
+    if (text) { terminal?.paste(text); return; }
+  } catch { /* Not permitted here; fall back to the field. */ }
+  pasteDraft.value = "";
+  await nextTick(); pasteField.value?.focus();
+}
+function sendPaste() {
+  const text = pasteDraft.value;
+  pasteDraft.value = undefined;
+  if (text) terminal?.paste(text);
+  terminal?.focus();
+}
+function cancelPaste() { pasteDraft.value = undefined; terminal?.focus(); }
 /**
  * Bring up the on-screen keyboard by focusing the terminal's own input target.
  * A mobile browser only opens it from inside a real gesture, which is why this
@@ -153,7 +190,10 @@ function initializeTerminal() {
     },
   });
   fit = new FitAddon(); terminal.loadAddon(fit); terminal.open(host.value);
-  subscriptions.push(terminal.onData(data => { stream.send(new TextEncoder().encode(data)); }));
+  subscriptions.push(terminal.onData(data => {
+    if (ctrlArmed.value) { ctrlArmed.value = false; data = ctrlSequence(data); }
+    stream.send(new TextEncoder().encode(data));
+  }));
   subscriptions.push(terminal.onBinary(data => { stream.send(Uint8Array.from(data, value => value.charCodeAt(0) & 255)); }));
   observer = new ResizeObserver(resize); observer.observe(host.value);
 }
@@ -184,11 +224,22 @@ onUnmounted(() => { disposed = true; stream.dispose(); cleanupTerminal(); emit("
     <div v-if="notice" :class="state === 'error' ? 'inline-error' : 'inline-notice'" :role="state === 'error' ? 'alert' : 'status'">{{ nativeNotice ? notice : t(notice) }}</div>
     <div ref="host" class="terminal-host" :aria-label="t('Native session {id}', { id: sessionId })" @pointerdown="gestureStart" @pointerup="gestureEnd" @pointercancel="gesture = undefined" />
     <div v-if="touchDevice" class="terminal-keys" role="group" :aria-label="t('Terminal keys')">
+      <button type="button" class="key-text" :aria-label="t('Escape')" :title="t('Escape')" @pointerdown="keepFocus" @click="pressEscape">Esc</button>
+      <button type="button" class="key-text" :class="{ armed: ctrlArmed }" :aria-pressed="ctrlArmed" :aria-label="t('Ctrl')" :title="t('Ctrl')" @pointerdown="keepFocus" @click="ctrlArmed = !ctrlArmed">Ctrl</button>
+      <button type="button" class="key-text" :aria-label="t('Tab')" :title="t('Tab')" @pointerdown="keepFocus" @click="pressTab(false)">Tab</button>
+      <button type="button" class="key-text" :aria-label="t('Shift+Tab')" :title="t('Shift+Tab')" @pointerdown="keepFocus" @click="pressTab(true)">⇧Tab</button>
+      <button type="button" :aria-label="t('Arrow left')" :title="t('Arrow left')" @pointerdown="keepFocus" @click="pressArrow('left')"><Icon name="chevron" :size="16" class="key-left" /></button>
       <button type="button" :aria-label="t('Arrow up')" :title="t('Arrow up')" @pointerdown="keepFocus" @click="pressArrow('up')"><Icon name="chevron" :size="16" class="key-up" /></button>
       <button type="button" :aria-label="t('Arrow down')" :title="t('Arrow down')" @pointerdown="keepFocus" @click="pressArrow('down')"><Icon name="chevron" :size="16" class="key-down" /></button>
+      <button type="button" :aria-label="t('Arrow right')" :title="t('Arrow right')" @pointerdown="keepFocus" @click="pressArrow('right')"><Icon name="chevron" :size="16" /></button>
       <button type="button" :aria-label="t('Enter')" :title="t('Enter')" @pointerdown="keepFocus" @click="pressEnter"><Icon name="check" :size="16" /></button>
+      <button type="button" :aria-label="t('Paste')" :title="t('Paste')" @click="pressPaste"><Icon name="clipboard" :size="16" /></button>
       <button type="button" :aria-label="t('Keyboard')" :title="t('Keyboard')" @click="showKeyboard"><Icon name="edit" :size="16" /></button>
       <button type="button" :class="{ armed: tapSelect }" :aria-pressed="tapSelect" :aria-label="t('Tap a row to select it')" :title="t('Tap a row to select it')" @pointerdown="keepFocus" @click="tapSelect = !tapSelect"><Icon name="locate" :size="16" /></button>
     </div>
+    <form v-if="pasteDraft !== undefined" class="terminal-paste" @submit.prevent="sendPaste" @keydown.esc.prevent="cancelPaste">
+      <textarea ref="pasteField" v-model="pasteDraft" :aria-label="t('Text to paste')" :placeholder="t('Long-press here to paste, then send it to the terminal')" />
+      <div><button type="button" class="secondary-button" @click="cancelPaste">{{ t('Cancel') }}</button><button type="submit" class="primary-button" :disabled="!pasteDraft">{{ t('Send') }}</button></div>
+    </form>
   </div>
 </template>

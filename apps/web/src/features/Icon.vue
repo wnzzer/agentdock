@@ -23,6 +23,7 @@ const paths: Record<string, string> = {
   search: "M3 10a7 7 0 1 0 14 0a7 7 0 1 0-14 0 M15 15l6 6",
   arrow: "M5 12h14 m-6-6 6 6-6 6",
   download: "M12 3v12 m-5-5 5 5 5-5 M4 16v5h16v-5",
+  clipboard: "M9 4h6v3H9z M9 5H5v16h14V5h-4 M8 12h8 M8 16h5",
   check: "m5 12 4 4L19 6",
   clock: "M2 12a10 10 0 1 0 20 0a10 10 0 1 0-20 0 M12 6v6l4 2",
   // A dial with its needle part-way round: how deeply this is being thought
