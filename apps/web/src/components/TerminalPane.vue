@@ -5,6 +5,7 @@ import { Terminal } from "@xterm/xterm";
 import Icon from "../features/Icon.vue";
 import { useI18n } from "../i18n";
 import { createSessionStream, TERMINAL_VIEW_ERROR } from "../features/session-stream";
+import { onPageReturn } from "../features/page-return";
 import type { SessionStreamState } from "../features/session-stream";
 import { arrowSequence, BACKTAB_SEQUENCE, ctrlSequence, ENTER_SEQUENCE, ESCAPE_SEQUENCE, isTap, repeatArrow, selectionPresses, TAB_SEQUENCE, type ArrowKey } from "../features/terminal-keys";
 const { t } = useI18n();
@@ -211,11 +212,22 @@ onMounted(() => {
   try { touchDevice.value = window.matchMedia?.("(any-pointer: coarse)").matches === true; } catch { touchDevice.value = false; }
   connect();
 });
+/**
+ * Coming back to the page re-attaches a view that dropped meanwhile, and one
+ * that may only look attached after a long absence. Only the view: an exited
+ * process stays exited, and nothing typed is replayed.
+ */
+let stopPageReturn = () => {};
+onMounted(() => {
+  stopPageReturn = onPageReturn(stale => {
+    if (state.value === "disconnected" || state.value === "error" || (stale && state.value === "connected")) connect();
+  });
+});
 watch(() => props.sessionId, async (_next, _previous, onCleanup) => {
   let current = true; onCleanup(() => { current = false; });
   stream.disconnect(); await nextTick(); if (current) connect();
 });
-onUnmounted(() => { disposed = true; stream.dispose(); cleanupTerminal(); emit("status", false); });
+onUnmounted(() => { stopPageReturn(); disposed = true; stream.dispose(); cleanupTerminal(); emit("status", false); });
 </script>
 
 <template>

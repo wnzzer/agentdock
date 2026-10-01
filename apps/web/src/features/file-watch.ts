@@ -101,9 +101,21 @@ export function createFileWatch(options: FileWatchOptions) {
       watches.set(id, watch); connect(id, watch);
     }
   }
-  /** Reconnect now rather than at the end of a backoff, e.g. when the tab returns. */
-  function wake() {
-    for (const [id, watch] of watches) if (!watch.socket && watch.timer !== undefined) { cancel(watch.timer); watch.timer = undefined; watch.delay = RETRY_MIN_MS; connect(id, watch); }
+  /**
+   * Reconnect now rather than at the end of a backoff, e.g. when the tab
+   * returns. `stale` also replaces sockets that still look open, which a
+   * phone that slept leaves behind; the new `ready` reports a full resync.
+   */
+  function wake(stale = false) {
+    for (const [id, watch] of watches) {
+      if (stale && watch.socket) {
+        const socket = watch.socket; watch.socket = undefined;
+        socket.onopen = socket.onmessage = socket.onerror = socket.onclose = null;
+        try { socket.close(); } catch { /* already gone */ }
+      } else if (watch.socket || watch.timer === undefined) continue;
+      if (watch.timer !== undefined) { cancel(watch.timer); watch.timer = undefined; }
+      watch.delay = RETRY_MIN_MS; connect(id, watch);
+    }
   }
   function dispose() { for (const id of [...watches.keys()]) stop(id); }
   return { sync, wake, dispose };

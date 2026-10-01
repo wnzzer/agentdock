@@ -5,6 +5,7 @@ import { ApiConnectionError, assetUrl, errorMessage, json, providerLabel, reques
 import { backendCapabilities } from './backend-capabilities';
 import { sessionConnections } from './session-connection';
 import { createSessionStream, type SessionStreamState } from './session-stream';
+import { onPageReturn } from './page-return';
 import { acknowledgeDraft, appendChatEvent, approvalPayloadAnswers, canClearContext, chatDrafts, createChatDraftStore, conversationView, isChatEvent, parseConversationSnapshot, pendingMessageRetry, pruneChatEvents, sessionConfigurationPayload, type ChatDraft, type ChatEvent, type ChatItem, type ConversationSnapshot, type NativeModel } from './chat-model';
 import ProviderIcon from './ProviderIcon.vue';
 import Icon from './Icon.vue';
@@ -555,7 +556,19 @@ onMounted(() => {
     input.focus(); input.setSelectionRange(end, end); input.scrollTop = input.scrollHeight; caret.value = end;
   });
 });
-onBeforeUnmount(() => { mounted.value = false; generation++; readController?.abort(); stream?.dispose(); });
+/**
+ * Coming back to the page re-reads the conversation and re-attaches a view
+ * that dropped meanwhile, or that may only look attached after a long absence.
+ * `load()` without an open intent never starts a process or resends anything.
+ */
+let stopPageReturn = () => {};
+onMounted(() => {
+  stopPageReturn = onPageReturn(stale => {
+    if (!mounted.value || isPreview.value || loading.value || actionBusy.value || mode.value !== 'structured') return;
+    if (streamState.value === 'disconnected' || streamState.value === 'error' || (stale && streamState.value === 'connected')) void load();
+  });
+});
+onBeforeUnmount(() => { stopPageReturn(); mounted.value = false; generation++; readController?.abort(); stream?.dispose(); });
 
 /** Focusing the composer is an intent to use this session, unlike restoring a
  * layout. Waking here is what makes the model list and the client's own

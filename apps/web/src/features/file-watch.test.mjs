@@ -82,6 +82,19 @@ test('reconnects back off, and waking the tab retries at once', () => {
   assert.equal(clock.pending.size,0);assert.equal(sockets.length,3);
 });
 
+test('a stale wake replaces a socket that only looks open, and the new one resyncs everything', () => {
+  const {watch,sockets,changes}=harness();
+  watch.sync(['w1']);
+  sockets[0].message({type:'ready'});
+  watch.wake();
+  assert.equal(sockets.length,1,'a brief return trusts an open socket');
+  watch.wake(true);
+  assert.equal(sockets.length,2);assert.equal(sockets[0].closes,1);
+  sockets[0].message({type:'changed',paths:['late.md']});
+  sockets[1].message({type:'ready'});
+  assert.deepEqual(changes,[{id:'w1',paths:null,git:true}],'the retired socket is silent; the new one reports a full resync');
+});
+
 test('a host that cannot watch is not asked again', () => {
   const {watch,sockets,clock}=harness();
   watch.sync(['w1']);

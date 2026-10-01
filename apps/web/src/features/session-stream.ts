@@ -17,7 +17,10 @@ interface SessionStreamOptions {
   clearTimer?(timer: unknown): void;
 }
 
-/** View transport only: there are no process APIs, automatic retries or queued/replayed inputs. */
+/**
+ * View transport only: there are no process APIs, retry loops or queued/replayed
+ * inputs. Panes reconnect it once when the page returns (page-return.ts).
+ */
 export function createSessionStream(options: SessionStreamOptions) {
   let socket: SessionStreamSocket | undefined, timer: unknown;
   let generation = 0, disposed = false;

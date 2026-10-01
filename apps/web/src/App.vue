@@ -14,6 +14,7 @@ import HostFilePreview from "./features/HostFilePreview.vue";
 import HostUsage from "./features/HostUsage.vue";
 import { requestJump } from "./features/file-jumps";
 import { announceFilesChanged, createFileWatch } from "./features/file-watch";
+import { onPageReturn } from "./features/page-return";
 import WorkspaceBranchMenu from "./features/WorkspaceBranchMenu.vue";
 import ImageLightbox from "./features/ImageLightbox.vue";
 import CreateSessionDialog from "./features/CreateSessionDialog.vue";
@@ -629,7 +630,7 @@ const fileWatch = createFileWatch({
   },
 });
 watch(() => showAuth.value ? "" : [...trackedWorkspaces()].sort().join("\n"), ids => fileWatch.sync(ids ? ids.split("\n") : []), { immediate: true });
-function wakeFileWatch() { if (!document.hidden) fileWatch.wake(); }
+let stopPageReturn: (() => void) | undefined;
 async function refreshResources() {
   if (refreshingResources.value || loading.value) return;
   refreshingResources.value = true; error.value = ""; connectionError.value = "";
@@ -723,14 +724,14 @@ onMounted(() => {
   void bootstrap();
   pollTimer = setInterval(() => { if (!document.hidden && !showAuth.value) { void refreshSessions(); for (const id of trackedWorkspaces()) void refreshGit(id); } }, 5000);
   window.addEventListener("beforeunload", beforeUnload); window.addEventListener("resize", adaptDrawers);
-  document.addEventListener("visibilitychange", wakeFileWatch);
+  stopPageReturn = onPageReturn(stale => fileWatch.wake(stale));
   // The visual viewport also scrolls under a keyboard, which is the other way
   // its height stops describing what can be seen.
   window.visualViewport?.addEventListener("resize", fitToKeyboard);
   window.visualViewport?.addEventListener("scroll", fitToKeyboard);
   fitToKeyboard();
 });
-onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); disposed = true; clearInterval(pollTimer); fileWatch.dispose(); document.removeEventListener("visibilitychange", wakeFileWatch); clearTimeout(layoutTimer); window.removeEventListener("beforeunload", beforeUnload); window.removeEventListener("resize", adaptDrawers); window.visualViewport?.removeEventListener("resize", fitToKeyboard); window.visualViewport?.removeEventListener("scroll", fitToKeyboard); });
+onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); disposed = true; clearInterval(pollTimer); fileWatch.dispose(); stopPageReturn?.(); clearTimeout(layoutTimer); window.removeEventListener("beforeunload", beforeUnload); window.removeEventListener("resize", adaptDrawers); window.visualViewport?.removeEventListener("resize", fitToKeyboard); window.visualViewport?.removeEventListener("scroll", fitToKeyboard); });
 </script>
 
 <template>
