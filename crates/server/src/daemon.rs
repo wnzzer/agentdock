@@ -42,16 +42,41 @@ pub fn running(state_dir: &Path) -> Option<i32> {
 }
 
 /// Re-execute this binary as a detached `serve`.
+pub fn start(state_dir: &Path, address: SocketAddr) -> Result<i32, Box<dyn std::error::Error>> {
+    if let Some(pid) = running(state_dir) {
+        return Err(format!("AgentDock is already running (pid {pid})").into());
+    }
+    let pid = spawn_detached(state_dir, &env::current_exe()?, "serve", address)?;
+    fs::write(pid_file(state_dir), pid.to_string())?;
+    Ok(pid)
+}
+
+/// Have `program restart` replace this gateway from outside it.
+///
+/// A process cannot wait for itself to stop, so the restart after an update is
+/// a detached helper: it stops this gateway the way `agentdock restart` would,
+/// then starts whatever binary now sits at `program`. The helper records the
+/// new gateway's pid itself; its own pid is not worth keeping.
+pub fn relaunch(
+    state_dir: &Path,
+    program: &Path,
+    address: SocketAddr,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    spawn_detached(state_dir, program, "restart", address)
+}
+
+/// `program command`, detached from this process and writing to the log.
 ///
 /// `setsid` is the part that matters: without a new session the child keeps the
 /// terminal as its controlling terminal, and closing that terminal delivers
 /// SIGHUP to everything in the session, taking the gateway and every agent it
 /// is supervising with it.
-pub fn start(state_dir: &Path, address: SocketAddr) -> Result<i32, Box<dyn std::error::Error>> {
-    if let Some(pid) = running(state_dir) {
-        return Err(format!("AgentDock is already running (pid {pid})").into());
-    }
-    let program = env::current_exe()?;
+fn spawn_detached(
+    state_dir: &Path,
+    program: &Path,
+    command_name: &str,
+    address: SocketAddr,
+) -> Result<i32, Box<dyn std::error::Error>> {
     let log = fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -59,7 +84,7 @@ pub fn start(state_dir: &Path, address: SocketAddr) -> Result<i32, Box<dyn std::
     let errors = log.try_clone()?;
     let mut command = Command::new(program);
     command
-        .arg("serve")
+        .arg(command_name)
         .env("AGENTDOCK_ADDR", address.to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
@@ -93,16 +118,11 @@ pub fn start(state_dir: &Path, address: SocketAddr) -> Result<i32, Box<dyn std::
             CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB,
         );
         if let Ok(child) = command.spawn() {
-            let pid = child.id() as i32;
-            fs::write(pid_file(state_dir), pid.to_string())?;
-            return Ok(pid);
+            return Ok(child.id() as i32);
         }
         command.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
     }
-    let child = command.spawn()?;
-    let pid = child.id() as i32;
-    fs::write(pid_file(state_dir), pid.to_string())?;
-    Ok(pid)
+    Ok(command.spawn()?.id() as i32)
 }
 
 /// Ask the running gateway to stop, and wait until it has.

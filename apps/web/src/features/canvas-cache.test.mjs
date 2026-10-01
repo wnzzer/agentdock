@@ -31,9 +31,10 @@ test('unavailable or corrupt local storage is not reported as durable saving',()
   assert.equal(writeCanvasCache(storage,'a',{version:1,root:{type:'bad'}},false),false);
 });
 test('legacy servers do not get shared-canvas, native history or native configuration calls',()=>{
-  assert.deepEqual(capabilitiesFor({ok:true}),{sharedCanvas:false,nativeConfig:false,nativeHistory:false,directories:false,models:false,environment:false,structuredChat:false,accounts:false,sessionConfiguration:false,sessionArchive:false,accountImportNative:false,clients:false,ephemeralSessions:false,sessionTerminalEscape:false,storedSecrets:false,agentTools:false});
+  assert.deepEqual(capabilitiesFor({ok:true}),{sharedCanvas:false,nativeConfig:false,nativeHistory:false,directories:false,models:false,environment:false,structuredChat:false,accounts:false,sessionConfiguration:false,sessionArchive:false,accountImportNative:false,clients:false,ephemeralSessions:false,sessionTerminalEscape:false,storedSecrets:false,agentTools:false,selfUpdate:false});
   assert.equal(capabilitiesFor({ok:true,api_version:2}).storedSecrets,false);
   assert.equal(capabilitiesFor({ok:true,api_version:2,capabilities:["stored_secrets"]}).storedSecrets,true);
+  assert.equal(capabilitiesFor({ok:true,api_version:2,capabilities:["self_update"]}).selfUpdate,true);
   const explicit=capabilitiesFor({ok:true,api_version:2,capabilities:['shared_canvas']});
   assert.equal(explicit.sharedCanvas,true);assert.equal(explicit.nativeConfig,false);
   const earlier=capabilitiesFor({ok:true,api_version:2});assert.equal(earlier.sharedCanvas,false);assert.equal(earlier.nativeHistory,true);

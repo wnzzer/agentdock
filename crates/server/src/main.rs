@@ -29,6 +29,7 @@ mod resources;
 mod secrets;
 mod security;
 mod settings;
+mod update;
 mod workspace_io;
 
 use agentdock_domain::{
@@ -365,6 +366,9 @@ const HELP: &str = r#"AgentDock — a host workspace for Claude Code and Codex
   agentdock restart         Stop it, then start it again
   agentdock status          Whether it is running, and where
   agentdock logs            What the background gateway has said
+  agentdock update          Install the latest version (npm installs); the
+                            gateway keeps running the old one until restarted
+  agentdock update --check  Only say whether a newer version exists
   agentdock serve           Run in the foreground instead (no background process)
   agentdock init            Create user state without starting anything
   agentdock mcp             AgentDock's agent tools as a stdio MCP server, e.g.
@@ -419,6 +423,11 @@ fn main() {
             std::process::exit(1);
         }
     });
+    // Stopped for an update under a service manager: exit as a failure so
+    // `Restart=on-failure` starts the new binary too.
+    if update::restart_requested() {
+        std::process::exit(update::RESTART_EXIT_CODE);
+    }
 }
 
 /// Let the file say what the environment has not.
@@ -470,6 +479,10 @@ async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
     if action == "mcp" {
         return mcp::serve().await;
     }
+    // Replaces the install, not the running gateway: no state directory needed.
+    if action == "update" {
+        return update::command(env::args().any(|argument| argument == "--check")).await;
+    }
     if !matches!(
         action.as_str(),
         "serve" | "init" | "start" | "stop" | "restart" | "status" | "logs"
@@ -477,6 +490,8 @@ async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         return Err(format!("Unknown command {action:?}; use --help").into());
     }
     if action == "serve" {
+        // Before an update can replace the file this path names.
+        update::remember_executable();
         tracing_subscriber::fmt()
             .with_env_filter(env::var("RUST_LOG").unwrap_or_else(|_| "agentdock=info".into()))
             .init();
@@ -609,6 +624,7 @@ fn router(state: AppState) -> Router {
         .merge(activity::routes())
         .merge(conversations::routes())
         .merge(file_watch::routes())
+        .merge(update::routes())
         .route("/api/health", get(health))
         .route("/api/auth", get(security::status).post(security::login))
         .route(
@@ -777,7 +793,7 @@ fn optional(value: Option<String>) -> Option<String> {
 }
 async fn health() -> Json<Value> {
     Json(
-        json!({"ok":true,"service":"agentdock-server","platform":env::consts::OS,"mode":"trusted-single-user","api_version":2,"capabilities":["shared_canvas","native_configurations","native_history","host_directories","endpoint_models","session_environment","structured_chat","official_accounts","session_configuration","session_archive","account_import_native","agent_clients","ephemeral_sessions","session_model","workspace_file_search","session_terminal_escape","stored_secrets","agent_tools"],"instance_label":env::var("AGENTDOCK_INSTANCE_LABEL").ok(),"version":env!("CARGO_PKG_VERSION")}),
+        json!({"ok":true,"service":"agentdock-server","platform":env::consts::OS,"mode":"trusted-single-user","api_version":2,"capabilities":["shared_canvas","native_configurations","native_history","host_directories","endpoint_models","session_environment","structured_chat","official_accounts","session_configuration","session_archive","account_import_native","agent_clients","ephemeral_sessions","session_model","workspace_file_search","session_terminal_escape","stored_secrets","agent_tools","self_update"],"instance_label":env::var("AGENTDOCK_INSTANCE_LABEL").ok(),"version":env!("CARGO_PKG_VERSION")}),
     )
 }
 

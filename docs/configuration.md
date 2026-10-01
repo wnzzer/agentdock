@@ -15,8 +15,18 @@ Commands, state directory, credentials, host-configuration reuse, per-session en
 | `agentdock serve`   | Run in the foreground (for systemd or another supervisor)      |
 | `agentdock init`    | Create the state directory without starting anything           |
 | `agentdock mcp`     | AgentDock's [agent tools](agent-tools.md) as a stdio MCP server |
+| `agentdock update`  | Install the latest npm release over this install (see below)   |
+| `agentdock update --check` | Only say whether a newer release exists                 |
 
 If a start fails, the command prints the reason from the log and exits with a non-zero code. On Windows, `agentdock stop` ends the gateway and its agents at once, since Windows has no gentler signal to send a background console program.
+
+### Updating
+
+`agentdock update`, or **Settings → Updates** in the page, runs `npm install -g @wnzzer/agentdock@<latest>` with `--prefix` set to wherever this copy is installed, so it replaces this install rather than adding one where npm points today. The latest version is looked up through the server's own npm, which keeps any registry mirror or proxy npm is configured with. A single-file release or a source build is not updated; the page shows the release link instead.
+
+Installing does not restart anything: a restart stops every running session, so the new version waits on disk until you choose. In the page, **Restart now** says how many sessions it will stop and asks again. It restarts a background gateway (`agentdock` / `agentdock start`) through a detached `agentdock restart`; a gateway systemd runs as `agentdock serve` exits with status 75 so the unit restarts it (`Restart=always` or `Restart=on-failure`). Anything else — a `serve` in a terminal, another supervisor — is restarted by hand.
+
+A global install made with `sudo` is not writable by the server's user, so the page shows the `sudo npm install -g …` command to run instead. Reinstalling without `sudo` under your own npm prefix (`npm config get prefix`) lets the button update it next time.
 
 Tarballs with `SHA256SUMS` are also attached to every [release](https://github.com/wnzzer/agentdock/releases).
 

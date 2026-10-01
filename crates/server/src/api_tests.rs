@@ -3139,6 +3139,9 @@ async fn shared_canvas_uses_existing_authentication_and_health_capabilities() {
     for (method, path) in [
         ("GET", "/api/secrets"),
         ("PUT", "/api/secrets/AGENTDOCK_SECRET_X"),
+        ("GET", "/api/update"),
+        ("POST", "/api/update"),
+        ("POST", "/api/update/restart"),
     ] {
         assert_eq!(
             call(f.app(), method, path, json!({"value":"x"})).await.0,
@@ -3169,7 +3172,8 @@ async fn shared_canvas_uses_existing_authentication_and_health_capabilities() {
             "workspace_file_search",
             "session_terminal_escape",
             "stored_secrets",
-            "agent_tools"
+            "agent_tools",
+            "self_update"
         ])
     );
     let allowed = Request::builder()

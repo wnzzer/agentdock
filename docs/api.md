@@ -326,3 +326,17 @@ Resolution order is `AGENTDOCK_*_BIN` override, then the server's `PATH`, then A
 The preferred source is the official Claude OAuth usage response (`five_hour`, `seven_day`, and optional model windows), using `utilization` and `resets_at`. The same response shape is used by [CPA Usage Keeper](https://github.com/Willxup/cpa-usage-keeper) through [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI); AgentDock only adopts its read-only request and normalization, not its proxy, account pool, or routing logic. OAuth provenance is carried by `usage.source: "claude_oauth_usage"`; the two named windows map to `primary`/`secondary`. The status-line fallback uses `mapping_basis: "status_line_window"`. Nothing polls, and an absent or malformed response is never rendered as zero usage.
 
 Recording that payload requires adding a status line command to the Claude sessions AgentDock starts, which overrides the account's own configuration for those sessions, so it is opt-in: set `AGENTDOCK_CLAUDE_USAGE_CAPTURE=1` on the server. The overlay is passed per launch with `--settings` — no settings file belonging to the user is written — and a status line the account already configured is run with the same payload and its output passed through unchanged. Sessions started outside AgentDock are never modified and record nothing.
+
+## Updates
+
+```text
+GET  /api/update[?refresh=true]
+POST /api/update
+POST /api/update/restart
+```
+
+Requires `self_update`. `GET` reports `current`, the `latest` release npm sees (cached for ten minutes; `refresh=true` asks again), whether it is `available`, a version already `installed` and waiting for a restart, the install `method` (`npm` or `manual`), whether the server's user can replace it (`writable`), the `command` to run by hand when it cannot, how a restart would happen (`restart`: `daemon` | `supervisor` | `manual`), how many sessions a restart would stop (`running_sessions`), and `check_error` when the lookup failed.
+
+`POST /api/update` installs the latest release over this npm install and verifies the binary now reports it; it answers with the new status. It is refused with 409 for a non-npm or unwritable install, when already current, or when that version is already installed; npm failures answer 502 with npm's last lines. Nothing restarts.
+
+`POST /api/update/restart` answers first and then restarts after a moment; 409 when `restart` is `manual`. The page then polls `/api/health` until it reports the new version. See [Configuration → Updating](configuration.md#updating).

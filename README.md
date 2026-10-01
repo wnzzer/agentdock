@@ -73,6 +73,7 @@ Prebuilt for macOS (arm64, x64), Linux (x64, arm64, static musl) and Windows (x6
 | `agentdock` / `agentdock --lan` | Start in the background, on loopback or on every interface |
 | `agentdock status` · `logs` | URL, access token and server log |
 | `agentdock restart` · `stop` | Restart or stop the background server |
+| `agentdock update` · `--check` | Install the latest npm release (or only check); Settings → Updates does the same |
 | `agentdock serve` | Run in the foreground, for systemd or another supervisor |
 
 ## Configuration and remote access

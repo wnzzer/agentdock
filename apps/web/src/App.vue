@@ -9,7 +9,7 @@ import WorkspacePane from "./features/WorkspacePane.vue";
 import FileExplorer from "./features/FileExplorer.vue";
 import LoadHistoryDialog from "./features/LoadHistoryDialog.vue";
 import WorkspaceDialog from "./features/WorkspaceDialog.vue";
-import SettingsDialog from "./features/SettingsDialog.vue";
+import SettingsDialog, { type SettingsSection } from "./features/SettingsDialog.vue";
 import HostFilePreview from "./features/HostFilePreview.vue";
 import HostUsage from "./features/HostUsage.vue";
 import { requestJump } from "./features/file-jumps";
@@ -68,7 +68,7 @@ const platform = ref<string>(), instanceLabel = ref<string>(), serverVersion = r
 const showWorkspace = ref(false), showAuth = ref(false), workspaceInitialPath = ref<string>();
 /** A file an agent named outside every workspace, shown read-only. */
 const hostPreview = ref<{ path: string; line?: number }>();
-const settingsSection = ref<'preferences' | 'agents' | 'endpoints' | 'accounts'>();
+const settingsSection = ref<SettingsSection>();
 const archiveBusyIds = ref<string[]>([]), keepBusyIds = ref<string[]>([]), deleteBusyIds = ref<string[]>([]), quickBusy = ref(false);
 const ephemeralIds = computed(() => ephemeralSessionIds(sessions.value));
 const discardPrompt = ref<{ paneId: string; session: Session }>();

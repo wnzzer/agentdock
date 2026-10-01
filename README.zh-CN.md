@@ -73,6 +73,7 @@ agentdock          # 后台启动 → http://127.0.0.1:28789/
 | `agentdock` / `agentdock --lan` | 后台启动，仅本机或所有网卡 |
 | `agentdock status` · `logs` | 访问地址、访问 token 与服务日志 |
 | `agentdock restart` · `stop` | 重启或停止后台服务 |
+| `agentdock update` · `--check` | 安装 npm 上的最新版（或只检查）；页面「设置 → 更新」效果相同 |
 | `agentdock serve` | 前台运行，用于 systemd 等进程管理器 |
 
 ## 配置与远程访问
