@@ -87,9 +87,22 @@ export class CodexChat extends ChatBase {
     const policy=CODEX_APPROVAL[message.mode];
     if(!policy)throw Error('Codex approves each command rather than switching between review modes.');
     this.approvalPolicy=policy.approvalPolicy;
-    this.sandboxPolicy=policy.sandboxPolicy;
+    // A turn's sandbox stays the thread's for the turns after it, so leaving
+    // `danger` has to name the sandbox to return to, or full access lingers.
+    this.sandboxPolicy=policy.sandboxPolicy??(this.sandboxOverridden?this.returnSandbox():undefined);
     this.permissionMode=message.mode;
     this.settings(this.models,this.launch.thread.model??this.defaultModel,this.effort);
+  }
+  /**
+   * The sandbox this thread had before AgentDock overrode it: what Codex
+   * reported when the thread opened. Full access reported for a thread whose
+   * launch never asked for it is an earlier override carried over by resume,
+   * not the thread's own setting, so that falls back to workspace-write.
+   */
+  returnSandbox() {
+    const chosen=this.launch.args.some(arg=>typeof arg==='string'&&arg.startsWith('sandbox_mode='));
+    if(this.baseSandbox&&(this.baseSandbox.type!=='dangerFullAccess'||chosen))return this.baseSandbox;
+    return {type:'workspaceWrite'};
   }
   selectModel(message) {
     if(this.active)throw Error('Wait for the current turn to finish before changing the model.');
@@ -106,10 +119,15 @@ export class CodexChat extends ChatBase {
       if(!this.nativeSessionId){
         const result=await this.port.rpc(this.launch.resume?'thread/resume':'thread/start',{...this.launch.thread,...(this.launch.resume?{threadId:this.launch.resume}:{})});
         if(!nativeId(result?.thread?.id))throw Error('Codex did not return a usable native thread ID.');
+        if(!this.baseSandbox&&result.sandbox&&typeof result.sandbox==='object')this.baseSandbox=result.sandbox;
         this.announce(result.thread.id);
       }
       if(this.active!==active)return;
       if(active.interrupted){this.finish('interrupted');return;}
+      // Each turn restates the controls, as Claude's does: a view rebuilt from
+      // a long, trimmed history still finds its model and permission choices.
+      if(this.models)this.settings(this.models,this.launch.thread.model??this.defaultModel,this.effort);
+      if(this.sandboxPolicy)this.sandboxOverridden=true;
       // Codex takes both per turn, so a change applies to the next one without
       // touching the thread or its context.
       const result=await this.port.rpc('turn/start',{threadId:this.nativeSessionId,input:[{type:'text',text:content}],...(this.launch.thread.model?{model:this.launch.thread.model}:{}),...(this.effort?{effort:this.effort}:{}),...(this.approvalPolicy?{approvalPolicy:this.approvalPolicy}:{}),...(this.sandboxPolicy?{sandboxPolicy:this.sandboxPolicy}:{})});

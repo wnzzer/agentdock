@@ -79,7 +79,7 @@ const pick = (provider: PreferenceProvider, field: 'endpoint_profile_id' | 'effo
           </select>
         </label>
         <label class="preference-row">
-          <span><strong>{{ t('Default permission') }}</strong><small>{{ t('How tools are approved each time a session starts. The session\'s own chip can change it while it runs.') }}</small></span>
+          <span><strong>{{ t('Default permission') }}</strong><small>{{ t('How tools are approved each time a session starts. The session\'s own chip can change it between turns.') }}</small></span>
           <select :value="preferences[provider].permission ?? ''" :class="{danger:preferences[provider].permission==='danger'}" :disabled="saving" @change="pick(provider,'permission')($event)">
             <option value="">{{ t('Client default') }}</option>
             <option v-for="mode in PERMISSION_CHOICES[provider]" :key="mode" :value="mode">{{ t(PERMISSION_LABELS[mode]) }}</option>

@@ -114,6 +114,25 @@ test('Codex resume happens on the first explicit message and permission grants r
   const records=await log();assert.equal(records.find(item=>item.method==='thread/resume').params.threadId,'saved-thread');
   assert.deepEqual(records.find(item=>item.id==='approval-1'&&!item.method).result,{permissions:{},scope:'turn'});
 },['resume','saved-thread']));
+test('Codex: leaving the unattended mode puts the thread\'s own sandbox back, since a turn\'s sandbox outlives it',async()=>fixture('codex',async({send,wait,log})=>{
+  await wait(event=>event.type==='settings'&&event.models?.length);
+  send({type:'permission',mode:'danger'});await wait(event=>event.type==='settings'&&event.permission_mode==='danger');
+  send({type:'message',id:'free',content:'simple'});await wait(event=>event.type==='turn'&&event.id==='free'&&event.status==='completed');
+  send({type:'permission',mode:'ask'});await wait(event=>event.type==='settings'&&event.permission_mode==='ask');
+  send({type:'message',id:'guarded',content:'simple'});await wait(event=>event.type==='turn'&&event.id==='guarded'&&event.status==='completed');
+  const turns=(await log()).filter(item=>item.method==='turn/start').map(item=>item.params);
+  assert.deepEqual(turns.at(-2).sandboxPolicy,{type:'dangerFullAccess'});
+  assert.equal(turns.at(-1).approvalPolicy,'on-request');
+  assert.deepEqual(turns.at(-1).sandboxPolicy,{type:'readOnly'},'full access must not carry over into ask');
+}));
+
+test('Codex restates its models every turn, so a history trimmed past the first announcement still has them',async()=>fixture('codex',async({send,wait,events})=>{
+  await wait(event=>event.type==='settings'&&event.models?.length);
+  const before=events.filter(event=>event.type==='settings'&&event.models?.length).length;
+  send({type:'message',id:'again',content:'simple'});await wait(event=>event.type==='turn'&&event.id==='again'&&event.status==='completed');
+  assert.ok(events.filter(event=>event.type==='settings'&&event.models?.length&&event.permission_modes?.length).length>before);
+}));
+
 test('Codex file-change and MCP tool items have complete lifecycle events',async()=>fixture('codex',async({send,wait,events})=>{
   send({type:'message',id:'tools',content:'tools'});await wait(event=>event.type==='turn'&&event.status==='completed');
   assert.deepEqual(events.filter(event=>event.type==='tool'&&event.id==='file-1').map(event=>event.status),['running','completed']);

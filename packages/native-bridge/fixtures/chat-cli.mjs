@@ -35,7 +35,7 @@ for await(const line of createInterface({input:process.stdin})) {
     // A real app-server publishes its models and the levels each one supports.
     // The real app-server answers with `data`, and marks some entries hidden.
     if(message.method==='model/list'){send({id:message.id,result:{data:[{id:'gpt-fixture',displayName:'Fixture',isDefault:true,supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}]},{id:'gpt-plain'},{id:'gpt-hidden',hidden:true}],nextCursor:null}});continue;}
-    if(message.method==='thread/start'||message.method==='thread/resume'){thread=message.params.threadId??thread;send({id:message.id,result:{thread:{id:thread}}});continue;}
+    if(message.method==='thread/start'||message.method==='thread/resume'){thread=message.params.threadId??thread;send({id:message.id,result:{thread:{id:thread},sandbox:{type:'readOnly'}}});continue;}
     // Steering joins the active turn; `review` is a turn that refuses it, like /review.
     if(message.method==='turn/steer'){
       if(message.params.expectedTurnId!==activeTurn||mode==='review'){send({id:message.id,error:{code:-32600,message:'This turn cannot be steered.'}});if(mode==='review'){mode='';completed();}continue;}

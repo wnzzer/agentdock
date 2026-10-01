@@ -324,7 +324,14 @@ pub(super) fn append(
     }
     if matches!(
         kind,
-        "ready" | "turn" | "exit" | "configuration" | "usage" | "approval" | "approval_resolved"
+        "ready"
+            | "turn"
+            | "exit"
+            | "configuration"
+            | "usage"
+            | "settings"
+            | "approval"
+            | "approval_resolved"
     ) {
         let encoded_anchors: String = tx.query_row(
             "SELECT anchors FROM conversation_meta WHERE session_id=?1",
@@ -354,6 +361,20 @@ pub(super) fn append(
             {
                 return Err(rusqlite::Error::InvalidQuery);
             }
+        } else if kind == "settings" {
+            // The model and permission chips are built from these, and a
+            // long session trims them away like any other event. The list of
+            // models and the current choice can arrive separately, so the
+            // last of each is kept, as pruneChatEvents does in the browser.
+            let lists_models = event["models"]
+                .as_array()
+                .is_some_and(|models| !models.is_empty());
+            let key = if lists_models {
+                "settings:models"
+            } else {
+                "settings"
+            };
+            anchors.insert(key.into(), event.clone());
         } else {
             anchors.insert(kind.into(), event.clone());
         }
@@ -456,6 +477,39 @@ mod tests {
             ));
         }
         std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn model_and_permission_settings_survive_retention() {
+        let store = Store::open(":memory:").unwrap();
+        let workspace = store.create_workspace("Fixture", "/fixture").unwrap();
+        let id = store
+            .create_session(workspace.id, ProviderKind::Codex, "Chat")
+            .unwrap()
+            .id;
+        store
+            .append_conversation_event(
+                id,
+                json!({"type":"settings","model":"a","models":[{"id":"a"},{"id":"b"}],"permission_modes":["ask","danger"]}),
+            )
+            .unwrap();
+        store
+            .append_conversation_event(id, json!({"type":"settings","model":"b"}))
+            .unwrap();
+        for _ in 0..2001 {
+            store
+                .append_conversation_event(id, json!({"type":"delta","text":"x"}))
+                .unwrap();
+        }
+        let conversation = store.conversation(id).unwrap();
+        assert!(conversation.truncated);
+        let settings: Vec<_> = conversation
+            .events
+            .iter()
+            .filter(|event| event["type"] == "settings")
+            .collect();
+        assert_eq!(settings.len(), 2, "both the list and the choice are kept");
+        assert_eq!(settings[0]["models"].as_array().unwrap().len(), 2);
+        assert_eq!(settings[1]["model"], "b", "in their original order");
     }
     #[test]
     fn transcript_retention_is_bounded_explicit_and_sequences_never_reset() {

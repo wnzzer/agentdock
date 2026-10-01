@@ -92,7 +92,7 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Only where the model offers it.": "仅在模型支持时生效。",
   "Deeper is slower and uses more of your quota.": "越深越慢，也更耗额度。",
   "Default permission": "默认权限",
-  "How tools are approved each time a session starts. The session's own chip can change it while it runs.": "会话每次启动时工具如何审批；运行中可以在会话的权限按钮里修改。",
+  "How tools are approved each time a session starts. The session's own chip can change it between turns.": "会话每次启动时工具如何审批；会话中可以在两轮之间用权限按钮修改。",
   "New sessions will run tools without asking. Only choose this for directories you trust completely.": "新会话会不经询问直接运行工具。只在完全信任的目录中使用。",
   "Switching to {branch} changes the files under these running sessions:": "切换到 {branch} 会改动这些运行中会话正在使用的文件：",
   "End them and switch, or move a session to its own branch from its branch chip.": "可以结束它们再切换，或者从会话的分支卡片把它移到自己的分支。",
@@ -1268,6 +1268,7 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Stop sessions and restart": "结束会话并重启",
   "Restart now": "立即重启",
   "From a terminal: agentdock update installs the same way, and agentdock update --check only looks.": "也可以在终端运行：agentdock update 以同样方式安装，agentdock update --check 只检查不安装。",
+  "Wait for the current turn and approvals to finish before changing this.": "请等当前回合和待确认的权限处理完再修改。",
 };
 
 export function normalizeLocale(value: unknown): Locale {
