@@ -319,12 +319,15 @@ async function hostChanged() {
     syncScroll({ target: input } as unknown as Event);
   } catch { /* Deleted or unreadable: an explicit reload says why. */ }
 }
+// A pane is unmounted while another tab or pane is in front of it, and the
+// cached draft outlives it, so a file shown again re-checks the host below:
+// changes made while it was away were announced to nobody.
 const stopWatching = onFilesChanged((workspaceId, paths) => {
   if (workspaceId !== props.workspaceId || !props.path || !touchesFile(paths, props.path)) return;
   if (kind.value === "text") void hostChanged();
   else { mediaVersion.value++; mediaFailed.value = false; }
 });
-watch([() => props.workspaceId, () => props.path], () => { revision++; saving.value = false; error.value = ""; success.value = ""; mediaFailed.value = false; loading.value = false; conflict.value = false; confirmReload.value = false; if (!draft.value.loaded) void read(); }, { immediate: true, flush: "sync" });
+watch([() => props.workspaceId, () => props.path], () => { revision++; saving.value = false; error.value = ""; success.value = ""; mediaFailed.value = false; loading.value = false; conflict.value = false; confirmReload.value = false; if (!draft.value.loaded) void read(); else if (kind.value === "text") void hostChanged(); else mediaVersion.value++; }, { immediate: true, flush: "sync" });
 onBeforeUnmount(() => { revision++; watcher?.disconnect(); paneWatcher?.disconnect(); clearTimeout(driverTimer); stopWatching(); });
 </script>
 <template>

@@ -295,8 +295,11 @@ async function navigate(event: KeyboardEvent, row: TreeRow) {
   }
 }
 
+/** A change announced mid-refresh may predate the listings it already read. */
+let changedDuringRefresh = false;
 async function refresh() {
   if (refreshing.value) return;
+  changedDuringRefresh = false;
   const remembered = new Set([...directories.value.keys(), ...expanded.value, ...restorePaths]);
   restorePaths = [];
   // Revalidate collapsed ancestors too, so a remembered nested expansion remains meaningful.
@@ -316,7 +319,12 @@ async function refresh() {
       if (entry?.kind === "directory") await loadDirectory(path);
       else expanded.value.delete(path);
     }
-  } finally { if (generation === refreshGeneration) refreshing.value = false; }
+  } finally {
+    if (generation === refreshGeneration) {
+      refreshing.value = false;
+      if (changedDuringRefresh) { changedDuringRefresh = false; void refresh(); }
+    }
+  }
 }
 
 /** Reveal uses only the target's ancestors and never scans unrelated directories. */
@@ -390,7 +398,8 @@ watch(() => props.selectedPath, path => { selected.value = path ?? ""; });
  * already in flight may predate the change, so it is repeated after.
  */
 const stopWatching = onFilesChanged((workspaceId, paths) => {
-  if (workspaceId !== props.workspaceId || refreshing.value) return;
+  if (workspaceId !== props.workspaceId) return;
+  if (refreshing.value) { changedDuringRefresh = true; return; }
   const loaded = [...directories.value].filter(([, state]) => state.loaded).map(([path]) => path);
   for (const path of directoriesToReload(paths, loaded) ?? loaded) {
     const running = pending.get(path);
