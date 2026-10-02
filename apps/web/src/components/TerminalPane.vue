@@ -35,6 +35,8 @@ const touchDevice = ref(false);
 const tapSelect = ref(false);
 /** One-shot Ctrl: the next character the soft keyboard types becomes a control code. */
 const ctrlArmed = ref(false);
+/** The less used keys fold behind ⋯ so the everyday ones fit one phone-wide row. */
+const moreKeys = ref(false);
 /**
  * Text waiting to be pasted, when the clipboard could not be read directly.
  * `undefined` means the paste field is closed.
@@ -236,18 +238,25 @@ onUnmounted(() => { stopPageReturn(); disposed = true; stream.dispose(); cleanup
     <div v-if="notice" :class="state === 'error' ? 'inline-error' : 'inline-notice'" :role="state === 'error' ? 'alert' : 'status'">{{ nativeNotice ? notice : t(notice) }}</div>
     <div ref="host" class="terminal-host" :aria-label="t('Native session {id}', { id: sessionId })" @pointerdown="gestureStart" @pointerup="gestureEnd" @pointercancel="gesture = undefined" />
     <div v-if="touchDevice" class="terminal-keys" role="group" :aria-label="t('Terminal keys')">
-      <button type="button" class="key-text" :aria-label="t('Escape')" :title="t('Escape')" @pointerdown="keepFocus" @click="pressEscape">Esc</button>
-      <button type="button" class="key-text" :class="{ armed: ctrlArmed }" :aria-pressed="ctrlArmed" :aria-label="t('Ctrl')" :title="t('Ctrl')" @pointerdown="keepFocus" @click="ctrlArmed = !ctrlArmed">Ctrl</button>
-      <button type="button" class="key-text" :aria-label="t('Tab')" :title="t('Tab')" @pointerdown="keepFocus" @click="pressTab(false)">Tab</button>
-      <button type="button" class="key-text" :aria-label="t('Shift+Tab')" :title="t('Shift+Tab')" @pointerdown="keepFocus" @click="pressTab(true)">⇧Tab</button>
-      <button type="button" :aria-label="t('Arrow left')" :title="t('Arrow left')" @pointerdown="keepFocus" @click="pressArrow('left')"><Icon name="chevron" :size="16" class="key-left" /></button>
-      <button type="button" :aria-label="t('Arrow up')" :title="t('Arrow up')" @pointerdown="keepFocus" @click="pressArrow('up')"><Icon name="chevron" :size="16" class="key-up" /></button>
-      <button type="button" :aria-label="t('Arrow down')" :title="t('Arrow down')" @pointerdown="keepFocus" @click="pressArrow('down')"><Icon name="chevron" :size="16" class="key-down" /></button>
-      <button type="button" :aria-label="t('Arrow right')" :title="t('Arrow right')" @pointerdown="keepFocus" @click="pressArrow('right')"><Icon name="chevron" :size="16" /></button>
-      <button type="button" :aria-label="t('Enter')" :title="t('Enter')" @pointerdown="keepFocus" @click="pressEnter"><Icon name="check" :size="16" /></button>
-      <button type="button" :aria-label="t('Paste')" :title="t('Paste')" @click="pressPaste"><Icon name="clipboard" :size="16" /></button>
-      <button type="button" :aria-label="t('Keyboard')" :title="t('Keyboard')" @click="showKeyboard"><Icon name="edit" :size="16" /></button>
-      <button type="button" :class="{ armed: tapSelect }" :aria-pressed="tapSelect" :aria-label="t('Tap a row to select it')" :title="t('Tap a row to select it')" @pointerdown="keepFocus" @click="tapSelect = !tapSelect"><Icon name="locate" :size="16" /></button>
+      <div v-if="moreKeys" class="terminal-keys-row">
+        <button type="button" class="key-text" :aria-label="t('Shift+Tab')" :title="t('Shift+Tab')" @pointerdown="keepFocus" @click="pressTab(true)">⇧Tab</button>
+        <button type="button" :aria-label="t('Paste')" :title="t('Paste')" @click="moreKeys = false; pressPaste()"><Icon name="clipboard" :size="16" /></button>
+        <button type="button" :aria-label="t('Keyboard')" :title="t('Keyboard')" @click="moreKeys = false; showKeyboard()"><Icon name="edit" :size="16" /></button>
+        <button type="button" :class="{ armed: tapSelect }" :aria-pressed="tapSelect" :aria-label="t('Tap a row to select it')" :title="t('Tap a row to select it')" @pointerdown="keepFocus" @click="tapSelect = !tapSelect"><Icon name="locate" :size="16" /></button>
+      </div>
+      <div class="terminal-keys-row">
+        <button type="button" class="key-text" :aria-label="t('Escape')" :title="t('Escape')" @pointerdown="keepFocus" @click="pressEscape">Esc</button>
+        <button type="button" class="key-text" :class="{ armed: ctrlArmed }" :aria-pressed="ctrlArmed" :aria-label="t('Ctrl')" :title="t('Ctrl')" @pointerdown="keepFocus" @click="ctrlArmed = !ctrlArmed">Ctrl</button>
+        <button type="button" class="key-text" :aria-label="t('Tab')" :title="t('Tab')" @pointerdown="keepFocus" @click="pressTab(false)">Tab</button>
+        <span class="terminal-keys-sep" aria-hidden="true" />
+        <button type="button" :aria-label="t('Arrow left')" :title="t('Arrow left')" @pointerdown="keepFocus" @click="pressArrow('left')"><Icon name="chevron" :size="16" class="key-left" /></button>
+        <button type="button" :aria-label="t('Arrow up')" :title="t('Arrow up')" @pointerdown="keepFocus" @click="pressArrow('up')"><Icon name="chevron" :size="16" class="key-up" /></button>
+        <button type="button" :aria-label="t('Arrow down')" :title="t('Arrow down')" @pointerdown="keepFocus" @click="pressArrow('down')"><Icon name="chevron" :size="16" class="key-down" /></button>
+        <button type="button" :aria-label="t('Arrow right')" :title="t('Arrow right')" @pointerdown="keepFocus" @click="pressArrow('right')"><Icon name="chevron" :size="16" /></button>
+        <button type="button" :aria-label="t('Enter')" :title="t('Enter')" @pointerdown="keepFocus" @click="pressEnter"><Icon name="check" :size="16" /></button>
+        <span class="terminal-keys-sep" aria-hidden="true" />
+        <button type="button" :class="{ armed: moreKeys || tapSelect }" :aria-expanded="moreKeys" :aria-label="t('More keys')" :title="t('More keys')" @pointerdown="keepFocus" @click="moreKeys = !moreKeys"><Icon name="more" :size="16" /></button>
+      </div>
     </div>
     <form v-if="pasteDraft !== undefined" class="terminal-paste" @submit.prevent="sendPaste" @keydown.esc.prevent="cancelPaste">
       <textarea ref="pasteField" v-model="pasteDraft" :aria-label="t('Text to paste')" :placeholder="t('Long-press here to paste, then send it to the terminal')" />

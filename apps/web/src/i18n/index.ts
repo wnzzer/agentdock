@@ -266,6 +266,7 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Arrow left": "左",
   "Arrow right": "右",
   "Paste": "粘贴",
+  "More keys": "更多按键",
   "Text to paste": "要粘贴的文本",
   "Send": "发送",
   "Long-press here to paste, then send it to the terminal": "在这里长按粘贴，然后发送到终端",

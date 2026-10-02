@@ -21,7 +21,7 @@
 .chat-markdown code{font-size:.9em;background:var(--fill);border-radius:4px;padding:2px 5px}
 .chat-markdown blockquote{border-left:3px solid #b4cdc4;margin:12px 0;padding:4px 13px;color:var(--ink-soft)}
 .chat-markdown li{margin:4px 0}
-.chat-markdown .chat-code{background:#f5f7f9;border:1px solid var(--border);border-radius:11px;margin:13px 0;overflow:hidden}
+.chat-markdown .chat-code{position:relative;background:#f5f7f9;border:1px solid var(--border);border-radius:11px;margin:13px 0;overflow:hidden}
 .chat-markdown .chat-code small{display:block;padding:7px 12px;border-bottom:1px solid var(--border);color:var(--muted);font:11px monospace}
 .chat-markdown pre{margin:0;padding:13px;max-width:100%;overflow-x:auto;white-space:pre;font-size:12px;line-height:1.8}
 .chat-markdown pre code{padding:0;background:none}
@@ -94,14 +94,17 @@
    has none of them. Floating over the terminal rather than taking a row of it:
    a full-screen program has already been told how tall the screen is, and
    shrinking it under the program would misalign every subsequent redraw. */
-/* More keys than a phone is wide: the bar scrolls sideways rather than wrapping
-   onto a second row over the terminal. */
-.terminal-keys { position: absolute; right: 9px; bottom: 9px; z-index: 3; display: flex; gap: 5px; max-width: calc(100% - 18px); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; padding: 4px; border-radius: 9px; border: 1px solid #dde7ea; background: #ffffffe6; backdrop-filter: blur(6px); box-shadow: 0 3px 14px #1c3a4a1f; }
-.terminal-keys::-webkit-scrollbar { display: none; }
-.terminal-keys>button { display: flex; flex-shrink: 0; align-items: center; justify-content: center; width: 33px; height: 30px; border: 0; border-radius: 6px; background: #f3f7f8; color: #7e929b; padding: 0; }
-.terminal-keys>button.key-text { width: auto; min-width: 33px; padding: 0 7px; font: 600 11px/1 "SFMono-Regular", Consolas, monospace; }
-.terminal-keys>button:active { background: #dcebe6; color: #4d7f72; }
-.terminal-keys>button.armed { background: #cfe9e0; color: #2f7364; }
+/* The everyday keys fit one phone-wide row; the rest open as a second row
+   above it from ⋯, so the bar never covers more than it has to. */
+.terminal-keys { position: absolute; right: 9px; bottom: 9px; z-index: 3; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: calc(100% - 18px); padding: 4px; border-radius: 9px; border: 1px solid #dde7ea; background: #ffffffe6; backdrop-filter: blur(6px); box-shadow: 0 3px 14px #1c3a4a1f; }
+.terminal-keys-row { display: flex; align-items: center; gap: 4px; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+.terminal-keys-row::-webkit-scrollbar { display: none; }
+.terminal-keys-sep { flex-shrink: 0; width: 1px; height: 18px; margin: 0 1px; background: #dde7ea; }
+.native-terminal.dark .terminal-keys-sep { background: #2c3f4c; }
+.terminal-keys button { display: flex; flex-shrink: 0; align-items: center; justify-content: center; width: 32px; height: 30px; border: 0; border-radius: 6px; background: #f3f7f8; color: #7e929b; padding: 0; }
+.terminal-keys button.key-text { width: auto; min-width: 32px; padding: 0 6px; font: 600 11px/1 "SFMono-Regular", Consolas, monospace; }
+.terminal-keys button:active { background: #dcebe6; color: #4d7f72; }
+.terminal-keys button.armed { background: #cfe9e0; color: #2f7364; }
 /* The glyph set has one chevron, pointing right; the arrow keys are that
    chevron turned, so the two directions stay visually identical. */
 .terminal-keys .key-up { transform: rotate(-90deg); }.terminal-keys .key-down { transform: rotate(90deg); }.terminal-keys .key-left { transform: rotate(180deg); }
@@ -112,9 +115,9 @@
 .native-terminal.dark .terminal-paste { border-color: #2c3f4c; background: #1e2e39; box-shadow: 0 6px 24px #0009; }
 .native-terminal.dark .terminal-paste>textarea { border-color: #2c3f4c; background: #17232d; color: #dde6eb; }
 .native-terminal.dark .terminal-keys { border-color: #2c3f4c; background: #1e2e39e6; box-shadow: 0 3px 14px #0008; }
-.native-terminal.dark .terminal-keys>button { background: #253744; color: #9fb4bf; }
-.native-terminal.dark .terminal-keys>button:active { background: #2f4c53; color: #7fd4c3; }
-.native-terminal.dark .terminal-keys>button.armed { background: #2b5750; color: #7fd4c3; }
+.native-terminal.dark .terminal-keys button { background: #253744; color: #9fb4bf; }
+.native-terminal.dark .terminal-keys button:active { background: #2f4c53; color: #7fd4c3; }
+.native-terminal.dark .terminal-keys button.armed { background: #2b5750; color: #7fd4c3; }
 .terminal-connection { display: flex; align-items: center; gap: 5px; padding: 5px 11px; min-height: 29px; flex-shrink: 0; background: #fcfdfd; color: #9cabaf; font-size: 8px; }.terminal-connection>.text-button { margin-left: auto; font-size: 8px; color: #97aaa8; }/* Vertical space here is a margin and never padding. The fit addon sizes the
    terminal from this element's computed `height`, which under border-box
    includes its own padding — so padding reads to it as room for more rows than
@@ -175,5 +178,8 @@
 .md-modes>button.active { background: #fff; color: var(--teal); font-weight: 600; box-shadow: 0 1px 2px #1b2a3614; }
 @media (pointer: coarse) { .md-modes>button { min-height: 34px; padding: 0 14px; font-size: 13px; } }
 
-.chat-code-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 8px}
-.chat-code-toolbar>small{color:var(--muted);font:11px ui-monospace,monospace}
+/* Copy sits in the block's top-right corner: over the language row when there
+   is one, over the code itself when there is not. */
+.chat-code-copy{position:absolute;top:2px;right:4px;z-index:1;border-radius:6px;background:#f5f7f9}
+.chat-markdown .chat-code>small{min-height:30px;padding-right:40px}
+@media(any-pointer:coarse){.chat-markdown .chat-code>small{min-height:36px;padding-top:10px}}
