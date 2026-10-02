@@ -34,6 +34,12 @@ use tokio::{
 pub struct ChatManager {
     sessions: Arc<Mutex<HashMap<SessionId, Arc<ChatRuntime>>>>,
     channels: Arc<Mutex<HashMap<SessionId, broadcast::Sender<Value>>>>,
+    /// The permission mode last chosen for each session. The clients forget
+    /// it on every restart -- and a session whose turns keep failing restarts
+    /// on every message -- so it is reapplied at each start, ahead of the
+    /// saved preference. A choice made while the client is stopped waits here
+    /// instead of being refused.
+    permissions: Arc<Mutex<HashMap<SessionId, String>>>,
 }
 pub struct ChatRuntime {
     commands: mpsc::Sender<Value>,
@@ -111,6 +117,19 @@ impl ChatManager {
             .expect("chat sessions")
             .get(&id)
             .cloned()
+    }
+    fn chosen_permission(&self, id: SessionId) -> Option<String> {
+        self.permissions
+            .lock()
+            .expect("chat permissions")
+            .get(&id)
+            .cloned()
+    }
+    fn choose_permission(&self, id: SessionId, mode: &str) {
+        self.permissions
+            .lock()
+            .expect("chat permissions")
+            .insert(id, mode.to_owned());
     }
     fn channel(&self, id: SessionId) -> broadcast::Sender<Value> {
         self.channels
@@ -338,10 +357,15 @@ pub async fn start_locked(state: &AppState, session: &Session) -> Result<Arc<Cha
         .await?;
         return Err(error);
     }
-    // Every start takes the preferred permission mode. Failing to apply it is
-    // not failing to start: the chip still shows the mode actually in force,
-    // and the user can change it there.
-    if let Some(mode) = crate::preferences::initial_permission(state, session).await? {
+    // Every start takes the mode last chosen for this session, else the
+    // preferred one. Failing to apply it is not failing to start: the chip
+    // still shows the mode actually in force, and the user can change it there.
+    let chosen = state.chats.chosen_permission(session.id);
+    let mode = match chosen {
+        Some(mode) => Some(mode),
+        None => crate::preferences::initial_permission(state, session).await?,
+    };
+    if let Some(mode) = mode {
         let _ = runtime
             .send(json!({"type": "permission", "mode": mode}))
             .await;
@@ -614,11 +638,14 @@ async fn select_permission(
     if !PERMISSION_MODES.contains(&input.mode.as_str()) {
         return Err(ApiError::bad("Unsupported permission mode."));
     }
-    let runtime = state
-        .chats
-        .get(id)
-        .filter(|r| r.running())
-        .ok_or_else(|| ApiError::conflict("Start the session before changing permissions"))?;
+    state.chats.choose_permission(id, &input.mode);
+    let Some(runtime) = state.chats.get(id).filter(|r| r.running()) else {
+        // Stopped, or exited after a failed turn: the next start applies it.
+        return Ok((
+            StatusCode::ACCEPTED,
+            Json(json!({"accepted":true,"id":null,"duplicate":false,"pending":true})),
+        ));
+    };
     runtime
         .send(json!({"type": "permission", "mode": input.mode}))
         .await?;

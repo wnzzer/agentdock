@@ -2104,6 +2104,40 @@ async fn opening_a_terminal_before_a_conversation_exists_is_refused() {
     assert!(body["error"].as_str().unwrap().contains("no conversation"));
 }
 
+#[tokio::test]
+async fn a_permission_chosen_while_stopped_waits_for_the_next_start() {
+    // A session whose client exited -- after a failed turn, say -- still shows
+    // the permission chip. Refusing the choice there left the phone with an
+    // error hidden behind its settings sheet and nothing changed.
+    let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
+    let cwd = dunce::canonicalize(f.path.join("repo")).unwrap();
+    let workspace = f
+        .state
+        .store
+        .create_workspace("fixture", cwd.to_str().unwrap())
+        .unwrap();
+    let session = f
+        .state
+        .store
+        .create_session_with_configuration(
+            workspace.id,
+            ProviderKind::ClaudeCode,
+            "Stopped",
+            None,
+            None,
+            None,
+            Default::default(),
+            false,
+        )
+        .unwrap();
+    let path = format!("/api/sessions/{}/conversation/permission", session.id);
+    let (status, body) = call(f.app(), "POST", &path, json!({"mode": "danger"})).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(body["pending"], true);
+    let (status, _) = call(f.app(), "POST", &path, json!({"mode": "everything"})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
 #[cfg(unix)]
 #[test]
 fn native_history_resume_rejects_original_source_retargeted_by_symlink() {

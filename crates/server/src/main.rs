@@ -294,12 +294,6 @@ fn print_access(state_dir: &std::path::Path, address: SocketAddr) {
         && let Some(token) = security::stored_token(state_dir)
     {
         println!("  Token    {token}");
-        // A deployment that has had its floor lowered says so every time it
-        // starts. Weakening this is allowed; forgetting it is not.
-        let minimum = security::minimum_token();
-        if minimum < security::MINIMUM_TOKEN {
-            println!("  Note     AGENTDOCK_TOKEN_MIN allows tokens of {minimum} characters here");
-        }
     }
 }
 
@@ -383,14 +377,12 @@ file:
   lan = true              # reachable from other machines (same as --lan)
   port = 28789            # or addr = "192.168.0.9:28789"
   token = "..."           # AGENTDOCK_TOKEN
-  token_min = 24          # shortest token this deployment accepts
 
 Any other key names the AGENTDOCK_ variable it spells: shell, claude-bin,
 instance-label, allowed-origins = ["http://..."], and so on.
 
 Listens on 127.0.0.1:28789 otherwise. A binding that reaches other machines
-needs an access token of at least 24 characters, which token_min can lower for
-a network you trust; one is generated and kept in the state directory unless a
+needs an access token; one is generated and kept in the state directory unless a
 token is given, and `status` prints it again. State lives in ~/.agentdock;
 AGENTDOCK_HOME or AGENTDOCK_STATE_DIR override it (that one cannot come from the
 file, which lives inside it), and existing project-local .agentdock databases

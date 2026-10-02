@@ -10,32 +10,6 @@ use serde::Deserialize;
 use std::{collections::HashSet, env, net::SocketAddr};
 use url::Url;
 
-/// Shortest token that is worth calling one. A network-reachable workspace is a
-/// shell on the machine, so a guessable password is the same as none.
-pub const MINIMUM_TOKEN: usize = 24;
-
-/// The length this deployment insists on, which is the above unless the person
-/// running it says otherwise.
-///
-/// Someone typing their own short token on a home network has made a judgement
-/// about their network, and that judgement is theirs to make. What the default
-/// buys is that nobody makes it by accident: it has to be written down, in a
-/// variable that says what it does, and the gateway says so on every start.
-///
-/// Zero means "any token at all" rather than "no token": an empty one is
-/// indistinguishable from none, and that door stays shut.
-pub fn minimum_token() -> usize {
-    minimum_from(env::var("AGENTDOCK_TOKEN_MIN").ok().as_deref())
-}
-fn minimum_from(raw: Option<&str>) -> usize {
-    match raw.map(str::trim).filter(|v| !v.is_empty()) {
-        // An unreadable value is not a licence to drop the floor: it is a typo,
-        // and a typo must not quietly weaken the deployment.
-        Some(value) => value.parse::<usize>().map_or(MINIMUM_TOKEN, |n| n.max(1)),
-        None => MINIMUM_TOKEN,
-    }
-}
-
 /// The token a client on this machine should present, if the deployment has
 /// one: the environment's, else the one kept in the state directory. Never
 /// creates one -- that is the server's business at startup.
@@ -80,7 +54,7 @@ pub fn resolve_token(
     let path = token_file(state_dir);
     if let Ok(existing) = std::fs::read_to_string(&path) {
         let existing = existing.trim().to_owned();
-        if existing.chars().count() >= minimum_token() {
+        if !existing.is_empty() {
             return Ok(Some(existing));
         }
     }
@@ -154,29 +128,13 @@ impl Security {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let token = token.filter(|v| !v.is_empty());
         if !address.ip().is_loopback() {
-            // Say what was actually wrong. "Requires a token" when one was given
-            // sends someone looking for a typo in the variable name rather than
-            // at its length, which is what this has cost twice.
-            let minimum = minimum_token();
-            match token.as_deref() {
-                None => {
-                    return Err(format!(
-                        "Listening on {address} reaches other machines, so it needs an access token of at least {minimum} characters. Set AGENTDOCK_TOKEN, or let AgentDock generate one by not setting it."
-                    )
-                    .into());
-                }
-                Some(value) if value.chars().count() < minimum => {
-                    // A token set in the environment wins over the generated
-                    // one, so a short one left over from an earlier attempt
-                    // blocks the path that would have fixed it. Say how to get
-                    // out rather than only what is wrong.
-                    return Err(format!(
-                        "AGENTDOCK_TOKEN is {} characters; {minimum} is the minimum for a binding that reaches other machines. Set a longer one, `unset AGENTDOCK_TOKEN` to have one generated, or lower the floor deliberately with AGENTDOCK_TOKEN_MIN.",
-                        value.chars().count()
-                    )
-                    .into());
-                }
-                Some(_) => {}
+            // How long the token is, is the deployment's call; having none at
+            // all would leave a shell on this machine open to the network.
+            if token.is_none() {
+                return Err(format!(
+                    "Listening on {address} reaches other machines, so it needs an access token. Set AGENTDOCK_TOKEN, or let AgentDock generate one by not setting it."
+                )
+                .into());
             }
         }
         let mut origins: HashSet<String> = ["http://127.0.0.1:5173", "http://localhost:5173"]
@@ -516,8 +474,8 @@ mod tests {
         }
     }
 
-    /// The length rule is the whole protection for a network binding, so it is
-    /// stated here rather than left to whoever reads the constructor.
+    /// Requiring a token is the whole protection for a network binding, so it
+    /// is stated here rather than left to whoever reads the constructor.
     /// `Security` holds the token, so it deliberately has no `Debug`; reading
     /// the rejection means matching rather than `unwrap_err`.
     fn rejection(address: SocketAddr, token: Option<String>) -> String {
@@ -528,33 +486,14 @@ mod tests {
     }
 
     #[test]
-    fn a_binding_that_reaches_other_machines_refuses_a_short_or_absent_token() {
+    fn a_binding_that_reaches_other_machines_needs_a_token_of_any_length() {
         let network: SocketAddr = "0.0.0.0:28789".parse().unwrap();
         let absent = rejection(network, None);
-        assert!(absent.contains("at least 24"), "{absent}");
-        // Saying how long it was is the difference between looking at the
-        // value and looking for a typo in the variable name.
-        let short = rejection(network, Some("qwe41235".into()));
-        assert!(short.contains("is 8 characters"), "{short}");
-        assert!(rejection(network, Some("x".repeat(24))).is_empty());
-    }
-
-    #[test]
-    fn the_token_floor_holds_unless_it_is_deliberately_written_down() {
-        assert_eq!(minimum_from(None), MINIMUM_TOKEN);
-        assert_eq!(minimum_from(Some("")), MINIMUM_TOKEN);
-        assert_eq!(minimum_from(Some("   ")), MINIMUM_TOKEN);
-        // Written down, it is honoured in either direction.
-        assert_eq!(minimum_from(Some("6")), 6);
-        assert_eq!(minimum_from(Some(" 40 ")), 40);
-        // Zero asks for no floor, and gets the one below which a token stops
-        // being a token at all: an empty one is the same as having none.
-        assert_eq!(minimum_from(Some("0")), 1);
-        // A typo is a typo. Reading it as "no minimum" would weaken a
-        // deployment by accident, which is the one thing this must not do.
-        assert_eq!(minimum_from(Some("six")), MINIMUM_TOKEN);
-        assert_eq!(minimum_from(Some("-4")), MINIMUM_TOKEN);
-        assert_eq!(minimum_from(Some("8 characters")), MINIMUM_TOKEN);
+        assert!(absent.contains("needs an access token"), "{absent}");
+        // An empty one is the same as none.
+        assert!(!rejection(network, Some(String::new())).is_empty());
+        assert!(rejection(network, Some("qwe41235".into())).is_empty());
+        assert!(rejection(network, Some("x".into())).is_empty());
     }
 
     /// Loopback keeps working with no token at all: the single-user host case

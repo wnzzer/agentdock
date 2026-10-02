@@ -81,7 +81,6 @@ Everything a deployment decides — whether it is reachable from other machines,
 lan = true              # reachable from other machines (same as --lan)
 port = 28789            # or addr = "192.168.0.9:28789"
 token = "..."           # AGENTDOCK_TOKEN
-token_min = 24          # shortest token this deployment accepts
 instance_label = "novel box"
 allowed-origins = ["http://box.local:28789"]
 ```
@@ -112,7 +111,6 @@ AGENTDOCK_HOME                # installation/state home; default ~/.agentdock fo
 AGENTDOCK_STATE_DIR           # optional persistent state directory
 AGENTDOCK_ADDR                # default 127.0.0.1:28789
 AGENTDOCK_TOKEN               # access token; required by a binding that reaches other machines
-AGENTDOCK_TOKEN_MIN           # shortest accepted token; default 24
 AGENTDOCK_ALLOWED_ORIGINS     # optional extra browser origins, comma-separated
 AGENTDOCK_WEB_DIR             # state-dir/web if installed, else source apps/web/dist
 AGENTDOCK_NATIVE_BRIDGE       # optional path to packages/native-bridge/history.mjs

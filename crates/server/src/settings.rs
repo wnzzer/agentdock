@@ -123,7 +123,7 @@ mod tests {
             lan = true
             port = 9000
             token = "abc123"
-            token_min = 6
+            max_sessions = 6
             instance_label = "novel box"
             allowed_origins = ["http://one.local", "http://two.local"]
             "#,
@@ -133,7 +133,7 @@ mod tests {
         assert_eq!(settings["AGENTDOCK_TOKEN"], "abc123");
         // Numbers and lists are written as themselves here and handed over in
         // the form the variables have always taken.
-        assert_eq!(settings["AGENTDOCK_TOKEN_MIN"], "6");
+        assert_eq!(settings["AGENTDOCK_MAX_SESSIONS"], "6");
         assert_eq!(settings["AGENTDOCK_INSTANCE_LABEL"], "novel box");
         assert_eq!(
             settings["AGENTDOCK_ALLOWED_ORIGINS"],

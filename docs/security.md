@@ -31,7 +31,7 @@ This is a **single trusted user's host workspace**, not a multi-tenant sandbox. 
 
 ### What this server can reach
 
-- **Network**: loopback only by default. A non-loopback bind refuses to start without `AGENTDOCK_TOKEN` (24+ characters), and Origin/Host must be allow-listed.
+- **Network**: loopback only by default. A non-loopback bind refuses to start without an access token (`AGENTDOCK_TOKEN`, or one it generates), and Origin/Host must be allow-listed.
 - **Directory picker**: limited to `AGENTDOCK_BROWSE_ROOTS`, defaulting to the working directory and the server user's home.
 - **New workspaces**: limited to `AGENTDOCK_WORKSPACE_ROOTS`, defaulting to the browsing roots. Workspaces created before this rule keep working; it governs new ones.
 - **File read/write**: confined to a workspace root. Paths are canonicalised and anything resolving outside is refused, as are `.git`, `.agentdock` and client configuration files. Deleting never follows a symlink out of the tree.
