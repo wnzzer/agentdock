@@ -273,7 +273,12 @@ async function pickPermission(mode: string) {
   if (!canConfigure.value || mode === livePermission.value) return;
   const session = props.session.id;
   actionBusy.value = true; error.value = '';
-  try { await request('/sessions/' + encodeURIComponent(session) + '/conversation/permission', json('POST', { mode })); }
+  try {
+    const ack = await request<{ pending?: boolean }>('/sessions/' + encodeURIComponent(session) + '/conversation/permission', json('POST', { mode }));
+    // Not running (stopped, or exited after a failed turn): the server keeps
+    // the choice for the next start rather than refusing it.
+    if (ack?.pending && props.session.id === session && mounted.value) notice.value = 'This permission mode applies when the session next starts.';
+  }
   catch (cause) { if (props.session.id === session && mounted.value) error.value = errorMessage(cause); }
   finally { if (props.session.id === session) actionBusy.value = false; }
 }
@@ -922,7 +927,7 @@ function keydown(event: KeyboardEvent) {
       <div v-if="supported&&!loading&&mode!=='structured'" class="chat-native-note"><p>{{ t(running?'This session is running in the native client. End it there before enabling chat; it will not be taken over automatically.':'Enable chat explicitly to continue this native session in a conversation view.') }}</p><button class="chat-primary" :disabled="isPreview||actionBusy||running" @click="explicitOpen">{{ t('Enable conversation view') }}</button><button v-if="legacyAvailable" class="chat-link" @click="emit('legacy')">{{ t('Open native client view') }}</button></div>
     </div>
     <button v-if="!followBottom" class="chat-latest" @click="scrollToLatest(true)">↓ {{ t('Latest message') }}</button>
-    <BottomSheet v-if="mobile && optionsOpen" :title="t('Session settings')" @opened="chipsInSheet=true" @close="optionsClosed"><div :id="optionsTarget" class="chat-options-body" /></BottomSheet>
+    <BottomSheet v-if="mobile && optionsOpen" :title="t('Session settings')" @opened="chipsInSheet=true" @close="optionsClosed"><div v-if="error" class="chat-alert chat-options-alert" role="alert">{{ error }}</div><div v-else-if="notice" class="chat-notice chat-options-alert" role="status">{{ t(notice) }}</div><div :id="optionsTarget" class="chat-options-body" /></BottomSheet>
     <form :class="['chat-composer', { 'is-phone': mobile }]" @submit.prevent="send()">
       <div v-if="branchConfirm" class="chat-endpoint-confirm"><strong>{{ t('Move this session to {branch}?', { branch: branchConfirm }) }}</strong><p>{{ t('It restarts in that branch\'s worktree with a new native context. Earlier messages stay visible here but are not sent to it.') }}</p><div><button type="button" :disabled="actionBusy" @click="moveToBranch(branchConfirm)">{{ t('Move to {branch}', { branch: branchConfirm }) }}</button><button type="button" @click="branchConfirm=''">{{ t('Cancel') }}</button></div></div><div v-if="handoffTarget" class="chat-endpoint-confirm chat-handoff-confirm"><strong>{{ t('Continue this conversation in {provider}?', { provider: providerLabel(handoffTarget.provider) }) }}</strong><p>{{ t('A new {provider} session opens with this conversation written into its message box. Read it, add what to do next, then send. This session stays as it is; tool output and files it opened are not carried over.', { provider: providerLabel(handoffTarget.provider) }) }}</p><div><button type="button" :disabled="actionBusy" @click="confirmHandoff">{{ t('Open in {provider}', { provider: providerLabel(handoffTarget.provider) }) }}</button><button type="button" @click="handoffTarget=undefined">{{ t('Cancel') }}</button></div></div><div v-if="launchFallback" class="chat-endpoint-confirm"><strong>{{ t('{model} could not be switched to mid-conversation', { model: launchFallbackName }) }}</strong><p>{{ t('This endpoint refuses the availability check the client makes when switching models live. Starting the session on this model works instead, but begins a new native context: earlier messages stay visible here and are not sent to it.') }}</p><div><button type="button" :disabled="!canConfigure" @click="applyModelAtLaunch">{{ t('Start a new context on this model') }}</button><button type="button" @click="launchFallback=''">{{ t('Cancel') }}</button></div></div><div v-if="endpointConfirm" class="chat-endpoint-confirm"><strong>{{ t('Apply this configuration change?') }}</strong><p>{{ t('Only an idle session can switch. Its current bridge will close; the next message starts a new native context. Old messages stay visible but are never sent to the new endpoint.') }}</p><div><button type="button" :disabled="!canConfigure" @click="configure">{{ t('Confirm endpoint change') }}</button><button type="button" @click="endpointConfirm=false;selectedProfile=session.endpoint_profile_id??'';selectedEffort=''">{{ t('Cancel') }}</button></div></div>
       <div v-if="mentionsOpen" class="chat-commands chat-mentions" role="listbox" :aria-label="t('Workspace files')"><button v-for="(hit,index) in mentionHits" :key="hit.path" type="button" role="option" :aria-selected="index===mentionIndex" :class="{highlighted:index===mentionIndex}" @mousedown.prevent="chooseMention(hit)" @mouseenter="mentionIndex=index"><strong>{{ hit.name }}</strong><small>{{ hit.path }}</small></button><small>{{ t('Files in this workspace · Enter or Tab to insert') }}</small></div>
@@ -1279,7 +1284,7 @@ function keydown(event: KeyboardEvent) {
 </style>
 
 <style scoped>
-.chat-message-actions{display:flex;margin:4px 0 -6px -4px;opacity:.6;transition:opacity .15s}.chat-message.user .chat-message-actions{justify-content:flex-end;margin:4px -8px -8px 0}.chat-message:hover .chat-message-actions,.chat-message-actions:focus-within{opacity:1}
+.chat-options-alert{margin:0 12px 8px;border-radius:8px;border:0}.chat-message-actions{display:flex;margin:4px 0 -6px -4px;opacity:.6;transition:opacity .15s}.chat-message.user .chat-message-actions{justify-content:flex-end;margin:4px -8px -8px 0}.chat-message:hover .chat-message-actions,.chat-message-actions:focus-within{opacity:1}
 .chat-message :deep(.chat-markdown){-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
 .chat-composer>textarea{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
 </style>

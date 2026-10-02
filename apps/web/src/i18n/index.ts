@@ -1214,6 +1214,7 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Endpoint": "端点",
   "Effort": "思考深度",
   "Permission": "权限",
+  "This permission mode applies when the session next starts.": "该权限模式会在会话下次启动时生效。",
   "New API key": "新的 API key",
   "Directory": "目录",
   "Create endpoint profile “{name}”": "新建端点配置「{name}」",
