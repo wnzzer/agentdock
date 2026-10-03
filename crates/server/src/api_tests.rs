@@ -1799,7 +1799,11 @@ async fn websocket_detach_reconnect_retains_native_process() {
     .await
     .unwrap();
     assert!(ponged);
-    assert!(!String::from_utf8_lossy(&after).contains("AD_SOCKET_READY"));
+    // The sequence numbers above are the guarantee. ConPTY repaints the whole
+    // screen on Windows, so earlier text can reappear there as new output.
+    if !cfg!(windows) {
+        assert!(!String::from_utf8_lossy(&after).contains("AD_SOCKET_READY"));
+    }
     ws.close(None).await.ok();
     drop(ws);
     // Another process's numbering is not this one's: the view starts over.
