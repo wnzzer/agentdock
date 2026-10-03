@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createSessionStream, SESSION_STREAM_TIMEOUT_MS, SESSION_STREAM_TIMEOUT, SESSION_STREAM_ERROR, SESSION_STREAM_CLOSED, SESSION_STREAM_RENDER_ERROR } from './session-stream.ts';
+import { createSessionStream, SESSION_STREAM_TIMEOUT_MS, SESSION_STREAM_TIMEOUT, SESSION_STREAM_ERROR, SESSION_STREAM_CLOSED, SESSION_STREAM_RENDER_ERROR, HEARTBEAT_MS, PROBE_TIMEOUT_MS, RETRY_DELAYS_MS, PING_MESSAGE, PONG_MESSAGE } from './session-stream.ts';
 
 class FakeSocket {
   readyState=0;binaryType='blob';onopen=null;onmessage=null;onerror=null;onclose=null;sent=[];closes=0;throwSend=false;
@@ -96,4 +96,66 @@ test('a native exit retains exited state even if a close event was already queue
   const h=harness();h.stream.connect('ws://fixture');h.sockets[0].open();const staleClose=h.sockets[0].onclose;
   h.stream.finish('Process exited.');staleClose({});
   assert.deepEqual(h.states.at(-1),{state:'exited',notice:'Process exited.'});assert.equal(h.stream.send('after-exit'),false);
+});
+
+function resilient(extra={}){
+  let now=0,hidden=false;const clock=fakeClock();const advance=clock.advance;
+  clock.advance=ms=>{now+=ms;advance(ms);};
+  const h=harness({reconnect:true,hidden:()=>hidden,now:()=>now,setTimer:clock.setTimer,clearTimer:clock.clearTimer,...extra});
+  h.clock=clock;return Object.assign(h,{hide(value){hidden=value;}});
+}
+
+test('a resilient view re-attaches on its own after a drop, asking the URL again each time',()=>{
+  let n=0;const h=resilient();h.stream.connect(()=>`ws://fixture/${++n}`);
+  h.sockets[0].open();h.sockets[0].remoteClose();
+  // No error is shown while it retries.
+  assert.deepEqual(h.states.at(-1),{state:'connecting',notice:''});
+  h.clock.advance(RETRY_DELAYS_MS[0]);assert.equal(h.sockets.length,2);assert.equal(n,2);
+  h.sockets[1].open();assert.equal(h.states.at(-1).state,'connected');
+  // Nothing typed before the drop was queued for the new socket.
+  assert.deepEqual(h.sockets[1].sent,[]);
+});
+
+test('a resilient view reports only a run of failures in a row',()=>{
+  const h=resilient();h.stream.connect('ws://fixture/session');
+  for(let i=0;i<RETRY_DELAYS_MS.length;i++){h.sockets.at(-1).error();assert.equal(h.states.at(-1).state,'connecting');h.clock.advance(RETRY_DELAYS_MS[i]);}
+  h.sockets.at(-1).error();
+  assert.deepEqual(h.states.at(-1),{state:'error',notice:SESSION_STREAM_ERROR});
+  h.clock.advance(60_000);assert.equal(h.sockets.length,RETRY_DELAYS_MS.length+1);
+});
+
+test('a deliberate stop, an exit or a server-reported failure is never retried',()=>{
+  for(const end of [s=>s.disconnect(),s=>s.finish('exited'),s=>s.fail('server said no')]){
+    const h=resilient();h.stream.connect('ws://fixture/session');h.sockets[0].open();end(h.stream);
+    h.clock.advance(60_000);assert.equal(h.sockets.length,1);
+  }
+});
+
+test('a silent socket is probed and replaced; pongs never reach the pane',()=>{
+  const h=resilient();h.stream.connect('ws://fixture/session');h.sockets[0].open();
+  h.clock.advance(HEARTBEAT_MS);assert.deepEqual(h.sockets[0].sent,[PING_MESSAGE]);
+  h.sockets[0].message(PONG_MESSAGE);assert.deepEqual(h.messages,[]);
+  h.clock.advance(HEARTBEAT_MS);assert.equal(h.sockets.length,1);
+  // Now the network goes quiet: no pong, no output.
+  h.clock.advance(HEARTBEAT_MS*2);
+  assert.equal(h.sockets[0].closes,1);assert.equal(h.states.at(-1).state,'connecting');
+  h.clock.advance(RETRY_DELAYS_MS[0]);assert.equal(h.sockets.length,2);
+});
+
+test('waking probes a socket that looks open, and replaces it if it does not answer',()=>{
+  const h=resilient();h.stream.connect('ws://fixture/session');h.sockets[0].open();
+  h.stream.wake(false);assert.deepEqual(h.sockets[0].sent,[PING_MESSAGE]);
+  h.sockets[0].message('output');h.clock.advance(PROBE_TIMEOUT_MS);assert.equal(h.sockets.length,1);
+  h.stream.wake(false);h.clock.advance(PROBE_TIMEOUT_MS);assert.equal(h.sockets[0].closes,1);
+  h.clock.advance(RETRY_DELAYS_MS[0]);assert.equal(h.sockets.length,2);
+  // A stale return replaces it straight away.
+  h.sockets[1].open();h.stream.wake(true);assert.equal(h.sockets.length,3);
+});
+
+test('out of sight a dropped view waits for the page instead of retrying',()=>{
+  const h=resilient();h.stream.connect('ws://fixture/session');h.sockets[0].open();
+  h.hide(true);h.sockets[0].remoteClose();h.clock.advance(60_000);assert.equal(h.sockets.length,1);
+  h.hide(false);h.stream.wake(true);assert.equal(h.sockets.length,2);
+  // A view that gave up also tries again when the page returns.
+  const g=resilient();g.stream.connect('ws://fixture/session');g.stream.fail('gave up');g.stream.wake(false);assert.equal(g.sockets.length,2);
 });

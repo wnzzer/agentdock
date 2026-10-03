@@ -932,7 +932,14 @@ async fn stream(state: AppState, id: SessionId, socket: WebSocket) {
                 if value["type"]=="snapshot" && let Some(seq)=value["events"].as_array().and_then(|v|v.last()).and_then(|v|v["seq"].as_u64()){last_seq=seq;}
                 if crate::send_frame(&mut sender,Message::Text(value.to_string().into())).await.is_err(){break;}
             }
-            incoming=receiver.next()=>match incoming {Some(Ok(Message::Ping(bytes)))=>{if crate::send_frame(&mut sender,Message::Pong(bytes)).await.is_err(){break;}},Some(Ok(Message::Pong(_)))=>{},_=>break},
+            incoming=receiver.next()=>match incoming {
+                Some(Ok(Message::Ping(bytes)))=>{if crate::send_frame(&mut sender,Message::Pong(bytes)).await.is_err(){break;}},
+                Some(Ok(Message::Pong(_)))=>{},
+                // A browser cannot send a WebSocket ping, so the view probes
+                // with a message of its own to tell a quiet stream from a dead one.
+                Some(Ok(Message::Text(text))) if serde_json::from_str::<Value>(&text).is_ok_and(|v| v["type"]=="ping")=>{if crate::send_frame(&mut sender,Message::Text(json!({"type":"pong"}).to_string().into())).await.is_err(){break;}},
+                _=>break,
+            },
         }
     }
 }

@@ -593,6 +593,18 @@ async fn structured_websocket_only_attaches_and_disconnection_keeps_native_proce
     let snapshot: Value = serde_json::from_str(first.to_text().unwrap()).unwrap();
     assert_eq!(snapshot["running"], false);
     assert!(fixture.state.chats.get(id).is_none());
+    // A browser cannot send a WebSocket ping, so the view probes with its own.
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(
+        json!({"type":"ping"}).to_string().into(),
+    ))
+    .await
+    .unwrap();
+    let pong = tokio::time::timeout(Duration::from_secs(2), ws.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(pong.to_text().unwrap(), r#"{"type":"pong"}"#);
     ws.close(None).await.unwrap();
     {
         let _guard = fixture.state.operations.lock().await;

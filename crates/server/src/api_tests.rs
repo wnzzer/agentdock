@@ -1717,7 +1717,7 @@ async fn websocket_detach_reconnect_retains_native_process() {
     ws.close(None).await.unwrap();
     drop(ws);
     assert!(native.running());
-    let (mut ws, _) = connect_async(url).await.unwrap();
+    let (mut ws, _) = connect_async(url.clone()).await.unwrap();
     let mut replay = Vec::new();
     tokio::time::timeout(Duration::from_secs(4), async {
         while let Some(Ok(event)) = ws.next().await {
@@ -1736,6 +1736,78 @@ async fn websocket_detach_reconnect_retains_native_process() {
         &native,
         &f.state.runtime.get(&s.id.to_string()).unwrap()
     ));
+    ws.close(None).await.ok();
+
+    // A framed view numbers what it receives and can resume after it.
+    let control = |message: &WsMessage| match message {
+        WsMessage::Text(text) => serde_json::from_str::<Value>(text).ok(),
+        _ => None,
+    };
+    let (mut ws, _) = connect_async(format!("{url}?framed=true")).await.unwrap();
+    let hello = control(&ws.next().await.unwrap().unwrap()).unwrap();
+    assert_eq!(hello["type"], "stream");
+    assert_eq!(hello["resumed"], false);
+    let instance = hello["runtime"].as_str().unwrap().to_owned();
+    let mut seen = 0u64;
+    let mut framed = Vec::new();
+    tokio::time::timeout(Duration::from_secs(4), async {
+        while let Some(Ok(WsMessage::Binary(data))) = ws.next().await {
+            let seq = u64::from_be_bytes(data[..8].try_into().unwrap());
+            assert!(seq > seen, "frames arrive in sequence order");
+            seen = seq;
+            framed.extend_from_slice(&data[8..]);
+            if String::from_utf8_lossy(&framed).contains("AD_SOCKET_READY") {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    ws.close(None).await.ok();
+    drop(ws);
+    let resume = format!("{url}?framed=true&runtime={instance}&after={seen}");
+    let (mut ws, _) = connect_async(resume).await.unwrap();
+    let hello = control(&ws.next().await.unwrap().unwrap()).unwrap();
+    assert_eq!(hello["resumed"], true);
+    ws.send(WsMessage::Text(json!({"type":"ping"}).to_string().into()))
+        .await
+        .unwrap();
+    ws.send(WsMessage::Text(
+        json!({"type":"input","data":announce("AD", "RESUME")})
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+    let mut ponged = false;
+    let mut after = Vec::new();
+    tokio::time::timeout(Duration::from_secs(4), async {
+        while let Some(Ok(event)) = ws.next().await {
+            match event {
+                WsMessage::Binary(data) => {
+                    let seq = u64::from_be_bytes(data[..8].try_into().unwrap());
+                    assert!(seq > seen, "a resumed view is not sent what it already has");
+                    after.extend_from_slice(&data[8..]);
+                    if String::from_utf8_lossy(&after).contains("AD_RESUME_READY") {
+                        break;
+                    }
+                }
+                other => ponged |= control(&other).is_some_and(|v| v["type"] == "pong"),
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(ponged);
+    assert!(!String::from_utf8_lossy(&after).contains("AD_SOCKET_READY"));
+    ws.close(None).await.ok();
+    drop(ws);
+    // Another process's numbering is not this one's: the view starts over.
+    let (mut ws, _) = connect_async(format!("{url}?framed=true&runtime=other&after={seen}"))
+        .await
+        .unwrap();
+    let hello = control(&ws.next().await.unwrap().unwrap()).unwrap();
+    assert_eq!(hello["resumed"], false);
     native.stop().await.unwrap();
     ws.close(None).await.ok();
     server.abort();

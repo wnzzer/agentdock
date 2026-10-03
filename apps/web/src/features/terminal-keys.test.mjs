@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { arrowSequence, repeatArrow, selectionPresses, isTap, ctrlSequence, ENTER_SEQUENCE, ESCAPE_SEQUENCE, TAB_SEQUENCE, BACKTAB_SEQUENCE } from './terminal-keys.ts';
+import { arrowSequence, repeatArrow, selectionPresses, isTap, ctrlSequence, shiftSequence, tabSequence, ENTER_SEQUENCE, ESCAPE_SEQUENCE, TAB_SEQUENCE, BACKTAB_SEQUENCE } from './terminal-keys.ts';
 
 test('arrow keys use the encoding the terminal state asks for', () => {
   // Outside application cursor mode the CSI form is what a shell expects.
@@ -10,6 +10,23 @@ test('arrow keys use the encoding the terminal state asks for', () => {
   // A full-screen program that enabled DECCKM expects the SS3 form instead.
   assert.equal(arrowSequence('up', true), 'OA');
   assert.equal(arrowSequence('down', true), 'OB');
+});
+
+test('a modified arrow uses the CSI parameter form in either cursor mode', () => {
+  assert.equal(arrowSequence('left', false, { ctrl: true }), '\x1b[1;5D');
+  assert.equal(arrowSequence('left', true, { ctrl: true }), '\x1b[1;5D');
+  assert.equal(arrowSequence('up', true, { shift: true }), '\x1b[1;2A');
+  assert.equal(arrowSequence('right', false, { shift: true, ctrl: true }), '\x1b[1;6C');
+  // No modifier armed is the plain key.
+  assert.equal(arrowSequence('up', true, {}), '\x1bOA');
+});
+
+test('shift turns tab into shift+tab and a typed letter into its capital', () => {
+  assert.equal(tabSequence(), TAB_SEQUENCE);
+  assert.equal(tabSequence({ shift: true }), BACKTAB_SEQUENCE);
+  assert.equal(shiftSequence('a'), 'A');
+  // A word from an input method passes through unchanged.
+  assert.equal(shiftSequence('hello'), 'hello');
 });
 
 test('enter sends a carriage return, which is what accepts a prompt', () => {
@@ -60,7 +77,9 @@ test('the terminal surface exposes the controls and keeps them out of the scroll
   // Without these the feature does not exist, however correct the helpers are.
   assert.match(source, /terminal-keys/);
   assert.match(source, /class="terminal-keys"/);
-  for (const label of ['Escape', 'Ctrl', 'Tab', 'Shift+Tab', 'Arrow left', 'Arrow up', 'Arrow down', 'Arrow right', 'Enter', 'Paste', 'Keyboard']) assert.ok(source.includes(`t('${label}')`), `${label} control is present`);
+  for (const label of ['Escape', 'Ctrl', 'Shift', 'Tab', 'Arrow left', 'Arrow up', 'Arrow down', 'Arrow right', 'Enter', 'Paste', 'Keyboard']) assert.ok(source.includes(`t('${label}')`), `${label} control is present`);
+  // Shift+Tab is Shift armed and then Tab, not a second Tab-looking button.
+  assert.doesNotMatch(source, />⇧Tab</);
   const styles = readFileSync(new URL('./workflows.css', import.meta.url), 'utf8');
   // Floating, not a row of the terminal: a full-screen program has been told
   // how tall the screen is, and taking a row back would misalign its redraws.

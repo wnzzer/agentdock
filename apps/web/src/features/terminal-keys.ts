@@ -14,10 +14,17 @@ export type ArrowKey = "up" | "down" | "left" | "right";
  * A`; outside that mode the same key is `ESC [ A`. Sending the wrong one is
  * silently ignored or, worse, printed, so the current mode decides.
  */
-export function arrowSequence(key: ArrowKey, applicationCursorKeys: boolean): string {
+export function arrowSequence(key: ArrowKey, applicationCursorKeys: boolean, modifiers: KeyModifiers = {}): string {
   const final = { up: "A", down: "B", right: "C", left: "D" }[key];
-  return applicationCursorKeys ? `O${final}` : `[${final}`;
+  // A modified arrow has one encoding in either mode: `CSI 1 ; m X`, where m is
+  // 1 plus Shift (1) and Ctrl (4) -- what xterm sends for Ctrl+Left to jump a word.
+  const code = 1 + (modifiers.shift ? 1 : 0) + (modifiers.ctrl ? 4 : 0);
+  if (code > 1) return `\x1b[1;${code}${final}`;
+  return applicationCursorKeys ? `\x1bO${final}` : `\x1b[${final}`;
 }
+
+/** The one-shot modifiers armed on the bar for the next key. */
+export interface KeyModifiers { shift?: boolean; ctrl?: boolean }
 
 /** What the Enter key sends: a carriage return, not a newline. */
 export const ENTER_SEQUENCE = "\r";
@@ -31,6 +38,20 @@ export const ESCAPE_SEQUENCE = "\x1b";
 /** Tab, and Shift+Tab (CBT), which agent clients use to cycle their modes. */
 export const TAB_SEQUENCE = "\t";
 export const BACKTAB_SEQUENCE = "\x1b[Z";
+
+/**
+ * Tab with the bar's Shift armed is Shift+Tab, which agent clients use to cycle
+ * their modes. Shift is a modifier rather than a key of its own so the bar does
+ * not carry two Tab buttons that look alike.
+ */
+export function tabSequence(modifiers: KeyModifiers = {}): string {
+  return modifiers.shift ? BACKTAB_SEQUENCE : TAB_SEQUENCE;
+}
+
+/** A character typed on the soft keyboard while the bar's Shift is armed. */
+export function shiftSequence(data: string): string {
+  return data.length === 1 ? data.toUpperCase() : data;
+}
 
 /**
  * What a key typed while Ctrl is held sends.

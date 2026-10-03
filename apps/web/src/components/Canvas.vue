@@ -19,6 +19,7 @@ import LayoutNode from "./LayoutNode.vue";
 import Icon from "../features/Icon.vue";
 import { activatePane, applyPreset, closePane as removePane, containerId, createPane, dockPane, findNode, findNodes, flattenPanes, projectLayout, replacePane, resizeSplit, restoreCollapsed, selectionGroups, splitPane, updatePane, validateLayout, type DockPosition, type LayoutPreset } from "../layout/layout-engine";
 import { useI18n } from "../i18n";
+import { SWIPE_EDGE_PX, SWIPE_LONG_PRESS_MS, swipeAxis, swipeBlockedAt, swipeOffset, swipeOutcome, type SwipeTarget } from "../features/pane-swipe";
 const { t } = useI18n();
 
 const props = withDefaults(defineProps<{
@@ -43,7 +44,7 @@ const props = withDefaults(defineProps<{
    * tools. The saved geometry is untouched, so a wider screen gets it back. */
   compact?: boolean;
 }>(), { minWidth: 280, minHeight: 180 });
-const emit = defineEmits<{ "update:modelValue": [document: LayoutDocument]; "select-pane": [pane: PaneNode]; "open-pane": [pane: PaneNode]; "create-session": [targetId: string, provider: ProviderKind, ephemeral: boolean]; "reveal-session": [sessionId: string] }>();
+const emit = defineEmits<{ "update:modelValue": [document: LayoutDocument]; "select-pane": [pane: PaneNode]; "open-pane": [pane: PaneNode]; "create-session": [targetId: string, provider: ProviderKind, ephemeral: boolean] }>();
 defineSlots<{ pane(props: { pane: PaneNode }): unknown }>();
 const working = shallowRef<LayoutDocument>(restoreCollapsed(props.modelValue));
 const stage = ref<HTMLElement | null>(null);
@@ -218,6 +219,65 @@ async function focusPane(id: string): Promise<boolean> {
 }
 defineExpose({ openPane, openPaneAt, focusPane, closePane: close, maximizePane: maximize });
 
+/**
+ * Sideways swipe between open views on a phone, in the order the view
+ * switcher lists them. The view follows the finger and the next one slides in
+ * from the side it was pulled from. See pane-swipe.ts for when a touch counts.
+ */
+const compactContent = ref<HTMLElement | null>(null);
+const enterFrom = ref<"left" | "right" | null>(null);
+let swipe: { x: number; y: number; at: number; axis?: "x" | "y"; dx: number } | undefined;
+let swipeSettle: ReturnType<typeof setTimeout> | undefined;
+function compactNeighbor(step: -1 | 1) {
+  const index = panes.value.findIndex(pane => pane.id === compactPane.value?.id);
+  return index < 0 ? undefined : panes.value[index + step];
+}
+function setSwipeOffset(offset: number, animate: boolean) {
+  const element = compactContent.value; if (!element) return;
+  element.style.transition = animate ? "transform .2s cubic-bezier(.2,.8,.2,1)" : "none";
+  element.style.transform = offset ? `translateX(${offset}px)` : "";
+}
+function swipeStart(event: TouchEvent) {
+  swipe = undefined;
+  if (event.touches.length !== 1 || panes.value.length < 2 || swipeSettle) return;
+  const touch = event.touches[0]!, target = event.target as Element | null;
+  if (touch.clientX < SWIPE_EDGE_PX || touch.clientX > window.innerWidth - SWIPE_EDGE_PX) return;
+  if (target?.closest?.(".terminal-keys, .terminal-paste, [data-no-swipe]")) return;
+  if (swipeBlockedAt(target as unknown as SwipeTarget, stage.value as unknown as SwipeTarget, element => getComputedStyle(element as unknown as Element).overflowX)) return;
+  swipe = { x: touch.clientX, y: touch.clientY, at: Date.now(), dx: 0 };
+}
+function swipeMove(event: TouchEvent) {
+  const current = swipe, touch = event.touches[0];
+  if (!current || !touch || event.touches.length !== 1) { swipeCancel(); return; }
+  const dx = touch.clientX - current.x, dy = touch.clientY - current.y;
+  if (!current.axis) {
+    const axis = swipeAxis(dx, dy);
+    if (!axis) return;
+    // A long press that then moves is a text selection, and so is anything
+    // that has already left a selection behind.
+    if (axis === "y" || Date.now() - current.at > SWIPE_LONG_PRESS_MS || window.getSelection()?.toString()) { swipe = undefined; return; }
+    current.axis = "x";
+  }
+  event.preventDefault();
+  current.dx = dx;
+  setSwipeOffset(swipeOffset(dx, !!compactNeighbor(dx < 0 ? 1 : -1)), false);
+}
+function swipeEnd() {
+  const current = swipe; swipe = undefined;
+  if (!current?.axis) return;
+  const width = compactContent.value?.clientWidth ?? window.innerWidth;
+  const step = swipeOutcome({ dx: current.dx, elapsedMs: Date.now() - current.at, width, hasPrevious: !!compactNeighbor(-1), hasNext: !!compactNeighbor(1) });
+  const target = step ? compactNeighbor(step) : undefined;
+  if (!target) { setSwipeOffset(0, true); return; }
+  setSwipeOffset(step > 0 ? -width : width, true);
+  swipeSettle = setTimeout(() => {
+    swipeSettle = undefined;
+    enterFrom.value = step > 0 ? "right" : "left";
+    selectPane(target);
+  }, 160);
+}
+function swipeCancel() { if (swipe?.axis) setSwipeOffset(0, true); swipe = undefined; }
+
 onMounted(() => {
   if (!selected.value && panes.value[0]) selected.value = panes.value[0].id;
   observer = new ResizeObserver(([entry]) => {
@@ -229,6 +289,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   observer?.disconnect();
   clearTimeout(locateTimer);
+  clearTimeout(swipeSettle);
   locateRequest++;
   document.removeEventListener("pointerdown", layoutPointerDown);
 });
@@ -237,15 +298,15 @@ onBeforeUnmount(() => {
 <template>
   <div class="dock-canvas" :class="{ 'is-resizing': resizing }">
     <div v-if="notice" class="dock-canvas-notice" role="status">{{ t(notice) }}<button type="button" :aria-label="t('Dismiss layout notice')" @click="notice = ''">×</button></div>
-    <div v-if="compact" ref="stage" class="dock-canvas-stage is-compact">
-      <div v-if="compactPane" :key="compactPane.id" :id="`dock-panel-${compactPane.id}`" class="dock-compact-content" :data-kind="compactPane.kind"><slot name="pane" :pane="compactPane" /></div>
+    <div v-if="compact" ref="stage" class="dock-canvas-stage is-compact" @touchstart.passive="swipeStart" @touchmove="swipeMove" @touchend="swipeEnd" @touchcancel="swipeCancel">
+      <div v-if="compactPane" ref="compactContent" :key="compactPane.id" :id="`dock-panel-${compactPane.id}`" class="dock-compact-content" :class="enterFrom && `enter-from-${enterFrom}`" :data-kind="compactPane.kind" @animationend="enterFrom = null"><slot name="pane" :pane="compactPane" /></div>
       <div v-else class="dock-compact-empty">
         <span class="dock-empty-symbol"><Icon name="spark" :size="28" /></span><strong>{{ t('A little room for your next idea') }}</strong>
         <button type="button" class="primary-button" @click="emit('create-session', working.root.id, 'claude_code', false)"><Icon name="plus" :size="15" />{{ t('New session') }}</button>
       </div>
     </div>
     <div v-else ref="stage" class="dock-canvas-stage">
-      <LayoutNode :node="visible" :selected="selected" :maximized="maximized" :located-pane-id="locatedPaneId" :workspace-labels="workspaceLabels" :mixed-workspaces="mixedWorkspaces" :workspace-branches="workspaceBranches" :session-branches="sessionBranches" :session-providers="sessionProviders" :ephemeral-session-ids="ephemeralSessionIds" :ephemeral-supported="ephemeralSupported" @select="selectPane" @split="split" @resize="resize" @resizing="resizing = $event" @close="close" @maximize="maximize" @drop-pane="dropFromPointer" @add-pane="add" @create-session="(id,provider,ephemeral)=>emit('create-session',id,provider,ephemeral)" @reveal-session="emit('reveal-session', $event)">
+      <LayoutNode :node="visible" :selected="selected" :maximized="maximized" :located-pane-id="locatedPaneId" :workspace-labels="workspaceLabels" :mixed-workspaces="mixedWorkspaces" :workspace-branches="workspaceBranches" :session-branches="sessionBranches" :session-providers="sessionProviders" :ephemeral-session-ids="ephemeralSessionIds" :ephemeral-supported="ephemeralSupported" @select="selectPane" @split="split" @resize="resize" @resizing="resizing = $event" @close="close" @maximize="maximize" @drop-pane="dropFromPointer" @add-pane="add" @create-session="(id,provider,ephemeral)=>emit('create-session',id,provider,ephemeral)">
         <template #pane="scope"><slot name="pane" :pane="scope.pane" /></template>
       </LayoutNode>
     </div>
@@ -286,6 +347,11 @@ onBeforeUnmount(() => {
 /* Files and Git arrive like a pushed page. */
 .dock-compact-content:is([data-kind="git_diff"],[data-kind="editor"],[data-kind="file_preview"]) { animation:dock-push .26s cubic-bezier(.2,.8,.2,1); }
 @keyframes dock-push { from { transform:translateX(28%);opacity:.5; } }
+/* A swiped-to view arrives from the side it was pulled from. */
+.dock-compact-content.enter-from-right { animation:dock-swipe-right .22s cubic-bezier(.2,.8,.2,1); }
+.dock-compact-content.enter-from-left { animation:dock-swipe-left .22s cubic-bezier(.2,.8,.2,1); }
+@keyframes dock-swipe-right { from { transform:translateX(40%);opacity:.4; } }
+@keyframes dock-swipe-left { from { transform:translateX(-40%);opacity:.4; } }
 .dock-compact-empty { flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;text-align:center;color:var(--ink-soft);font-size:15px; }
 .dock-compact-empty .dock-empty-symbol { display:grid;place-items:center;width:60px;height:60px;border-radius:18px;background:var(--teal-soft);color:var(--teal); }
 .dock-compact-empty .primary-button { min-height:44px;padding:0 18px;border-radius:12px;font-size:14px; }

@@ -1285,6 +1285,49 @@ pub async fn write_attachment(
     .map_err(|_| IoError::new(500, "attachment write failed"))?
 }
 
+/// Make an empty folder, and any folders above it the path names. A name that
+/// is already taken -- by a file or a folder -- is refused, like a new file.
+pub async fn create_directory(root: &Path, relative: &str) -> Result<FileEntry, IoError> {
+    let root = root.to_path_buf();
+    let relative = relative.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let canonical_root = dunce::canonicalize(&root).map_err(IoError::from)?;
+        let rel = safe_relative(&relative)?;
+        if rel.as_os_str().is_empty() {
+            return Err(IoError::new(400, "folder name is required"));
+        }
+        if is_protected_path(&rel) {
+            return Err(IoError::new(403, "this path is protected"));
+        }
+        if has_symlink_component(&canonical_root, &rel)? {
+            return Err(IoError::new(403, "symlink writes are not allowed"));
+        }
+        let target = canonical_root.join(&rel);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(IoError::from)?;
+        }
+        // `create_dir`, not `create_dir_all`: it is what refuses a name taken
+        // between looking and making.
+        fs::create_dir(&target).map_err(|error| match error.kind() {
+            io::ErrorKind::AlreadyExists => {
+                IoError::new(409, "something with this name already exists")
+            }
+            _ => IoError::from(error),
+        })?;
+        Ok(FileEntry {
+            name: rel
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            path: rel.to_string_lossy().replace('\\', "/"),
+            kind: "directory".into(),
+            size: 0,
+        })
+    })
+    .await
+    .map_err(|error| IoError::new(500, format!("folder create task failed: {error}")))?
+}
+
 /// Delete one file or directory inside a workspace.
 ///
 /// `safe_path` already refuses anything that resolves outside the root or into
@@ -1475,6 +1518,32 @@ mod tests {
         assert!(create_file(root, "../escape.txt").await.is_err());
         assert!(create_file(root, ".git/hooks/pre-commit").await.is_err());
         assert!(create_file(root, "").await.is_err());
+
+        let folder = create_directory(root, "assets/icons").await.unwrap();
+        assert_eq!(
+            (
+                folder.path.as_str(),
+                folder.name.as_str(),
+                folder.kind.as_str()
+            ),
+            ("assets/icons", "icons", "directory")
+        );
+        assert!(root.join("assets/icons").is_dir());
+        // A taken name is refused whether a folder or a file holds it.
+        assert_eq!(
+            create_directory(root, "assets/icons")
+                .await
+                .unwrap_err()
+                .status,
+            409
+        );
+        assert_eq!(
+            create_directory(root, "kept.txt").await.unwrap_err().status,
+            409
+        );
+        assert!(create_directory(root, "../escape").await.is_err());
+        assert!(create_directory(root, ".git/hooks").await.is_err());
+        assert!(create_directory(root, "").await.is_err());
     }
 
     #[tokio::test]

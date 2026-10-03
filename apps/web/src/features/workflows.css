@@ -108,6 +108,13 @@
 /* The glyph set has one chevron, pointing right; the arrow keys are that
    chevron turned, so the two directions stay visually identical. */
 .terminal-keys .key-up { transform: rotate(-90deg); }.terminal-keys .key-down { transform: rotate(90deg); }.terminal-keys .key-left { transform: rotate(180deg); }
+/* On a phone the row spans the pane and its keys share the width, so every key
+   stays on screen instead of the last ones hiding behind a sideways scroll. */
+@media (max-width: 440px) {
+  .terminal-keys { left: 6px; right: 6px; bottom: 6px; max-width: none; align-items: stretch; }
+  .terminal-keys-row { gap: 3px; }
+  .terminal-keys button, .terminal-keys button.key-text { flex: 1 1 0; min-width: 24px; width: auto; padding: 0; }
+}
 .terminal-paste { position: absolute; left: 9px; right: 9px; bottom: 52px; z-index: 4; display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 12px; border: 1px solid #dde7ea; background: #fff; box-shadow: 0 6px 24px #1c3a4a2e; }
 /* 16px keeps iOS from zooming the page when the field takes focus. */
 .terminal-paste>textarea { min-height: 88px; max-height: 40vh; resize: none; padding: 9px 10px; border: 1px solid #dfe7ec; border-radius: 8px; font: 16px/1.4 "SFMono-Regular", Consolas, monospace; color: #4d6270; background: #fcfdfe; }

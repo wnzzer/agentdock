@@ -7,7 +7,7 @@ import { useI18n } from "../i18n";
 import { createSessionStream, TERMINAL_VIEW_ERROR } from "../features/session-stream";
 import { onPageReturn } from "../features/page-return";
 import type { SessionStreamState } from "../features/session-stream";
-import { arrowSequence, BACKTAB_SEQUENCE, ctrlSequence, ENTER_SEQUENCE, ESCAPE_SEQUENCE, isTap, repeatArrow, selectionPresses, TAB_SEQUENCE, type ArrowKey } from "../features/terminal-keys";
+import { arrowSequence, ctrlSequence, ENTER_SEQUENCE, ESCAPE_SEQUENCE, isTap, repeatArrow, selectionPresses, shiftSequence, tabSequence, type ArrowKey } from "../features/terminal-keys";
 const { t } = useI18n();
 
 const props = withDefaults(defineProps<{ sessionId: string; dark?: boolean }>(), { dark: false });
@@ -35,6 +35,8 @@ const touchDevice = ref(false);
 const tapSelect = ref(false);
 /** One-shot Ctrl: the next character the soft keyboard types becomes a control code. */
 const ctrlArmed = ref(false);
+/** One-shot Shift: Tab becomes Shift+Tab, an arrow a Shift+arrow, a letter its capital. */
+const shiftArmed = ref(false);
 /** The less used keys fold behind ⋯ so the everyday ones fit one phone-wide row. */
 const moreKeys = ref(false);
 /**
@@ -49,13 +51,33 @@ let observer: ResizeObserver | undefined;
 let resizeFrame = 0, sized = false;
 let disposed = false;
 const subscriptions: Array<{ dispose: () => void }> = [];
+/**
+ * Where a reconnect picks up: the process the view was showing and the last
+ * output it drew. The server resumes from there when it still can, so a
+ * dropped socket costs nothing on screen; otherwise it says so and the view is
+ * redrawn from the replay. `framed` is whether this socket numbers its frames.
+ */
+let resume: { runtime: string; seq: number } | undefined;
+let framed = false, redrawPending = false;
 const stream = createSessionStream({
   createSocket: url => new WebSocket(url),
+  reconnect: true,
+  hidden: () => document.hidden,
   onState(next, message) { state.value = next; notice.value = message; nativeNotice.value = false; emit("status", next === "connected"); },
-  onOpen() { sized = false; resize(); },
+  // Until the server says whether it resumed, the old screen stays up rather
+  // than blanking for the length of a handshake.
+  onOpen() { sized = false; framed = false; redrawPending = true; resize(); },
   onMessage(data) {
     if (data instanceof ArrayBuffer) {
-      terminal?.write(new Uint8Array(data));
+      if (framed) {
+        if (data.byteLength < 8) return;
+        resume = { runtime: resume?.runtime ?? "", seq: Number(new DataView(data).getBigUint64(0)) };
+        terminal?.write(new Uint8Array(data, 8));
+      } else {
+        // A server that does not number its frames replays everything.
+        if (redrawPending) { redrawPending = false; terminal?.reset(); }
+        terminal?.write(new Uint8Array(data));
+      }
       // A size sent as the socket opens can reach the server before a reopened
       // session's process exists, leaving the shell at the size it started
       // with. Its first output proves the process is there; say the size again.
@@ -70,7 +92,12 @@ const stream = createSessionStream({
       control = parsed as typeof control;
     } catch { nativeNotice.value = false; notice.value = "An unsupported control message was received. Reconnect to refresh the view."; return; }
     const message = typeof control.message === "string" ? control.message : undefined;
-    if (control.type === "exit") {
+    if (control.type === "stream") {
+      const hello = control as { runtime?: unknown; resumed?: unknown };
+      framed = true; redrawPending = false;
+      if (hello.resumed !== true || typeof hello.runtime !== "string" || hello.runtime !== resume?.runtime) terminal?.reset();
+      resume = typeof hello.runtime === "string" ? { runtime: hello.runtime, seq: hello.resumed === true && resume ? resume.seq : 0 } : undefined;
+    } else if (control.type === "exit") {
       stream.finish("Process exited. Start the session again to create a new process."); emit("exit");
     } else if (control.type === "gap") {
       nativeNotice.value = message !== undefined;
@@ -93,18 +120,18 @@ function resize() {
 /** Send exactly the bytes the physical key would, so the client sees a key. */
 function sendKeys(sequence: string) {
   if (!sequence || !terminal) return;
-  // A key on the bar is the key Ctrl was armed for, if any; it never combines,
-  // so the modifier is released rather than left waiting for the keyboard.
-  ctrlArmed.value = false;
+  // A key on the bar is the key the modifiers were armed for, if any; they are
+  // released rather than left waiting for the keyboard.
+  ctrlArmed.value = false; shiftArmed.value = false;
   stream.send(new TextEncoder().encode(sequence));
 }
 function pressArrow(key: ArrowKey) {
   if (!terminal) return;
-  sendKeys(arrowSequence(key, terminal.modes.applicationCursorKeysMode));
+  sendKeys(arrowSequence(key, terminal.modes.applicationCursorKeysMode, { shift: shiftArmed.value, ctrl: ctrlArmed.value }));
 }
 function pressEnter() { sendKeys(ENTER_SEQUENCE); }
 function pressEscape() { sendKeys(ESCAPE_SEQUENCE); }
-function pressTab(back: boolean) { sendKeys(back ? BACKTAB_SEQUENCE : TAB_SEQUENCE); }
+function pressTab() { sendKeys(tabSequence({ shift: shiftArmed.value })); }
 /**
  * Paste from the clipboard.
  *
@@ -114,7 +141,7 @@ function pressTab(back: boolean) { sendKeys(back ? BACKTAB_SEQUENCE : TAB_SEQUEN
  * every mobile browser can paste into with a long press.
  */
 async function pressPaste() {
-  ctrlArmed.value = false;
+  ctrlArmed.value = false; shiftArmed.value = false;
   try {
     const text = await navigator.clipboard?.readText?.();
     if (text) { terminal?.paste(text); return; }
@@ -163,16 +190,22 @@ function gestureEnd(event: PointerEvent) {
   if (move) sendKeys(repeatArrow(move.key, move.count, terminal.modes.applicationCursorKeysMode));
 }
 
+function streamUrl(sessionId: string) {
+  const url = new URL(`/api/sessions/${encodeURIComponent(sessionId)}/pty/ws`, window.location.href);
+  url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  if (terminal) { url.searchParams.set("cols", String(terminal.cols)); url.searchParams.set("rows", String(terminal.rows)); }
+  url.searchParams.set("framed", "true");
+  if (resume?.runtime) { url.searchParams.set("runtime", resume.runtime); url.searchParams.set("after", String(resume.seq)); }
+  return url.toString();
+}
 function connect() {
   if (disposed || !props.sessionId) return;
   try {
     initializeTerminal();
-    terminal!.reset();
-    const url = new URL(`/api/sessions/${encodeURIComponent(props.sessionId)}/pty/ws`, window.location.href);
-    url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    url.searchParams.set("cols", String(terminal!.cols));
-    url.searchParams.set("rows", String(terminal!.rows));
-    stream.connect(url.toString()); resize();
+    const sessionId = props.sessionId;
+    // Asked again on every automatic retry, so each one resumes from what the
+    // screen shows by then.
+    stream.connect(() => streamUrl(sessionId)); resize();
   } catch { stream.fail(TERMINAL_VIEW_ERROR); cleanupTerminal(); }
 }
 defineExpose({ reconnect: connect });
@@ -194,6 +227,7 @@ function initializeTerminal() {
   });
   fit = new FitAddon(); terminal.loadAddon(fit); terminal.open(host.value);
   subscriptions.push(terminal.onData(data => {
+    if (shiftArmed.value) { shiftArmed.value = false; data = shiftSequence(data); }
     if (ctrlArmed.value) { ctrlArmed.value = false; data = ctrlSequence(data); }
     stream.send(new TextEncoder().encode(data));
   }));
@@ -222,12 +256,14 @@ onMounted(() => {
 let stopPageReturn = () => {};
 onMounted(() => {
   stopPageReturn = onPageReturn(stale => {
-    if (state.value === "disconnected" || state.value === "error" || (stale && state.value === "connected")) connect();
+    // A view that never got a terminal starts over; any other is woken, which
+    // retries a dropped socket, replaces a stale one and probes the rest.
+    if (!terminal && state.value === "error") connect(); else stream.wake(stale);
   });
 });
 watch(() => props.sessionId, async (_next, _previous, onCleanup) => {
   let current = true; onCleanup(() => { current = false; });
-  stream.disconnect(); await nextTick(); if (current) connect();
+  stream.disconnect(); resume = undefined; terminal?.reset(); await nextTick(); if (current) connect();
 });
 onUnmounted(() => { stopPageReturn(); disposed = true; stream.dispose(); cleanupTerminal(); emit("status", false); });
 </script>
@@ -239,7 +275,6 @@ onUnmounted(() => { stopPageReturn(); disposed = true; stream.dispose(); cleanup
     <div ref="host" class="terminal-host" :aria-label="t('Native session {id}', { id: sessionId })" @pointerdown="gestureStart" @pointerup="gestureEnd" @pointercancel="gesture = undefined" />
     <div v-if="touchDevice" class="terminal-keys" role="group" :aria-label="t('Terminal keys')">
       <div v-if="moreKeys" class="terminal-keys-row">
-        <button type="button" class="key-text" :aria-label="t('Shift+Tab')" :title="t('Shift+Tab')" @pointerdown="keepFocus" @click="pressTab(true)">⇧Tab</button>
         <button type="button" :aria-label="t('Paste')" :title="t('Paste')" @click="moreKeys = false; pressPaste()"><Icon name="clipboard" :size="16" /></button>
         <button type="button" :aria-label="t('Keyboard')" :title="t('Keyboard')" @click="moreKeys = false; showKeyboard()"><Icon name="edit" :size="16" /></button>
         <button type="button" :class="{ armed: tapSelect }" :aria-pressed="tapSelect" :aria-label="t('Tap a row to select it')" :title="t('Tap a row to select it')" @pointerdown="keepFocus" @click="tapSelect = !tapSelect"><Icon name="locate" :size="16" /></button>
@@ -247,7 +282,8 @@ onUnmounted(() => { stopPageReturn(); disposed = true; stream.dispose(); cleanup
       <div class="terminal-keys-row">
         <button type="button" class="key-text" :aria-label="t('Escape')" :title="t('Escape')" @pointerdown="keepFocus" @click="pressEscape">Esc</button>
         <button type="button" class="key-text" :class="{ armed: ctrlArmed }" :aria-pressed="ctrlArmed" :aria-label="t('Ctrl')" :title="t('Ctrl')" @pointerdown="keepFocus" @click="ctrlArmed = !ctrlArmed">Ctrl</button>
-        <button type="button" class="key-text" :aria-label="t('Tab')" :title="t('Tab')" @pointerdown="keepFocus" @click="pressTab(false)">Tab</button>
+        <button type="button" class="key-text" :class="{ armed: shiftArmed }" :aria-pressed="shiftArmed" :aria-label="t('Shift')" :title="t('Shift')" @pointerdown="keepFocus" @click="shiftArmed = !shiftArmed">⇧</button>
+        <button type="button" class="key-text" :aria-label="t('Tab')" :title="t('Tab')" @pointerdown="keepFocus" @click="pressTab">Tab</button>
         <span class="terminal-keys-sep" aria-hidden="true" />
         <button type="button" :aria-label="t('Arrow left')" :title="t('Arrow left')" @pointerdown="keepFocus" @click="pressArrow('left')"><Icon name="chevron" :size="16" class="key-left" /></button>
         <button type="button" :aria-label="t('Arrow up')" :title="t('Arrow up')" @pointerdown="keepFocus" @click="pressArrow('up')"><Icon name="chevron" :size="16" class="key-up" /></button>

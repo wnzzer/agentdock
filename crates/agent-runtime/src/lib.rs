@@ -95,6 +95,10 @@ enum Control {
 
 pub struct RuntimeSession {
     id: String,
+    /// Names this process rather than the session. A view resuming from a
+    /// sequence number has to be talking to the process that numbered it: a
+    /// restarted session counts from zero again.
+    instance: String,
     inner: Arc<RuntimeInner>,
 }
 
@@ -110,6 +114,10 @@ impl std::fmt::Debug for RuntimeSession {
 impl RuntimeSession {
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    pub fn instance(&self) -> &str {
+        &self.instance
     }
 
     /// Subscribe to future events. Callers should take a snapshot as well when
@@ -378,8 +386,12 @@ fn spawn_runtime(id: String, spec: SpawnSpec) -> RuntimeResult<Arc<RuntimeSessio
         exit_notify: Notify::new(),
         reader_done: AtomicBool::new(false),
     });
+    let started = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
     let session = Arc::new(RuntimeSession {
         id,
+        instance: format!("{}-{started:x}", process_id.unwrap_or_default()),
         inner: Arc::clone(&inner),
     });
 

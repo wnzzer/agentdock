@@ -100,7 +100,7 @@ async function deleteEntry() {
  * refuses a name that is taken -- so the only way to lose work here is still
  * the delete below, which asks first.
  */
-const creating = ref<{ base: string; name: string; busy: boolean } | null>(null);
+const creating = ref<{ base: string; name: string; busy: boolean; directory: boolean } | null>(null);
 const renaming = ref<{ entry: FileEntry; name: string; busy: boolean } | null>(null);
 const createInput = ref<HTMLInputElement>();
 let renameInput: HTMLInputElement | undefined;
@@ -112,9 +112,9 @@ function baseDirectory() {
   const entry = directories.value.get(treeParent(path) ?? "")?.entries.find(file => file.path === path);
   return entry?.kind === "directory" ? entry.path : treeParent(path) ?? "";
 }
-async function startCreate(base?: string) {
+async function startCreate(base?: string, directory = false) {
   error.value = ""; renaming.value = null; closeRowMenu();
-  creating.value = { base: base ?? baseDirectory(), name: "", busy: false };
+  creating.value = { base: base ?? baseDirectory(), name: "", busy: false, directory };
   await nextTick();
   createInput.value?.focus();
 }
@@ -127,12 +127,12 @@ async function createFile() {
   if (nameTaken(directories.value, path)) { error.value = t("{name} already exists in this folder.", { name: draft.name.trim() }); return; }
   draft.busy = true;
   try {
-    const entry = await request<FileEntry>(workspacePath(props.workspaceId) + "/file/create", { method: "POST", body: JSON.stringify({ path }) });
+    const entry = await request<FileEntry>(workspacePath(props.workspaceId) + "/file/create", { method: "POST", body: JSON.stringify(draft.directory ? { path, directory: true } : { path }) });
     creating.value = null;
     await loadDirectory(treeParent(entry.path) ?? "", true);
     await reveal(entry.path);
-    // A file made to be written in opens to be written in.
-    emit("open", entry);
+    // A file made to be written in opens to be written in; a folder is only shown.
+    if (!draft.directory) emit("open", entry);
   } catch (cause) { error.value = errorMessage(cause); draft.busy = false; }
 }
 async function startRename(entry: FileEntry) {
@@ -411,12 +411,13 @@ defineExpose({ reveal });
 </script>
 <template>
   <section class="file-explorer">
-    <header class="section-header"><span><Icon name="folder" /><strong>{{ t('Explorer') }}</strong></span><span><button class="icon-button" :aria-label="t('New file')" :title="t('New file')" @click="startCreate()"><Icon name="plus" :size="15" /></button><button class="icon-button" :aria-label="t('Refresh files')" :title="t('Refresh files')" :disabled="loading" @click="refresh"><Icon name="refresh" :size="15" /></button><button class="icon-button explorer-close" :aria-label="t('Close explorer')" @click="emit('close')"><Icon name="close" :size="16" /></button></span></header>
+    <header class="section-header"><span><Icon name="folder" /><strong>{{ t('Explorer') }}</strong></span><span><!-- Finding the open file belongs to the tree, as in an editor's
+         explorer: it acts on whichever file has focus. --><button class="icon-button" :disabled="!selectedPath" :aria-label="t('Locate the focused file in the tree')" :title="t('Locate the focused file in the tree')" @click="selectedPath && reveal(selectedPath)"><Icon name="locate" :size="15" /></button><button class="icon-button" :aria-label="t('New file')" :title="t('New file')" @click="startCreate()"><Icon name="plus" :size="15" /></button><button class="icon-button" :aria-label="t('New folder')" :title="t('New folder')" @click="startCreate(undefined, true)"><Icon name="folder" :size="15" /></button><button class="icon-button" :aria-label="t('Refresh files')" :title="t('Refresh files')" :disabled="loading" @click="refresh"><Icon name="refresh" :size="15" /></button><button class="icon-button explorer-close" :aria-label="t('Close explorer')" @click="emit('close')"><Icon name="close" :size="16" /></button></span></header>
     <nav class="file-breadcrumb" :aria-label="t('Directory path')"><button @click="focusRoot">{{ t('Root') }}</button><template v-for="crumb in crumbs" :key="crumb.path"><span>/</span><button :title="crumb.path" @click="reveal(crumb.path)">{{ crumb.name }}</button></template></nav>
     <form v-if="creating" class="tree-compose" @submit.prevent="createFile">
-      <Icon name="file" :size="14" />
+      <Icon :name="creating.directory ? 'folder' : 'file'" :size="14" />
       <span v-if="creating.base" class="tree-compose-base" :title="creating.base">{{ creating.base }}/</span>
-      <input ref="createInput" v-model="creating.name" :aria-label="t('New file name')" :placeholder="t('New file name')" :disabled="creating.busy" spellcheck="false" @keydown.esc.prevent.stop="creating = null" />
+      <input ref="createInput" v-model="creating.name" :aria-label="t(creating.directory ? 'New folder name' : 'New file name')" :placeholder="t(creating.directory ? 'New folder name' : 'New file name')" :disabled="creating.busy" spellcheck="false" @keydown.esc.prevent.stop="creating = null" />
       <button type="submit" class="text-button" :disabled="!creating.name.trim() || creating.busy">{{ t(creating.busy ? 'Creating…' : 'Create') }}</button>
       <button type="button" class="text-button" @click="creating = null">{{ t('Cancel') }}</button>
     </form>
@@ -454,7 +455,7 @@ defineExpose({ reveal });
       <div v-if="root?.loading" class="small-empty" role="status">{{ t('Loading files…') }}</div>
       <div v-else-if="root?.loaded && !rows.length" class="small-empty">{{ t(query.trim() ? 'No matching loaded files.' : 'This directory is empty.') }}</div>
     </div>
-    <Teleport to="body"><div v-if="rowMenu" class="tree-menu-backdrop" @pointerdown="closeRowMenu" @contextmenu.prevent="closeRowMenu"><nav class="tree-menu" :style="rowMenuStyle" role="menu" :aria-label="t('File actions')" @pointerdown.stop @keydown.esc.stop.prevent="closeRowMenu"><template v-if="!rowMenu.entry"><button type="button" role="menuitem" @click="startCreate('')">{{ t('New file') }}</button><button type="button" role="menuitem" @click="closeRowMenu(); refresh()">{{ t('Refresh files') }}</button></template><template v-else><button v-if="rowMenu.entry.kind === 'directory'" type="button" role="menuitem" @click="startCreate(rowMenu!.entry!.path)">{{ t('New file here') }}</button><button type="button" role="menuitem" @click="copyText(rowMenu.entry.path, 'path')">{{ t(copied === 'path' ? 'Copied' : 'Copy path') }}</button><button type="button" role="menuitem" @click="copyText(rowMenu.entry.name, 'name')">{{ t(copied === 'name' ? 'Copied' : 'Copy name') }}</button><button v-if="rowMenu.entry.kind === 'file'" type="button" role="menuitem" @click="closeRowMenu(); open(rowMenu!.entry)">{{ t('Open') }}</button><button type="button" role="menuitem" @click="closeRowMenu(); loadDirectory(rowMenu!.entry.kind === 'directory' ? rowMenu!.entry.path : treeParent(rowMenu!.entry.path) ?? '', true)">{{ t('Refresh files') }}</button><button type="button" role="menuitem" @click="startRename(rowMenu!.entry)">{{ t('Rename…') }}</button><hr/><template v-if="confirmDelete"><p class="tree-menu-confirm">{{ t(rowMenu.entry.kind === 'directory' ? 'Delete {name} and everything inside it? This cannot be undone.' : 'Delete {name}? This cannot be undone.', { name: rowMenu.entry.name }) }}</p><button type="button" role="menuitem" class="tree-menu-danger" :disabled="deleting" :aria-busy="deleting" @click="deleteEntry">{{ t(deleting ? 'Deleting…' : 'Delete permanently') }}</button><button type="button" role="menuitem" @click="confirmDelete = false">{{ t('Cancel') }}</button></template><button v-else type="button" role="menuitem" class="tree-menu-danger" @click="confirmDelete = true">{{ t('Delete…') }}</button></template></nav></div></Teleport>
+    <Teleport to="body"><div v-if="rowMenu" class="tree-menu-backdrop" @pointerdown="closeRowMenu" @contextmenu.prevent="closeRowMenu"><nav class="tree-menu" :style="rowMenuStyle" role="menu" :aria-label="t('File actions')" @pointerdown.stop @keydown.esc.stop.prevent="closeRowMenu"><template v-if="!rowMenu.entry"><button type="button" role="menuitem" @click="startCreate('')">{{ t('New file') }}</button><button type="button" role="menuitem" @click="startCreate('', true)">{{ t('New folder') }}</button><button type="button" role="menuitem" @click="closeRowMenu(); refresh()">{{ t('Refresh files') }}</button></template><template v-else><button v-if="rowMenu.entry.kind === 'directory'" type="button" role="menuitem" @click="startCreate(rowMenu!.entry!.path)">{{ t('New file here') }}</button><button type="button" role="menuitem" @click="startCreate(rowMenu!.entry!.path, true)">{{ t('New folder here') }}</button><button type="button" role="menuitem" @click="copyText(rowMenu.entry.path, 'path')">{{ t(copied === 'path' ? 'Copied' : 'Copy path') }}</button><button type="button" role="menuitem" @click="copyText(rowMenu.entry.name, 'name')">{{ t(copied === 'name' ? 'Copied' : 'Copy name') }}</button><button v-if="rowMenu.entry.kind === 'file'" type="button" role="menuitem" @click="closeRowMenu(); open(rowMenu!.entry)">{{ t('Open') }}</button><button type="button" role="menuitem" @click="closeRowMenu(); loadDirectory(rowMenu!.entry.kind === 'directory' ? rowMenu!.entry.path : treeParent(rowMenu!.entry.path) ?? '', true)">{{ t('Refresh files') }}</button><button type="button" role="menuitem" @click="startRename(rowMenu!.entry)">{{ t('Rename…') }}</button><hr/><template v-if="confirmDelete"><p class="tree-menu-confirm">{{ t(rowMenu.entry.kind === 'directory' ? 'Delete {name} and everything inside it? This cannot be undone.' : 'Delete {name}? This cannot be undone.', { name: rowMenu.entry.name }) }}</p><button type="button" role="menuitem" class="tree-menu-danger" :disabled="deleting" :aria-busy="deleting" @click="deleteEntry">{{ t(deleting ? 'Deleting…' : 'Delete permanently') }}</button><button type="button" role="menuitem" @click="confirmDelete = false">{{ t('Cancel') }}</button></template><button v-else type="button" role="menuitem" class="tree-menu-danger" @click="confirmDelete = true">{{ t('Delete…') }}</button></template></nav></div></Teleport>
     <footer class="explorer-footer">{{ t('{count} loaded items · host filesystem', { count: loadedCount }) }}<span>{{ t('Click to open · drag into a pane') }}</span></footer>
   </section>
 </template>

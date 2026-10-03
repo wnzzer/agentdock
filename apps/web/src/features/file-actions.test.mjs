@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { nameTaken, newFilePath, renamedPath } from './file-actions.ts';
@@ -43,4 +44,12 @@ test('a folder the tree has not loaded claims to know nothing about its names', 
   assert.equal(nameTaken(directories, 'unseen/taken.md'), false);
   directories.set('half', { loaded: false, loading: true, error: '', entries: [{ path: 'half/taken.md', name: 'taken.md', kind: 'file', size: 0 }] });
   assert.equal(nameTaken(directories, 'half/taken.md'), false);
+});
+
+test('the tree makes folders as well as files, and only a file opens once made', () => {
+  const source = readFileSync(new URL('./FileExplorer.vue', import.meta.url), 'utf8');
+  assert.ok(source.includes("t('New folder')"), 'a header and menu action makes a folder');
+  assert.ok(source.includes("t('New folder here')"), 'a folder row offers a folder inside it');
+  assert.match(source, /draft\.directory \? \{ path, directory: true \} : \{ path \}/);
+  assert.match(source, /if \(!draft\.directory\) emit\("open", entry\)/);
 });

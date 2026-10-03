@@ -501,6 +501,10 @@ function attach(id: string, own: number) {
   const current = () => mounted.value && own === generation && props.session.id === id;
   stream = createSessionStream({
     createSocket: url => new WebSocket(url),
+    // A dropped view re-attaches on its own; the server greets every socket
+    // with a full snapshot, so nothing missed meanwhile is lost.
+    reconnect: true,
+    hidden: () => document.hidden,
     onState: (state, detail) => { if (current()) { streamState.value = state; streamNotice.value = detail; } },
     onMessage: raw => {
       if (!current() || typeof raw !== 'string') return;
@@ -570,7 +574,9 @@ let stopPageReturn = () => {};
 onMounted(() => {
   stopPageReturn = onPageReturn(stale => {
     if (!mounted.value || isPreview.value || loading.value || actionBusy.value || mode.value !== 'structured') return;
-    if (streamState.value === 'disconnected' || streamState.value === 'error' || (stale && streamState.value === 'connected')) void load();
+    // A view that gave up re-reads the conversation; a live or retrying one is
+    // woken, which replaces a stale socket and probes one that looks open.
+    if (streamState.value === 'disconnected' || streamState.value === 'error') void load(); else stream?.wake(stale);
   });
 });
 onBeforeUnmount(() => { stopPageReturn(); mounted.value = false; generation++; readController?.abort(); stream?.dispose(); });
