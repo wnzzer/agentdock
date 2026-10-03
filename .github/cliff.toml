@@ -1,0 +1,43 @@
+# Release notes from the commits since the previous tag.
+#
+# Commits here are plain sentences ("Resume dropped views ..."), not
+# conventional-commit prefixes, so grouping goes by the opening words and
+# everything else is simply a change. Release bumps are left out. A bullet
+# list in a commit's body becomes that entry's sub-items.
+[changelog]
+header = ""
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim }}
+{% for commit in commits %}
+- {{ commit.message | split(pat="\n") | first | trim | upper_first }} \
+([{{ commit.id | truncate(length=7, end="") }}](https://github.com/wnzzer/agentdock/commit/{{ commit.id }}))
+{%- for line in commit.message | split(pat="\n") | slice(start=1) %}
+{%- if line is starting_with("- ") or line is starting_with("  ") %}
+  {{ line }}
+{%- endif %}
+{%- endfor %}
+{%- endfor %}
+{% endfor %}
+{% if previous.version %}
+**Full changelog**: https://github.com/wnzzer/agentdock/compare/{{ previous.version }}...{{ version }}
+{% endif %}
+"""
+# Off: it strips every line, which flattens the sub-items.
+trim = false
+footer = ""
+
+[git]
+conventional_commits = false
+filter_unconventional = false
+split_commits = false
+commit_parsers = [
+    { message = "^Release \\d", skip = true },
+    { message = "(?i)^(fix|fixes|fixed)\\b", group = "<!-- 1 -->🐛 Fixes" },
+    { message = "(?i)^(readme|docs?)\\b", group = "<!-- 3 -->📚 Documentation" },
+    { message = "(?i)\\btests?$", group = "<!-- 4 -->🧪 Tests" },
+    { message = ".*", group = "<!-- 0 -->✨ Changes" },
+]
+filter_commits = false
+tag_pattern = "v[0-9].*"
+sort_commits = "oldest"
