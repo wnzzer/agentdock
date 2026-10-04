@@ -93,8 +93,9 @@ test('tapping a row sends arrows only while that gesture is explicitly armed', (
   // menus with Ink, in the ordinary buffer, so "alternate screen" excluded the
   // one case this exists for while a shell prompt looks identical to it. The
   // terminal cannot tell a menu from a prompt, so the gesture is armed by hand.
-  const tap = source.slice(source.indexOf('function gestureEnd('), source.indexOf('\n}\n', source.indexOf('function gestureEnd(')));
-  assert.ok(tap.length > 0, 'the tap handler is found');
+  // Windows checks the source out with CRLF line endings.
+  const tap = source.match(/function gestureEnd\([\s\S]*?\r?\n\}\r?\n/)?.[0] ?? '';
+  assert.ok(tap.includes('selectionPresses('), 'the tap handler is found');
   assert.doesNotMatch(tap, /buffer\.active\.type/);
   assert.match(source, /!tapSelect\.value/);
   assert.match(source, /selectionPresses\(/);
