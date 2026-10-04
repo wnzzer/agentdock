@@ -93,7 +93,9 @@ test('tapping a row sends arrows only while that gesture is explicitly armed', (
   // menus with Ink, in the ordinary buffer, so "alternate screen" excluded the
   // one case this exists for while a shell prompt looks identical to it. The
   // terminal cannot tell a menu from a prompt, so the gesture is armed by hand.
-  assert.doesNotMatch(source, /buffer\.active\.type/);
+  const tap = source.slice(source.indexOf('function gestureEnd('), source.indexOf('\n}\n', source.indexOf('function gestureEnd(')));
+  assert.ok(tap.length > 0, 'the tap handler is found');
+  assert.doesNotMatch(tap, /buffer\.active\.type/);
   assert.match(source, /!tapSelect\.value/);
   assert.match(source, /selectionPresses\(/);
   assert.ok(source.includes("t('Tap a row to select it')"), 'the mode is switchable from the bar');

@@ -8,6 +8,7 @@ import { createSessionStream, TERMINAL_VIEW_ERROR } from "../features/session-st
 import { onPageReturn } from "../features/page-return";
 import type { SessionStreamState } from "../features/session-stream";
 import { arrowSequence, ctrlSequence, ENTER_SEQUENCE, ESCAPE_SEQUENCE, isTap, repeatArrow, selectionPresses, shiftSequence, tabSequence, type ArrowKey } from "../features/terminal-keys";
+import { swipeAxis } from "../features/pane-swipe";
 const { t } = useI18n();
 
 const props = withDefaults(defineProps<{ sessionId: string; dark?: boolean }>(), { dark: false });
@@ -190,6 +191,46 @@ function gestureEnd(event: PointerEvent) {
   if (move) sendKeys(repeatArrow(move.key, move.count, terminal.modes.applicationCursorKeysMode));
 }
 
+/**
+ * Scroll with a finger.
+ *
+ * xterm.js 6 scrolls for a wheel and for nothing else -- its viewport no
+ * longer follows touch -- so dragging the terminal on a phone moved nothing,
+ * and a conversation the client had pushed into scrollback could not be read
+ * again. A vertical drag is turned into what a wheel would have done: the
+ * scrollback moves in the ordinary buffer, and a program that owns the screen
+ * (the alternate buffer, or one that asked for mouse reports) is handed wheel
+ * steps to scroll itself. Sideways drags are left to the pane swipe.
+ */
+let touchScroll: { x: number; y: number; axis?: "x" | "y"; carry: number } | undefined;
+function touchScrollStart(event: TouchEvent) {
+  const touch = event.touches[0];
+  touchScroll = event.touches.length === 1 && touch ? { x: touch.clientX, y: touch.clientY, carry: 0 } : undefined;
+}
+function touchScrollMove(event: TouchEvent) {
+  const current = touchScroll, touch = event.touches[0];
+  if (!current || !touch || event.touches.length !== 1 || !terminal || !host.value) { touchScroll = undefined; return; }
+  if (!current.axis) {
+    current.axis = swipeAxis(touch.clientX - current.x, touch.clientY - current.y);
+    if (current.axis === "x") touchScroll = undefined;
+    if (current.axis !== "y") return;
+  }
+  event.preventDefault();
+  const screen = host.value.querySelector<HTMLElement>(".xterm-screen");
+  const rowHeight = (screen?.getBoundingClientRect().height ?? 0) / terminal.rows;
+  if (!screen || !(rowHeight > 0)) return;
+  // A finger moving up brings later lines into view, as a page does.
+  current.carry += current.y - touch.clientY; current.y = touch.clientY;
+  const lines = Math.trunc(current.carry / rowHeight);
+  if (!lines) return;
+  current.carry -= lines * rowHeight;
+  if (terminal.buffer.active.type === "normal" && terminal.modes.mouseTrackingMode === "none") { terminal.scrollLines(lines); return; }
+  // One wheel notch per line, so xterm.js reports or translates each exactly as it would a real one.
+  for (let step = 0; step < Math.abs(lines); step++) {
+    screen.dispatchEvent(new WheelEvent("wheel", { deltaY: Math.sign(lines), deltaMode: WheelEvent.DOM_DELTA_LINE, clientX: touch.clientX, clientY: touch.clientY, bubbles: true, cancelable: true }));
+  }
+}
+
 function streamUrl(sessionId: string) {
   const url = new URL(`/api/sessions/${encodeURIComponent(sessionId)}/pty/ws`, window.location.href);
   url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -272,7 +313,7 @@ onUnmounted(() => { stopPageReturn(); disposed = true; stream.dispose(); cleanup
   <div :class="['native-terminal', { dark }]">
     <div class="terminal-connection"><span :class="['state-dot', state]" /><span>{{ t(state === 'connected' ? 'Live · native client' : state) }}</span><button v-if="state === 'disconnected' || state === 'error'" class="text-button" :aria-label="t('Reconnect session stream')" @click="connect"><Icon name="refresh" :size="13" />{{ t('Reconnect') }}</button></div>
     <div v-if="notice" :class="state === 'error' ? 'inline-error' : 'inline-notice'" :role="state === 'error' ? 'alert' : 'status'">{{ nativeNotice ? notice : t(notice) }}</div>
-    <div ref="host" class="terminal-host" :aria-label="t('Native session {id}', { id: sessionId })" @pointerdown="gestureStart" @pointerup="gestureEnd" @pointercancel="gesture = undefined" />
+    <div ref="host" class="terminal-host" :aria-label="t('Native session {id}', { id: sessionId })" @pointerdown="gestureStart" @pointerup="gestureEnd" @pointercancel="gesture = undefined" @touchstart="touchScrollStart" @touchmove="touchScrollMove" />
     <div v-if="touchDevice" class="terminal-keys" role="group" :aria-label="t('Terminal keys')">
       <div v-if="moreKeys" class="terminal-keys-row">
         <button type="button" :aria-label="t('Paste')" :title="t('Paste')" @click="moreKeys = false; pressPaste()"><Icon name="clipboard" :size="16" /></button>
