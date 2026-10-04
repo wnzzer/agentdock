@@ -59,7 +59,7 @@ defineExpose({ close });
 </template>
 
 <style>
-.sheet-backdrop{position:fixed;inset:0;z-index:90;background:#1b2a3640}
+.sheet-backdrop{position:fixed;inset:0;z-index:90;background:var(--overlay)}
 .bottom-sheet{position:fixed;left:0;right:0;bottom:0;z-index:91;display:flex;flex-direction:column;max-height:min(82dvh,calc(var(--app-height,100dvh) - 40px));background:var(--surface);border-radius:18px 18px 0 0;box-shadow:0 -8px 40px #1b2a3624;padding-bottom:env(safe-area-inset-bottom);outline:0;transition:transform .26s cubic-bezier(.2,.8,.2,1)}
 .sheet-grip{display:flex;justify-content:center;padding:9px 0 6px;flex:none;touch-action:none;cursor:grab}
 .sheet-grip>i{display:block;width:38px;height:5px;border-radius:3px;background:#d5dde2}

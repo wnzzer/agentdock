@@ -175,7 +175,7 @@ onBeforeUnmount(close);
 .ws-branch-panel{position:fixed;z-index:1200;overflow-y:auto;padding:8px;border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:0 12px 32px #243b4c29;font-size:12px;color:var(--ink);text-align:left}
 .ws-branch-panel header{font-weight:600;margin:2px 4px}
 .ws-branch-panel>p{margin:4px 4px 8px;font-size:10.5px;line-height:1.5;color:var(--muted)}
-.ws-branch-panel .ws-branch-error{color:var(--danger-ink);background:#fff3f5;border-radius:7px;padding:6px 8px}
+.ws-branch-panel .ws-branch-error{color:var(--danger-ink);background:var(--danger-soft);border-radius:7px;padding:6px 8px}
 .ws-row{display:flex;flex-wrap:wrap;align-items:center;border-radius:7px}
 .ws-row:hover{background:var(--sunken)}
 .ws-row-main{flex:1;min-width:0;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 8px;border:0;border-radius:7px;background:none;cursor:pointer;text-align:left;font:12px ui-monospace,monospace;color:var(--ink)}
@@ -198,7 +198,7 @@ onBeforeUnmount(close);
 .ws-btn.primary{background:var(--teal);border-color:var(--teal);color:#fff}
 .ws-btn.primary:hover:not(:disabled){background:var(--teal-deep);color:#fff}
 .ws-btn.danger{color:var(--danger-ink)}
-.ws-btn.danger:hover:not(:disabled){background:#fff3f5;border-color:#f1dadd;color:var(--danger-ink)}
+.ws-btn.danger:hover:not(:disabled){background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger-ink)}
 .ws-btn.danger.solid{background:var(--danger);border-color:var(--danger);color:#fff}
 .ws-btn.danger.solid:hover:not(:disabled){background:var(--danger-ink);color:#fff}
 .ws-btn.quiet{border-color:transparent;background:none}

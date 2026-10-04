@@ -24,7 +24,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
 <style scoped>
 .lightbox{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:48px 24px;background:#10181ecc;backdrop-filter:blur(4px);cursor:zoom-out}
 .lightbox figure{margin:0;max-width:100%;max-height:100%;display:flex;flex-direction:column;align-items:center;gap:10px;cursor:default}
-.lightbox img{max-width:min(1600px,100%);max-height:calc(100dvh - 140px);object-fit:contain;border-radius:8px;background:repeating-conic-gradient(#f1f4f6 0 25%,#fff 0 50%) 0 0/16px 16px;box-shadow:0 20px 60px #0008}
+.lightbox img{max-width:min(1600px,100%);max-height:calc(100dvh - 140px);object-fit:contain;border-radius:8px;background:repeating-conic-gradient(var(--fill) 0 25%,#fff 0 50%) 0 0/16px 16px;box-shadow:0 20px 60px #0008}
 .lightbox figcaption{color:#e8eef1;font-size:12px}
 .lightbox-actions{position:absolute;top:14px;right:16px;display:flex;align-items:center;gap:10px}
 .lightbox-actions a{color:#e8eef1;font-size:12px;text-decoration:none;padding:6px 10px;border:1px solid #ffffff40;border-radius:8px}

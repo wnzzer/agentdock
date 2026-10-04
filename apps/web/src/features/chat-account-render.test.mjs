@@ -130,7 +130,8 @@ test('native plan-style questions render selectable options and an explicit othe
       { type: 'approval', id: 'plan-question', title: 'Choose plan mode', text: 'Select how to continue.', choices: ['accept', 'decline', 'cancel'], questions: [{ id: 'mode', header: 'Mode', question: 'How should changes be approved?', options: [{ label: 'Review each change', description: 'Ask before each edit.' }, { label: 'Allow edits', description: 'Apply edits in this turn.' }], isOther: true }] },
     ] },
   });
-  assert.match(html, /<select[^>]*>/);
+  assert.match(html, /role="radiogroup"/);
+  assert.match(html, /<input type="radio"[^>]*value="Review each change"/);
   assert.ok(html.includes('Review each change')); assert.ok(html.includes('Allow edits')); assert.ok(html.includes('Other answer'));
   assert.match(html, /type="text"[^>]*placeholder="Other answer"/);
 });

@@ -484,7 +484,7 @@ defineExpose({ reveal });
 .tree-menu button:disabled{opacity:.5;cursor:not-allowed}
 .tree-menu hr{border:0;border-top:1px solid var(--border);margin:4px 6px}
 .tree-menu-danger{color:var(--danger-ink)}
-.tree-menu-danger:hover:not(:disabled){background:#fff3f5;color:var(--danger)}
+.tree-menu-danger:hover:not(:disabled){background:var(--danger-soft);color:var(--danger)}
 .tree-menu-confirm{padding:6px 10px;margin:0;font-size:11px;line-height:1.6;color:var(--ink-soft);white-space:normal;max-width:220px}
 @media(pointer:coarse){.tree-menu button{min-height:44px}}
 .file-breadcrumb { max-height: 66px; overflow: auto; }

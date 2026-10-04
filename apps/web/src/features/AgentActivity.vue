@@ -135,11 +135,11 @@ async function undo(notice: Notice) {
 .agent-note{margin:0;padding:6px 9px;border-radius:8px;background:#fff7e8;color:#8f6a25;font-size:11.5px;line-height:1.5}
 .agent-key{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;color:var(--ink)}
 .agent-key input{height:34px;padding:0 10px;border:1px solid var(--border);border-radius:8px;font:inherit;font-weight:400}
-.agent-key input:focus{outline:2px solid var(--focus,#51b4a3);outline-offset:0;border-color:transparent}
+.agent-key input:focus{outline:2px solid var(--focus,var(--focus));outline-offset:0;border-color:transparent}
 .agent-key small{font-weight:400;color:var(--muted);font-size:11px}
-.agent-error{margin:0;color:#b64055;font-size:11.5px}
+.agent-error{margin:0;color:var(--danger);font-size:11.5px}
 .agent-request footer{display:flex;justify-content:flex-end;gap:8px;margin-top:2px}
-.agent-notice{display:flex;align-items:center;gap:8px;padding:9px 10px 9px 12px;border:1px solid #dbeee4;border-radius:11px;background:#f3faf7;color:#335b50;font-size:12px;box-shadow:0 6px 20px #1b2a3614;animation:agent-in .22s ease-out}
+.agent-notice{display:flex;align-items:center;gap:8px;padding:9px 10px 9px 12px;border:1px solid var(--accent-line);border-radius:11px;background:#f3faf7;color:#335b50;font-size:12px;box-shadow:0 6px 20px #1b2a3614;animation:agent-in .22s ease-out}
 .agent-notice>svg{flex:none;color:var(--teal)}
 .agent-notice>span{flex:1;min-width:0;line-height:1.45}
 .agent-notice .text-button{font-size:12px}

@@ -39,7 +39,7 @@ const label = computed(() => meter.value
 </template>
 
 <style scoped>
-.context-ring{display:inline-flex;align-items:center;gap:5px;color:#647681;font-size:10px;line-height:1;white-space:nowrap}
+.context-ring{display:inline-flex;align-items:center;gap:5px;color:var(--ink-soft);font-size:10px;line-height:1;white-space:nowrap}
 .context-ring svg{display:block;flex-shrink:0}
 .context-ring-scale{opacity:.72;font-variant-numeric:tabular-nums}
 .context-ring-track{stroke:#e3eaec}

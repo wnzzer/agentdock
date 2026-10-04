@@ -114,12 +114,12 @@ const pick = (provider: PreferenceProvider, field: 'endpoint_profile_id' | 'effo
 .preference-switch::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px #1b2a3633;transition:transform .15s}
 .preference-switch:checked{background:var(--teal)}
 .preference-switch:checked::after{transform:translateX(16px)}
-.preference-switch:focus-visible{outline:2px solid var(--focus,#51b4a3);outline-offset:2px}
+.preference-switch:focus-visible{outline:2px solid var(--focus,var(--focus));outline-offset:2px}
 .preference-row>span{flex:1;min-width:0}
 .preference-row strong{display:block;font-size:12px;font-weight:550;color:var(--ink)}
 .preference-row small{display:block;margin-top:2px;font-size:10.5px;line-height:1.5;color:var(--muted)}
 .preference-row select{width:190px;flex-shrink:0;height:32px;padding:0 8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);font:inherit;font-size:12px;color:var(--ink)}
-.preference-row select.danger{color:var(--danger-ink);border-color:#f1dadd}
+.preference-row select.danger{color:var(--danger-ink);border-color:var(--danger-line)}
 .preference-note{margin:-4px 0 8px;font-size:11px;line-height:1.5;color:var(--muted)}
 .preference-note.danger{color:var(--danger-ink)}
 @media(max-width:520px){.preference-row{flex-direction:column;align-items:stretch;gap:6px}.preference-row select{width:100%;height:40px}}

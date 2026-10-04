@@ -12,7 +12,7 @@ const css = file => {
 
 test('the existing workspace palette remains the source for new conversation and account surfaces', () => {
   const shell = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
-  for (const token of ['--teal: #0c8376', '--teal-soft: #e7f4f0', '--violet: #7760b5', '--border: #e4e9ed', '--muted: #81909d', '--surface: #ffffff']) assert.ok(shell.includes(token));
+  for (const token of ['--accent: #0c8376', '--accent-soft: #e7f4f0', '--violet: #7760b5', '--border: #e4e9ed', '--muted: #81909d', '--surface: #ffffff', '--teal: var(--accent)', '--teal-soft: var(--accent-soft)']) assert.ok(shell.includes(token), token);
   for (const file of ['./ChatSessionPane.vue', './AccountsDialog.vue', './ChatPreview.vue']) {
     const style = css(file);
     for (const token of ['var(--teal)', 'var(--teal-soft)', 'var(--border)', 'var(--muted)', 'var(--surface)']) assert.ok(style.includes(token), `${file} reuses ${token}`);
