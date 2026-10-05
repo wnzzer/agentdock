@@ -1084,7 +1084,15 @@ fn normalize_event(mut value: Value) -> Option<Value> {
         "cleared" => &["type"],
         "message" => &["type", "id", "role", "text", "delta"],
         "tool" => &["type", "id", "name", "status", "text", "activity"],
-        "approval" => &["type", "id", "title", "text", "choices", "questions"],
+        "approval" => &[
+            "type",
+            "id",
+            "title",
+            "text",
+            "choices",
+            "questions",
+            "scope",
+        ],
         "approval_resolved" => &["type", "id"],
         "turn" => &["type", "id", "status"],
         "usage" => &[
@@ -1195,11 +1203,33 @@ fn normalize_event(mut value: Value) -> Option<Value> {
                     .and_then(Value::as_array)
                     .is_some_and(|choices| {
                         !choices.is_empty()
-                            && choices.len() <= 3
+                            && choices.len() <= 4
                             && choices.iter().all(|v| {
-                                matches!(v.as_str(), Some("accept" | "decline" | "cancel"))
+                                matches!(
+                                    v.as_str(),
+                                    Some("accept" | "accept_session" | "decline" | "cancel")
+                                )
                             })
                     })
+                // What the request reaches for: an access kind, paths outside
+                // the workspace, a command. Bounded, and only ever displayed.
+                && object.get("scope").is_none_or(|scope| {
+                    scope.as_object().is_some_and(|scope| {
+                        scope.keys().all(|key| matches!(key.as_str(), "access" | "outside" | "command"))
+                            && scope.get("access").is_none_or(|access| {
+                                matches!(access.as_str(), Some("read" | "write" | "execute" | "network"))
+                            })
+                            && scope.get("outside").is_none_or(|paths| {
+                                paths.as_array().is_some_and(|paths| {
+                                    paths.len() <= 8
+                                        && paths.iter().all(|path| path.as_str().is_some_and(|path| path.len() <= 1024))
+                                })
+                            })
+                            && scope
+                                .get("command")
+                                .is_none_or(|command| command.as_str().is_some_and(|command| command.len() <= 2400))
+                    })
+                })
                 && object.get("questions").is_none_or(|value| {
                     value.as_array().is_some_and(|qs| {
                         qs.len() <= 16
@@ -1309,7 +1339,7 @@ async fn handle_event(
                 .ok_or_else(|| ApiError::bad("Missing native approval choices"))?
                 .iter()
                 .filter_map(|v| v.as_str())
-                .filter(|s| matches!(*s, "accept" | "decline" | "cancel"))
+                .filter(|s| matches!(*s, "accept" | "accept_session" | "decline" | "cancel"))
                 .map(str::to_owned)
                 .collect();
             let first = {

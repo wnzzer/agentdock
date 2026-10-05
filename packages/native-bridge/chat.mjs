@@ -14,7 +14,7 @@ export function validateChatInput(message, first=false) {
   if(message.type==='message'||message.type==='steer'){
     if(typeof message.id!=='string'||!message.id||message.id.length>128||/[\u0000-\u001f]/.test(message.id)||typeof message.content!=='string'||!message.content.trim()||message.content.includes('\0')||Buffer.byteLength(message.content)>256*1024)throw Error('Invalid or oversized chat message.');
   }else if(message.type==='approval'){
-    if(typeof message.request_id!=='string'||message.request_id.length>256||!['accept','decline','cancel'].includes(message.decision))throw Error('Invalid approval response.');
+    if(typeof message.request_id!=='string'||message.request_id.length>256||!['accept','accept_session','decline','cancel'].includes(message.decision))throw Error('Invalid approval response.');
     if(message.answers!==undefined&&(!message.answers||typeof message.answers!=='object'||Array.isArray(message.answers)||Object.entries(message.answers).length>16||Object.entries(message.answers).some(([key,values])=>key.length>256||!Array.isArray(values)||values.length>32||values.some(value=>typeof value!=='string'||Buffer.byteLength(value)>8192))))throw Error('Invalid native question answers.');
   }else if(message.type==='model'){
     // The client validates the name itself and rejects one it cannot serve, so

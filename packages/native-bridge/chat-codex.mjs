@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import { ChatBase, NativeProcess, clip, nativeId, MAX_TEXT } from './chat-common.mjs';
+import { ChatBase, NativeProcess, approvalScope, clip, nativeId, MAX_TEXT } from './chat-common.mjs';
 
 export function codexLaunch(job) {
   const args=['app-server'],thread={cwd:job.cwd};let resume=job.resume_id;
@@ -41,6 +41,14 @@ function codexModels(result) {
   });
 }
 const requestKey=id=>typeof id+':'+String(id);
+/** Absolute paths anywhere in a permission request, however Codex nests them. */
+function pathsIn(value,found=[],depth=0) {
+  if(depth>6||found.length>=16)return found;
+  if(typeof value==='string'){if(value.startsWith('/')||/^[A-Za-z]:[\\/]/.test(value))found.push(value);}
+  else if(Array.isArray(value))for(const item of value)pathsIn(item,found,depth+1);
+  else if(value&&typeof value==='object')for(const item of Object.values(value))pathsIn(item,found,depth+1);
+  return found;
+}
 const itemStatus=item=>['failed','declined','cancelled'].includes(item.status)||item.success===false?'failed':item.status==='inProgress'?'running':'completed';
 
 /**
@@ -215,10 +223,13 @@ export class CodexChat extends ChatBase {
     if(method==='item/commandExecution/requestApproval'||method==='item/fileChange/requestApproval'){
       const text=JSON.stringify({reason:p.reason,command:p.command,cwd:p.cwd,grantRoot:p.grantRoot,network:p.networkApprovalContext,additionalPermissions:p.additionalPermissions});
       if(Buffer.byteLength(text)>MAX_TEXT){this.reject(message,'Native approval is too large to display safely.');return;}
-      const supported=['accept','decline','cancel'];
-      const choices=Array.isArray(p.availableDecisions)?supported.filter(decision=>p.availableDecisions.includes(decision)):supported;
+      // Codex's acceptForSession is offered as "allow for this session".
+      const offered=Array.isArray(p.availableDecisions)?p.availableDecisions.filter(decision=>typeof decision==='string'):['accept','decline','cancel'];
+      const choices=[['accept','accept'],['accept_session','acceptForSession'],['decline','decline'],['cancel','cancel']].filter(([,native])=>offered.includes(native)).map(([choice])=>choice);
       if(!choices.includes('decline')&&!choices.includes('cancel')){this.reject(message);return;}
-      this.approval(key,{title:method.includes('commandExecution')?'Approve native command':'Approve native file changes',text:clip(text),choices},decision=>this.port.send({id:message.id,result:{decision}}));return;
+      const command=method.includes('commandExecution');
+      const scope=approvalScope(this.job.cwd,{access:p.networkApprovalContext?'network':command?'execute':'write',paths:[p.grantRoot,p.cwd,...pathsIn(p.additionalPermissions)],command:Array.isArray(p.command)?p.command.join(' '):p.command});
+      this.approval(key,{title:command?'Approve native command':'Approve native file changes',text:clip(text),choices,...(scope?{scope}:{})},decision=>this.port.send({id:message.id,result:{decision:decision==='accept_session'?'acceptForSession':decision}}));return;
     }
     if(method==='item/tool/requestUserInput'){
       const questions=Array.isArray(p.questions)?p.questions:[];
@@ -231,8 +242,11 @@ export class CodexChat extends ChatBase {
     }
     if(method==='item/permissions/requestApproval'){
       if(!p.permissions||typeof p.permissions!=='object'||Buffer.byteLength(JSON.stringify(p.permissions))>MAX_TEXT){this.reject(message);return;}
-      this.approval(key,{title:'Approve native permission request',text:clip(JSON.stringify({reason:p.reason,permissions:p.permissions})),choices:['accept','decline','cancel']},decision=>{
-        this.port.send({id:message.id,result:{permissions:decision==='accept'?p.permissions:{},scope:'turn'}});
+      const paths=pathsIn(p.permissions);
+      const scope=approvalScope(this.job.cwd,{access:JSON.stringify(p.permissions).includes('write')?'write':p.permissions.network?'network':'read',paths});
+      this.approval(key,{title:'Approve native permission request',text:clip(JSON.stringify({reason:p.reason,permissions:p.permissions})),choices:['accept','accept_session','decline','cancel'],...(scope?{scope}:{})},decision=>{
+        const granted=decision==='accept'||decision==='accept_session';
+        this.port.send({id:message.id,result:{permissions:granted?p.permissions:{},scope:decision==='accept_session'?'session':'turn'}});
         if(decision==='cancel'&&this.active){this.active.interrupted=true;void this.sendInterrupt(this.active);}
       });return;
     }

@@ -215,6 +215,47 @@ test('oversized native question option lists fail closed before emitting an inco
     assert.equal(events.some(event=>event.type==='approval'),false);assert.equal(events.some(event=>event.type==='error'),true);assert.equal(sent.length,1);
   }
 });
+test('a request outside the workspace says so, and can be allowed for the whole session without touching settings',()=>{
+  const cwd='/work/repo';
+  // Claude: its own suggestions are kept to this session.
+  {
+    const events=[],sent=[],chat=new ClaudeChat({cwd},event=>events.push(event));chat.active={id:'active'};chat.port={send:message=>sent.push(message)};
+    chat.request({type:'control_request',request_id:'read',request:{subtype:'can_use_tool',tool_name:'Read',tool_use_id:'tool',blocked_path:'/etc/hosts',input:{file_path:'/etc/hosts'},permission_suggestions:[{type:'addDirectories',directories:['/etc'],destination:'localSettings'}]}});
+    const approval=events.find(event=>event.type==='approval');
+    assert.deepEqual(approval.scope,{access:'read',outside:['/etc/hosts']});
+    assert.deepEqual(approval.choices,['accept','accept_session','decline','cancel']);
+    chat.answer({request_id:approval.id,decision:'accept_session'});
+    const response=sent.pop().response.response;
+    assert.equal(response.behavior,'allow');
+    assert.deepEqual(response.updatedPermissions,[{type:'addDirectories',directories:['/etc'],destination:'session'}]);
+    // Inside the workspace there is nothing to flag, and no suggestion means no session choice.
+    chat.request({type:'control_request',request_id:'edit',request:{subtype:'can_use_tool',tool_name:'Edit',tool_use_id:'tool2',input:{file_path:'src/app.ts'}}});
+    const inside=events.filter(event=>event.type==='approval').pop();
+    assert.deepEqual(inside.scope,{access:'write'});
+    assert.deepEqual(inside.choices,['accept','decline','cancel']);
+    chat.clearApprovals(false);
+  }
+  // Codex: acceptForSession when the client offers it, and a session-scoped grant for permissions.
+  {
+    const events=[],sent=[],chat=new CodexChat({cwd},event=>events.push(event));chat.active={id:'active'};chat.nativeSessionId='fixture-thread';chat.port={send:message=>sent.push(message)};
+    chat.request({id:'run',method:'item/commandExecution/requestApproval',params:{threadId:'fixture-thread',command:'cat /var/log/syslog',cwd,availableDecisions:['accept','acceptForSession','decline','cancel']}});
+    const command=events.find(event=>event.type==='approval');
+    assert.deepEqual(command.choices,['accept','accept_session','decline','cancel']);
+    assert.equal(command.scope.access,'execute');assert.equal(command.scope.command,'cat /var/log/syslog');
+    chat.answer({request_id:command.id,decision:'accept_session'});
+    assert.deepEqual(sent.pop(),{id:'run',result:{decision:'acceptForSession'}});
+    chat.request({id:'grant',method:'item/permissions/requestApproval',params:{threadId:'fixture-thread',reason:'Write outside',permissions:{fileSystem:{write:['/srv/data']}}}});
+    const permission=events.filter(event=>event.type==='approval').pop();
+    assert.deepEqual(permission.scope,{access:'write',outside:['/srv/data']});
+    chat.answer({request_id:permission.id,decision:'accept_session'});
+    assert.deepEqual(sent.pop(),{id:'grant',result:{permissions:{fileSystem:{write:['/srv/data']}},scope:'session'}});
+    // An older client that names no decisions is offered nothing it may not accept.
+    chat.request({id:'old',method:'item/fileChange/requestApproval',params:{threadId:'fixture-thread',grantRoot:'/opt'}});
+    assert.deepEqual(events.filter(event=>event.type==='approval').pop().choices,['accept','decline','cancel']);
+    chat.clearApprovals(false);
+  }
+  assert.doesNotThrow(()=>validateChatInput({type:'approval',request_id:'one',decision:'accept_session'}));
+});
 test('Codex MCP tool confirmations: AgentDock\'s own pass, others ask the person, forms fail closed',()=>{
   const events=[],sent=[],chat=new CodexChat({},event=>events.push(event));chat.active={id:'active'};chat.nativeSessionId='fixture-thread';chat.port={send:message=>sent.push(message)};
   const ask=(id,params)=>chat.request({id,method:'mcpServer/elicitation/request',params:{threadId:'fixture-thread',mode:'form',requestedSchema:{type:'object',properties:{}},message:'Allow tool?',...params}});

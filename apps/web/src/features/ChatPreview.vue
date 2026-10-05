@@ -20,7 +20,7 @@ const snapshot = computed<ConversationSnapshot>(() => ({ mode: 'structured', run
   { seq: 5, type: 'message', id: 'preview-code', role: 'assistant', text: '### 一个更专注的工作区\n\n把实现细节折叠起来，保留真正重要的信息：\n\n```ts\nconst workspace = {\n  view: "conversation",\n  permissions: "native",\n  layout: "adaptive",\n};\n```' },
   { seq: 6, type: 'tool', id: 'preview-change', name: 'apply_patch · 3 display changes', status: 'completed', text: 'UI fixture only — no source file was modified.\n+ Responsive conversation layout\n+ Native tool cards\n+ Touch-friendly message composer' },
   { seq: 7, type: 'turn', id: 'preview-turn', status: 'running' },
-  { seq: 8, type: 'approval', id: 'preview-approval', title: '验证这次界面修改', text: '客户端请求执行 `pnpm run typecheck:web`。\n\n这是 **只读界面样例**，下方按钮已禁用，不会运行命令或授予权限。', choices: ['accept', 'decline', 'cancel'] },
+  { seq: 8, type: 'approval', id: 'preview-approval', title: 'Allow Read?', text: JSON.stringify({ reason: '读取工作区外的 nginx 配置，确认反向代理的端口（只读界面样例，不会授予权限）。', input: { file_path: '/etc/nginx/sites-enabled/agentdock.conf' } }), choices: ['accept', 'accept_session', 'decline', 'cancel'], scope: { access: 'read', outside: ['/etc/nginx/sites-enabled/agentdock.conf'] } },
   { seq: 9, type: 'approval', id: 'preview-question', title: '在继续之前，确认两个细节', text: '这是 **只读界面样例**，不会把回答发送给任何客户端。', choices: ['accept', 'cancel'], questions: [
     { id: 'layout', header: '布局', question: '审批卡片放在哪里？', options: [{ label: '跟随对话', description: '卡片出现在时间线里，滚动即可回看' }, { label: '固定在输入框上方', description: '始终可见，处理完再收起' }], isOther: true },
     { id: 'targets', header: '范围', question: '这次先打磨哪些组件？', multiSelect: true, options: [{ label: '权限请求' }, { label: 'Agent 提问' }, { label: '工具卡片', description: '折叠态与运行态' }] },

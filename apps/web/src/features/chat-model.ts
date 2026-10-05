@@ -6,13 +6,15 @@ import type { EndpointProfile, Session } from '@agentdock/protocol';
 /** `isDefault` marks the model a configuration resolves to when none is named,
  * which is what a not-yet-started session shows instead of guessing. */
 export interface NativeModel { id: string; name: string; description?: string; efforts?: string[]; isDefault?: boolean }
+/** What a native request reaches for, as the bridge describes it. */
+export interface ApprovalScope { access?: 'read' | 'write' | 'execute' | 'network'; outside?: string[]; command?: string }
 export interface ApprovalQuestion { id: string; header?: string; question: string; options: Array<{ label: string; description?: string }>; isSecret?: boolean; isOther?: boolean; multiSelect?: boolean }
 export type ChatEvent = ({ seq?: number } & (
   | { type: 'ready'; native_session_id?: string; commands?: string[] }
   | { type: 'settings'; model?: string; effort?: string; models?: NativeModel[]; permission_mode?: string; permission_modes?: string[] }
   | { type: 'message'; id: string; role: 'user' | 'assistant'; text: string; delta?: boolean; steered?: boolean }
   | { type: 'tool'; id: string; name: string; status: 'running' | 'completed' | 'failed'; text?: string; activity?: string }
-  | { type: 'approval'; id: string; title: string; text: string; choices: string[]; questions?: ApprovalQuestion[] }
+  | { type: 'approval'; id: string; title: string; text: string; choices: string[]; questions?: ApprovalQuestion[]; scope?: ApprovalScope }
   | { type: 'approval_resolved'; id: string }
   | { type: 'turn'; id?: string; status: 'running' | 'completed' | 'failed' | 'interrupted' }
   | { type: 'usage'; input_tokens?: number; output_tokens?: number; context_tokens?: number; context_window?: number }
@@ -25,7 +27,7 @@ export interface ConversationSnapshot { mode?: 'structured' | 'pty'; running: bo
 export type ChatItem =
   | { type: 'message'; id: string; role: 'user' | 'assistant'; text: string; steered?: boolean }
   | { type: 'tool'; id: string; name: string; status: 'running' | 'completed' | 'failed'; text: string; activity?: string }
-  | { type: 'approval'; id: string; title: string; text: string; choices: string[]; questions: ApprovalQuestion[]; resolved: boolean }
+  | { type: 'approval'; id: string; title: string; text: string; choices: string[]; questions: ApprovalQuestion[]; scope?: ApprovalScope; resolved: boolean }
   | { type: 'configuration'; id: string; profile_name: string; text: string }
   | { type: 'error'; id: string; text: string };
 

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { ChatBase, NativeProcess, clip, nativeId, MAX_TEXT } from './chat-common.mjs';
+import { ChatBase, NativeProcess, approvalScope, clip, nativeId, MAX_TEXT } from './chat-common.mjs';
 
 /**
  * AgentDock's names for how tools get approved, and Claude Code's.
@@ -304,10 +304,18 @@ export class ClaudeChat extends ChatBase {
     if(request.requires_user_interaction){this.reject(message,'This approval requires a native Claude Code dialog.');return;}
     const text=JSON.stringify({reason:request.decision_reason,input});
     if(Buffer.byteLength(text)>MAX_TEXT){this.reject(message,'Native approval is too large to display safely.');return;}
-    this.approval(key,{title:clip(request.title??`Allow ${request.tool_name??'native tool'}?`,512),text:clip(text),choices:['accept','decline','cancel']},decision=>this.permissionResponse(message,decision,input));
+    // Claude offers its own "don't ask again" updates with the request. Kept to
+    // this session: AgentDock never writes them into the user's settings files.
+    const suggestions=Array.isArray(request.permission_suggestions)?request.permission_suggestions.filter(update=>update&&typeof update==='object'&&typeof update.type==='string').slice(0,8).map(update=>({...update,destination:'session'})):[];
+    const tool=String(request.tool_name??'');
+    const access=/^(Read|Glob|Grep|LS|NotebookRead)$/.test(tool)?'read':/^(Write|Edit|MultiEdit|NotebookEdit)$/.test(tool)?'write':tool==='Bash'?'execute':/^Web(Fetch|Search)$/.test(tool)?'network':undefined;
+    const scope=approvalScope(this.job.cwd,{access,paths:[request.blocked_path,input.file_path,input.path,input.notebook_path],command:typeof input.command==='string'?input.command:undefined});
+    const choices=suggestions.length?['accept','accept_session','decline','cancel']:['accept','decline','cancel'];
+    this.approval(key,{title:clip(request.title??`Allow ${request.tool_name??'native tool'}?`,512),text:clip(text),choices,...(scope?{scope}:{})},decision=>this.permissionResponse(message,decision,input,suggestions));
   }
-  permissionResponse(message,decision,input) {
-    const result=decision==='accept'?{behavior:'allow',updatedInput:input,toolUseID:message.request.tool_use_id}:{behavior:'deny',message:'The user declined this tool request.',interrupt:decision==='cancel',toolUseID:message.request.tool_use_id};
+  permissionResponse(message,decision,input,suggestions=[]) {
+    const allowed=decision==='accept'||decision==='accept_session';
+    const result=allowed?{behavior:'allow',updatedInput:input,toolUseID:message.request.tool_use_id,...(decision==='accept_session'&&suggestions.length?{updatedPermissions:suggestions}:{})}:{behavior:'deny',message:'The user declined this tool request.',interrupt:decision==='cancel',toolUseID:message.request.tool_use_id};
     this.port.send({type:'control_response',response:{subtype:'success',request_id:message.request_id,response:result}});
     if(decision==='cancel'&&this.active)this.active.interrupted=true;
   }

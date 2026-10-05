@@ -1,6 +1,29 @@
+import { resolve, sep } from 'node:path';
 import { spawnNative as spawn } from './native-spawn.mjs';
 import { randomUUID, createHash } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
+
+/**
+ * What a native request reaches for, so the card can say it plainly: the kind
+ * of access, and any path that lies outside the session's working directory.
+ * Paths are only reported, never resolved through the file system.
+ *
+ * @param {string|undefined} cwd
+ * @param {{ access?: string, paths?: unknown[], command?: string }} [request]
+ * @returns {{ access?: string, outside?: string[], command?: string } | undefined}
+ */
+export function approvalScope(cwd, request = {}) {
+  const { access, paths = [], command } = request;
+  const root=typeof cwd==='string'&&cwd?resolve(cwd):undefined;
+  const outside=!root?[]:[...new Set(paths.filter(/** @returns {path is string} */ path=>typeof path==='string'&&path.length>0&&path.length<=1024&&!path.includes('\0')).map(path=>resolve(root,path)))]
+    .filter(path=>path!==root&&!path.startsWith(root.endsWith(sep)?root:root+sep)).slice(0,8);
+  /** @type {{ access?: string, outside?: string[], command?: string }} */
+  const scope={};
+  if(typeof access==='string'&&['read','write','execute','network'].includes(access))scope.access=access;
+  if(outside.length)scope.outside=outside;
+  if(typeof command==='string'&&command.trim())scope.command=command.length>600?command.slice(0,599)+'…':command;
+  return Object.keys(scope).length?scope:undefined;
+}
 
 export const MAX_INPUT_LINE = 512 * 1024;
 export const MAX_NATIVE_LINE = 4 * 1024 * 1024;
