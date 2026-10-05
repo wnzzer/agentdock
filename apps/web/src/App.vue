@@ -30,6 +30,11 @@ import TabIcon from "./features/TabIcon.vue";
 import BottomSheet from "./features/BottomSheet.vue";
 import AgentActivity, { type ShowTarget } from "./features/AgentActivity.vue";
 import ToastHost from "./features/ToastHost.vue";
+import CommandPalette, { type PaletteItem } from "./features/CommandPalette.vue";
+import ShortcutsDialog from "./features/ShortcutsDialog.vue";
+import { SHORTCUTS, formatChord, shortcutFor } from "./features/shortcuts";
+import { setThemePreference } from "./features/theme";
+import { isSessionArchived } from "./features/session-list";
 import { showToast, type ToastAction } from "./features/toasts";
 import { attentionTitle, trackSessions, waitingIds } from "./features/attention";
 import { useMobile } from "./features/mobile";
@@ -682,6 +687,64 @@ async function refreshResources() {
   } catch (cause) { report(cause); }
   finally { refreshingResources.value = false; }
 }
+/** The command palette and the shortcut sheet, and the keys that open everything else. */
+const paletteOpen = ref(false), shortcutsOpen = ref(false);
+const hint = (id: string) => { const shortcut = SHORTCUTS.find(item => item.id === id); return shortcut ? formatChord(shortcut.chord) : undefined; };
+const paletteItems = computed<PaletteItem[]>(() => {
+  const workspaceName = (id: string) => workspaces.value.find(workspace => workspace.id === id)?.name ?? "";
+  const label = (provider: ProviderKind) => provider === "terminal" ? t("Terminal") : providerLabel(provider);
+  const listed = sessions.value.filter(session => !isSessionArchived(session));
+  const recent = [...listed].sort((a, b) => Date.parse(b.updated_at ?? "") - Date.parse(a.updated_at ?? "")).slice(0, 6).map(session => session.id);
+  const here = contextWorkspace.value?.id;
+  const items: PaletteItem[] = [];
+  for (const session of listed) {
+    const waiting = session.status === "waiting";
+    items.push({ id: `session:${session.id}`, title: session.title, subtitle: `${label(session.provider)} · ${workspaceName(session.workspace_id)}${waiting ? " · " + t("Needs you") : ""}`, group: waiting ? t("Needs you") : t("Sessions"), provider: session.provider, suggested: waiting || recent.includes(session.id), run: () => openSession(session) });
+  }
+  if (here) {
+    for (const provider of ["claude_code", "codex", "terminal"] as const) items.push({ id: `new:${provider}`, title: provider === "terminal" ? t("New terminal") : t("New {provider} session", { provider: label(provider) }), subtitle: contextWorkspace.value?.name, group: t("Commands"), provider, suggested: provider !== "terminal", keywords: "new create 新建", run: () => void quickSession(here, provider) });
+    items.push({ id: "new:options", title: t("New session with options…"), subtitle: contextWorkspace.value?.name, group: t("Commands"), icon: "plus", hint: hint("new-session"), keywords: "new create 新建", run: () => newSession(here) });
+  }
+  items.push(
+    { id: "page:sessions", title: t("All sessions"), group: t("Go to"), icon: "clock", hint: hint("sessions"), suggested: true, run: () => openPage("sessions") },
+    { id: "page:system", title: t("System"), subtitle: t("CPU, memory, disks and network"), group: t("Go to"), icon: "gauge", hint: hint("system"), suggested: true, keywords: "cpu memory disk network resources 资源 磁盘 内存", run: () => openPage("system") },
+    { id: "page:canvas", title: t("Workspace canvas"), group: t("Go to"), icon: "grid", hint: hint("canvas"), run: () => void router.push({ name: "canvas" }) },
+  );
+  for (const [section, title, icon] of [["preferences", "Preferences", "gauge"], ["agents", "Agent clients", "spark"], ["endpoints", "Endpoint profiles", "settings"], ["accounts", "Official accounts", "account"], ["updates", "Updates", "download"]] as const)
+    items.push({ id: `settings:${section}`, title: t(title), subtitle: t("Settings"), group: t("Settings"), icon, hint: section === "preferences" ? hint("settings") : undefined, keywords: "settings 设置", run: () => openSettings(section) });
+  for (const workspace of workspaces.value) items.push({ id: `workspace:${workspace.id}`, title: workspace.name, subtitle: workspace.root_path, group: t("Workspaces"), icon: "folder", run: () => { void router.push({ name: "canvas" }); selectWorkspace(workspace.id); } });
+  items.push(
+    { id: "add-workspace", title: t("Add workspace"), group: t("Commands"), icon: "plus", run: () => { showWorkspace.value = true; } },
+    { id: "toggle-sidebar", title: t("Show or hide the sidebar"), group: t("Commands"), icon: "panelLeft", hint: hint("sidebar"), run: toggleSidebar },
+    { id: "toggle-files", title: t("Show or hide the file panel"), group: t("Commands"), icon: "panelRight", hint: hint("files"), run: () => { explorerOpen.value = !explorerOpen.value; } },
+    { id: "theme:light", title: t("Light"), subtitle: t("Appearance"), group: t("Commands"), icon: "gauge", keywords: "theme 主题 外观", run: () => setThemePreference("light") },
+    { id: "theme:dark", title: t("Dark"), subtitle: t("Appearance"), group: t("Commands"), icon: "gauge", keywords: "theme 主题 外观", run: () => setThemePreference("dark") },
+    { id: "theme:system", title: t("Match system"), subtitle: t("Appearance"), group: t("Commands"), icon: "gauge", keywords: "theme 主题 外观", run: () => setThemePreference("system") },
+    { id: "shortcuts", title: t("Keyboard shortcuts"), group: t("Commands"), icon: "info", hint: hint("help"), run: () => { shortcutsOpen.value = true; } },
+  );
+  return items;
+});
+function onGlobalKey(event: KeyboardEvent) {
+  if (showAuth.value || event.defaultPrevented) return;
+  const shortcut = shortcutFor(event);
+  if (!shortcut) return;
+  event.preventDefault();
+  const run: Record<string, () => void> = {
+    palette: () => { paletteOpen.value = !paletteOpen.value; },
+    help: () => { shortcutsOpen.value = !shortcutsOpen.value; },
+    settings: () => openSettings(),
+    sidebar: toggleSidebar,
+    files: () => { explorerOpen.value = !explorerOpen.value; },
+    sessions: () => openPage("sessions"),
+    system: () => openPage("system"),
+    canvas: () => void router.push({ name: "canvas" }),
+    "new-session": () => { if (contextWorkspace.value) newSession(contextWorkspace.value.id); },
+  };
+  run[shortcut.id]?.();
+}
+onMounted(() => window.addEventListener("keydown", onGlobalKey));
+onUnmounted(() => window.removeEventListener("keydown", onGlobalKey));
+
 /**
  * Every fresh session list goes through the attention tracker, which knows
  * which sessions are waiting on you and says so: a toast, a desktop
@@ -794,6 +857,7 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
       <div class="top-crumb"><span>{{ t('Shared workspace canvas') }}</span><Icon name="chevron" :size="13"/><strong>{{ contextWorkspace?.name || t('Your next workspace') }}</strong></div>
       <div class="top-actions">
         <span v-if="loading||!apiOnline" class="connection-badge"><i :class="['state-dot', apiOnline ? 'running' : 'stopped']"/>{{ t(loading ? 'Connecting' : apiOnline ? 'Host connected' : 'Offline') }}</span>
+        <button type="button" class="topbar-search" :title="t('Search and commands') + ' · ' + hint('palette')" :aria-label="t('Search and commands')" @click="paletteOpen=true"><Icon name="search" :size="14"/><span>{{ t('Search…') }}</span><kbd>{{ hint('palette') }}</kbd></button>
         <button v-if="workspaces.length" class="primary-button new-session-top" :disabled="!selectedWorkspace" :aria-label="t('New session')" :title="selectedWorkspace?t('New session in {workspace}',{workspace:selectedWorkspace.name}):t('New session')" @click="mobile ? quickSession(contextWorkspace?.id) : newSession()"><Icon :name="mobile ? 'edit' : 'plus'" :size="mobile ? 19 : 14"/><span>{{ t('New session') }}</span></button>
         <button class="icon-button" :aria-label="t('Settings')" :title="t('Settings')" @click="openSettings()"><Icon name="settings"/></button>
         <button v-if="workspaces.length" :class="['icon-button',{selected:explorerOpen}]" :aria-pressed="explorerOpen" :aria-label="t(explorerOpen?'Collapse file panel':'Expand file panel')" :title="t(explorerOpen?'Collapse file panel':'Expand file panel')" @click="explorerOpen = !explorerOpen"><Icon name="panelRight"/></button>
@@ -840,6 +904,8 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
   <HostFilePreview v-if="hostPreview" :key="hostPreview.path" :path="hostPreview.path" :line="hostPreview.line" @close="hostPreview=undefined" @add-workspace="folder=>{hostPreview=undefined;workspaceInitialPath=folder;showWorkspace=true}"/>
   <ImageLightbox />
   <ToastHost />
+  <CommandPalette v-if="paletteOpen" :items="paletteItems" @close="paletteOpen=false" />
+  <ShortcutsDialog v-if="shortcutsOpen" @close="shortcutsOpen=false" />
   <AgentActivity :enabled="!showAuth && apiOnline" @changed="agentChanged" @show="agentShow" @canvas="agentCanvas" />
   <BottomSheet v-if="switcherOpen" :title="t('Open views')" @close="switcherOpen=false">
     <div class="switcher-list">
@@ -871,6 +937,8 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
 </template>
 
 <style scoped>
+.topbar-search{display:inline-flex;align-items:center;gap:8px;min-width:200px;height:32px;padding:0 6px 0 10px;border:1px solid var(--line);border-radius:var(--radius-md);background:var(--sunken);color:var(--muted);font-size:var(--text-sm);cursor:pointer}.topbar-search:hover{border-color:var(--line-strong);color:var(--ink-soft)}.topbar-search>span{flex:1;text-align:left}.topbar-search kbd{padding:0 5px;border:1px solid var(--line);border-radius:var(--radius-xs);background:var(--surface);font:var(--text-xs) var(--font-body);color:var(--muted)}
+@media(max-width:1100px){.topbar-search{min-width:0}.topbar-search>span,.topbar-search kbd{display:none}.topbar-search{width:32px;justify-content:center;padding:0}}
 .language-select{color:var(--ink-soft);border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--sunken);font-size:var(--text-xs);padding:5px 3px 5px 7px;min-height:28px;cursor:pointer}
 .new-session-top{padding:5px 9px;font-size:var(--text-xs);min-height:30px}.top-actions{gap:9px}.main-workspace{padding:10px 12px 0}.canvas-compat-notice>span{flex:1;min-width:0}
 .canvas-compat-notice{display:flex;align-items:center;gap:8px;flex:none;padding:8px 11px;margin-bottom:10px;background:var(--ok-soft);border:1px solid var(--accent-line);border-radius:var(--radius-sm);font-size:var(--text-xs);line-height:17px;color:var(--ink-soft)}.canvas-compat-notice>svg{flex:none}.canvas-compat-notice small{display:block;color:var(--muted);font-size:var(--text-xs)}
