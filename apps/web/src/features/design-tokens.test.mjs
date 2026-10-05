@@ -2,13 +2,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Colours, type sizes and radii come from the tokens in styles.css. These
 // counts are a ratchet: they may go down as the last literals move over, and
 // a new hard-coded value has to be a deliberate change here, not a drift.
 const LIMITS = { hex: 89, fontPx: 3, radiusPx: 0 };
 
-const src = new URL('..', import.meta.url).pathname;
+// fileURLToPath, not .pathname: on Windows the latter keeps a leading slash before the drive.
+const src = fileURLToPath(new URL('..', import.meta.url));
 const files = [];
 (function walk(dir) {
   for (const name of readdirSync(dir)) {
