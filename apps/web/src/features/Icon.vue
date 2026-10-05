@@ -29,6 +29,7 @@ const paths: Record<string, string> = {
   // A dial with its needle part-way round: how deeply this is being thought
   // about, which is a level rather than a duration.
   gauge: "M3 17a9 9 0 1 1 18 0 M12 17l4.5-5.5",
+  chart: "M4 20V10 M10 20V4 M16 20v-7 M3 20h18",
   // What stands between a tool and the work. The composer's approval chip.
   shield: "M12 3l7 3v6c0 4.2-2.9 7.4-7 9-4.1-1.6-7-4.8-7-9V6z",
   image: "M3 3h18v18H3z m0 13 5-5 5 6 3-3 5 6 M14 7h.01",

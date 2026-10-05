@@ -92,6 +92,11 @@
   --violet-soft: #f1eef8;
   /* How strongly a pastel tint shows: full on light surfaces, a trace on dark. */
   --tint-mix: 100%;
+  /* Chart series, validated as a set (adjacent CVD and contrast) for these surfaces. */
+  --chart-1: #2a78d6;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
+  --chart-4: #eda100;
 
   --text-xs: 11px;
   --text-sm: 12px;
@@ -100,6 +105,7 @@
   --text-lg: 16px;
   --text-xl: 18px;
   --text-2xl: 22px;
+  --text-3xl: 28px;
   --input-text: 16px;
 
   --space-1: 4px;
@@ -183,6 +189,10 @@
     --codex: #ad91ec;
     --codex-soft: #2a2242;
   --tint-mix: 14%;
+  --chart-1: #3987e5;
+  --chart-2: #d95926;
+  --chart-3: #199e70;
+  --chart-4: #c98500;
     --shadow-sm: 0 1px 2px #00000066;
     --shadow-md: 0 4px 16px #00000073;
     --shadow-lg: 0 12px 32px #00000080;
@@ -236,6 +246,10 @@
   --codex: #ad91ec;
   --codex-soft: #2a2242;
   --tint-mix: 14%;
+  --chart-1: #3987e5;
+  --chart-2: #d95926;
+  --chart-3: #199e70;
+  --chart-4: #c98500;
   --shadow-sm: 0 1px 2px #00000066;
   --shadow-md: 0 4px 16px #00000073;
   --shadow-lg: 0 12px 32px #00000080;

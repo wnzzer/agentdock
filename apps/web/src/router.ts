@@ -20,6 +20,7 @@ export const router = createRouter({
     { path: "/", name: "canvas", component: Page },
     { path: "/sessions", name: "sessions", component: Page },
     { path: "/system", name: "system", component: Page },
+    { path: "/usage", name: "usage", component: Page },
     { path: "/settings/:section?", name: "settings", component: Page, beforeEnter: to => {
       const section = String(to.params.section ?? "");
       if (!(SETTINGS_SECTIONS as readonly string[]).includes(section)) return { name: "settings", params: { section: "preferences" }, replace: true };

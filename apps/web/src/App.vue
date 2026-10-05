@@ -12,6 +12,7 @@ import WorkspaceDialog from "./features/WorkspaceDialog.vue";
 import SettingsPage from "./features/SettingsPage.vue";
 import SessionsPage from "./features/SessionsPage.vue";
 import SystemPage from "./features/SystemPage.vue";
+import UsagePage from "./features/UsagePage.vue";
 import { useRoute, useRouter } from "vue-router";
 import type { SettingsSection } from "./router";
 import HostFilePreview from "./features/HostFilePreview.vue";
@@ -88,13 +89,13 @@ const hostPreview = ref<{ path: string; line?: number }>();
 const route = useRoute() ?? reactive({ name: "canvas", params: {}, query: {}, fullPath: "/" });
 const router = useRouter() ?? ({ push: async () => undefined, replace: async () => undefined, back: () => undefined } as unknown as ReturnType<typeof useRouter>);
 /** Which page, if any, is drawn over the canvas. The canvas itself never unmounts. */
-const page = computed(() => route.name === "settings" || route.name === "sessions" || route.name === "system" ? route.name : undefined);
+const page = computed(() => route.name === "settings" || route.name === "sessions" || route.name === "system" || route.name === "usage" ? route.name : undefined);
 const settingsRouteSection = computed(() => String(route.params.section ?? "preferences") as SettingsSection);
 // Session menus are teleported out of their tabs to the body, so a page over
 // the canvas cannot cover them; the body says a page is open and they step aside.
 watch(page, value => { const body = typeof document === "undefined" ? undefined : document.body; if (!body) return; if (value) body.dataset.page = value; else delete body.dataset.page; }, { immediate: true });
 function openSettings(section: SettingsSection = "preferences") { sidebarOpen.value = false; void router.push({ name: "settings", params: { section } }); }
-function openPage(name: "sessions" | "system", query?: Record<string, string>) { sidebarOpen.value = false; void router.push({ name, query }); }
+function openPage(name: "sessions" | "system" | "usage", query?: Record<string, string>) { sidebarOpen.value = false; void router.push({ name, query }); }
 /** Back from a page: to wherever you came from inside the app, else the canvas. */
 function leavePage() {
   if (window.history.state?.back) router.back();
@@ -711,6 +712,7 @@ const paletteItems = computed<PaletteItem[]>(() => {
   items.push(
     { id: "page:sessions", title: t("All sessions"), group: t("Go to"), icon: "clock", hint: hint("sessions"), suggested: true, run: () => openPage("sessions") },
     { id: "page:system", title: t("System"), subtitle: t("CPU, memory, disks and network"), group: t("Go to"), icon: "gauge", hint: hint("system"), suggested: true, keywords: "cpu memory disk network resources 资源 磁盘 内存", run: () => openPage("system") },
+    { id: "page:usage", title: t("Usage"), subtitle: t("Tokens, cost and subscription allowance"), group: t("Go to"), icon: "chart", suggested: true, keywords: "token cost usage quota 用量 费用 额度 统计", run: () => openPage("usage") },
     { id: "page:canvas", title: t("Workspace canvas"), group: t("Go to"), icon: "grid", hint: hint("canvas"), run: () => void router.push({ name: "canvas" }) },
   );
   for (const [section, title, icon] of [["preferences", "Preferences", "gauge"], ["agents", "Agent clients", "spark"], ["endpoints", "Endpoint profiles", "settings"], ["accounts", "Official accounts", "account"], ["updates", "Updates", "download"]] as const)
@@ -850,7 +852,7 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
   <div :class="['app-shell', { 'explorer-hidden': !explorerOpen || !explorerWorkspace, 'sidebar-collapsed': sidebarCollapsed, 'is-mobile': mobile }]">
     <header class="topbar">
       <div class="brand"><button v-if="mobile && backTarget" class="icon-button mobile-menu mobile-back" :aria-label="t('Back')" @click="goBack"><Icon name="chevron" :size="22" /></button><button v-else class="icon-button mobile-menu" :aria-label="t('Toggle workspace navigation')" @click="sidebarOpen = !sidebarOpen"><Icon name="menu" /></button><button class="icon-button sidebar-toggle" :class="{selected:!sidebarCollapsed}" :aria-pressed="!sidebarCollapsed" :aria-label="t(sidebarCollapsed?'Expand workspace panel':'Collapse workspace panel')" :title="t(sidebarCollapsed?'Expand workspace panel':'Collapse workspace panel')" @click="toggleSidebar"><Icon name="panelLeft"/></button><span class="brand-mark"><span /></span><strong :title="serverVersion?t('AgentDock {version}',{version:serverVersion}):undefined">AgentDock<span v-if="instanceLabel" class="brand-version">{{ instanceLabel }}</span></strong></div>
-      <span v-if="mobile && page" class="mobile-title mobile-page-title"><strong>{{ t(page === "settings" ? "Settings" : page === "sessions" ? "All sessions" : "System") }}</strong></span>
+      <span v-if="mobile && page" class="mobile-title mobile-page-title"><strong>{{ t(page === "settings" ? "Settings" : page === "sessions" ? "All sessions" : page === "usage" ? "Usage" : "System") }}</strong></span>
       <button v-else-if="mobile && canvasReady" class="mobile-title" type="button" :aria-label="t('Switch view')" @click="switcherOpen = true">
         <TabIcon v-if="focusedPane" :kind="focusedPane.kind" :metadata="focusedPane.metadata" :session-providers="sessionProviders" :size="16" />
         <span class="mobile-title-copy"><strong>{{ focusedPane ? paneTitle(focusedPane) : (contextWorkspace?.name || 'AgentDock') }}</strong><small v-if="focusedPane && paneDetail(focusedPane)">{{ paneDetail(focusedPane) }}</small></span>
@@ -879,7 +881,7 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
       <button v-if="sidebarOpen" class="drawer-overlay sidebar-overlay" :aria-label="t('Close workspace navigation')" @click="sidebarOpen = false"/>
       <aside :class="['sidebar',{'drawer-open':sidebarOpen}]">
         <div v-if="sidebarRail&&!sidebarCollapsed" class="sidebar-resizer" role="separator" aria-orientation="vertical" :aria-label="t('Resize workspace panel')" :title="t('Drag to resize · double-click to reset')" @pointerdown.prevent="resizeSidebar" @dblclick="resetSidebarWidth"/>
-        <WorkspaceSidebar ref="workspaceSidebar" @reveal-session="revealSession" :workspace-branches="Object.fromEntries(Object.entries(gitStatuses).flatMap(([id,status])=>status.branch?[[id,status.branch]]:[]))" @branch-switched="branchSwitched" :workspaces="workspaces" :sessions="sessions" :selected-workspace-id="selectedWorkspaceId" :selected-session-id="selectedSessionId" :history-supported="backendCapabilities.nativeHistory" :storage-key="storageKey" :archive-supported="backendCapabilities.sessionArchive" :ephemeral-supported="backendCapabilities.ephemeralSessions" :archive-busy-ids="archiveBusyIds" :keep-busy-ids="keepBusyIds" :delete-busy-ids="deleteBusyIds" :sessions-loading="sessionsLoading" @select-workspace="selectWorkspace" @open-session="openSession" @rename-session="renameSession" @archive-session="archiveSession" @archive-sessions="archiveSessions" @delete-sessions="deleteSessions" @keep-session="keepSession" @refresh-sessions="refreshSessions" @session-environment="environmentSessionId=$event;sidebarOpen=false" @open-files="openFiles" @open-changes="openChanges" @new-session="newSession" @quick-session="quickSession" @load-history="loadHistory" @add-workspace="showWorkspace=true" @canvas="sidebarOpen=false;router.push({ name: 'canvas' })" @all-sessions="openPage('sessions')" @system="openPage('system')" @show-in-sessions="(id, archived) => openPage('sessions', { highlight: id, archive: archived ? 'archived' : 'current' })" :current-page="page ?? 'canvas'"/>
+        <WorkspaceSidebar ref="workspaceSidebar" @reveal-session="revealSession" :workspace-branches="Object.fromEntries(Object.entries(gitStatuses).flatMap(([id,status])=>status.branch?[[id,status.branch]]:[]))" @branch-switched="branchSwitched" :workspaces="workspaces" :sessions="sessions" :selected-workspace-id="selectedWorkspaceId" :selected-session-id="selectedSessionId" :history-supported="backendCapabilities.nativeHistory" :storage-key="storageKey" :archive-supported="backendCapabilities.sessionArchive" :ephemeral-supported="backendCapabilities.ephemeralSessions" :archive-busy-ids="archiveBusyIds" :keep-busy-ids="keepBusyIds" :delete-busy-ids="deleteBusyIds" :sessions-loading="sessionsLoading" @select-workspace="selectWorkspace" @open-session="openSession" @rename-session="renameSession" @archive-session="archiveSession" @archive-sessions="archiveSessions" @delete-sessions="deleteSessions" @keep-session="keepSession" @refresh-sessions="refreshSessions" @session-environment="environmentSessionId=$event;sidebarOpen=false" @open-files="openFiles" @open-changes="openChanges" @new-session="newSession" @quick-session="quickSession" @load-history="loadHistory" @add-workspace="showWorkspace=true" @canvas="sidebarOpen=false;router.push({ name: 'canvas' })" @all-sessions="openPage('sessions')" @system="openPage('system')" @usage="openPage('usage')" @show-in-sessions="(id, archived) => openPage('sessions', { highlight: id, archive: archived ? 'archived' : 'current' })" :current-page="page ?? 'canvas'"/>
         <div v-if="!mobile" class="host-card"><span class="host-symbol"><Icon name="terminal"/></span><div><strong>{{ t('Host native') }}</strong><small>{{ platform || 'macOS / Linux' }} · {{ t('no containers') }}</small></div><span :class="['state-dot',apiOnline?'running':'stopped']"/></div>
       
         <div v-else class="drawer-footer">
@@ -903,6 +905,7 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
         <SettingsPage v-if="page==='settings'" :profiles="profiles" :section="settingsRouteSection" @back="leavePage" @navigate="section => router.push({ name: 'settings', params: { section } })" @changed="refreshProfiles"/>
         <SessionsPage v-else-if="page==='sessions'" :workspaces="workspaces" :sessions="sessions" :selected-session-id="selectedSessionId" :archive-supported="backendCapabilities.sessionArchive" :archive-busy-ids="archiveBusyIds" :keep-busy-ids="keepBusyIds" :delete-busy-ids="deleteBusyIds" :sessions-loading="sessionsLoading" :initial-archive="route.query.archive === 'archived' ? 'archived' : 'current'" :highlight-id="typeof route.query.highlight === 'string' ? route.query.highlight : undefined" @back="leavePage" @open-session="openSession" @rename-request="requestRenameSession" @session-environment="environmentSessionId=$event" @archive-session="archiveSession" @archive-sessions="archiveSessions" @delete-sessions="deleteSessions" @keep-session="keepSession" @refresh-sessions="refreshSessions"/>
         <SystemPage v-else-if="page==='system'" :sessions="sessions" @back="leavePage" @open-session="openSession"/>
+        <UsagePage v-else-if="page==='usage'" :sessions="sessions" :workspaces="workspaces" @back="leavePage" @open-session="openSession"/>
       </main>
       <button v-if="explorerOpen && explorerWorkspace" class="drawer-overlay explorer-overlay" :aria-label="t('Close file explorer')" @click="explorerOpen=false"/>
       <aside v-if="explorerOpen && explorerWorkspace" class="explorer-panel">

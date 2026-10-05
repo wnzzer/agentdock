@@ -30,6 +30,7 @@ mod secrets;
 mod security;
 mod settings;
 mod update;
+mod usage;
 mod workspace_io;
 
 use agentdock_domain::{
@@ -608,6 +609,7 @@ async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         agents: agent::AgentRegistry::default(),
         activity: activity::Activity::default(),
     };
+    usage::warm(state.clone());
     let app = router(state.clone());
     // Reconcile only after startup has passed all configuration, binding and
     // ownership checks. `locked_database` stays alive through graceful shutdown.
@@ -649,6 +651,7 @@ fn router(state: AppState) -> Router {
         .merge(accounts::routes())
         .merge(clients::routes())
         .merge(resources::routes())
+        .merge(usage::routes())
         .merge(checkouts::routes())
         .merge(preferences::routes())
         .merge(secrets::routes())

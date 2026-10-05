@@ -45,6 +45,7 @@ const emit = defineEmits<{
   addWorkspace: [];
   allSessions: [];
   system: [];
+  usage: [];
   /** A session the workspace groups do not list (archived, temporary): find it in the library page. */
   showInSessions: [id: string, archived: boolean];
   canvas: [];
@@ -150,6 +151,7 @@ defineExpose({ revealSession });
     <nav class="workspace-global-nav" :aria-label="t('Workspace navigation')">
       <button :class="['nav-item', { current: currentPage === 'canvas' }]" :aria-current="currentPage === 'canvas' ? 'page' : undefined" @click="emit('canvas')"><Icon name="grid" :size="16" /><span>{{ t('Workspace canvas') }}</span></button>
       <button :class="['nav-item', { current: currentPage === 'sessions' }]" :aria-current="currentPage === 'sessions' ? 'page' : undefined" @click="emit('allSessions')"><Icon name="clock" :size="16" /><span>{{ t('All sessions') }}</span><small class="count-badge">{{ sessionCount }}</small></button>
+      <button :class="['nav-item', { current: currentPage === 'usage' }]" :aria-current="currentPage === 'usage' ? 'page' : undefined" @click="emit('usage')"><Icon name="chart" :size="16" /><span>{{ t('Usage') }}</span></button>
       <button :class="['nav-item', { current: currentPage === 'system' }]" :aria-current="currentPage === 'system' ? 'page' : undefined" @click="emit('system')"><Icon name="gauge" :size="16" /><span>{{ t('System') }}</span></button>
     </nav>
     <header class="workspace-group-label"><span>{{ t('Workspaces') }}</span><small>{{ workspaces.length }}</small><!-- Finding the open session in the list belongs to the list, like an
