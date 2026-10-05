@@ -340,7 +340,9 @@ svg { flex-shrink: 0; vertical-align: middle; }
 .session-item-copy small>span:last-child { overflow: hidden; text-overflow: ellipsis; }
 .state-dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--faint); flex-shrink: 0; }
 .state-dot.running, .state-dot.connected { background: var(--focus); }
-.state-dot.waiting, .state-dot.starting, .state-dot.connecting { background: #c9a351; }
+.state-dot.starting, .state-dot.connecting { background: var(--muted); }
+/* Waiting on you is the one state that asks for something, so it is the one that stands out. */
+.state-dot.waiting { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
 .state-dot.failed, .state-dot.error { background: var(--danger-ink); }
 .sidebar-empty { text-align: center; color: var(--faint); padding: 25px 10px; }
 .sidebar-empty>svg { color: #ab9ac9; }
@@ -559,5 +561,5 @@ svg { flex-shrink: 0; vertical-align: middle; }
   .context-menu>button { min-height: 52px; padding: 0 12px; border-radius: var(--radius-lg); font-size: var(--text-lg); color: var(--ink); }
 }
 .app-shell.is-mobile .mobile-back>svg { transform: rotate(180deg); }
-/* A page is open over the canvas: the session menus teleported out of its tabs stay with the canvas. */
-body[data-page] .chat-tab-menu, body[data-page] .session-tab-menu { visibility: hidden; }
+/* A page is open over the canvas: the session menus teleported out of its tabs stay with the canvas. !important because their positioning sets visibility inline. */
+body[data-page] .chat-tab-menu, body[data-page] .session-tab-menu { visibility: hidden !important; }

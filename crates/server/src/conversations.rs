@@ -1245,6 +1245,37 @@ fn normalize_event(mut value: Value) -> Option<Value> {
     }
     Some(value)
 }
+/// The event path, for tests that drive it without a bridge process.
+#[cfg(test)]
+pub(crate) async fn handle_event_for_test(
+    state: &AppState,
+    id: SessionId,
+    runtime: &ChatRuntime,
+    event: Value,
+) -> Result<()> {
+    handle_event(state, id, runtime, event).await
+}
+
+#[cfg(test)]
+impl ChatRuntime {
+    /// A running client with nothing behind it.
+    pub(crate) fn for_test() -> Self {
+        let (commands, _) = mpsc::channel(1);
+        ChatRuntime {
+            commands,
+            stop: Notify::new(),
+            changed: Notify::new(),
+            done: Notify::new(),
+            running: AtomicBool::new(true),
+            finished: AtomicBool::new(false),
+            ready: AtomicBool::new(true),
+            busy: AtomicBool::new(false),
+            approvals: Mutex::new(HashMap::new()),
+            pid: None,
+        }
+    }
+}
+
 async fn handle_event(
     state: &AppState,
     id: SessionId,
@@ -1281,15 +1312,33 @@ async fn handle_event(
                 .filter(|s| matches!(*s, "accept" | "decline" | "cancel"))
                 .map(str::to_owned)
                 .collect();
-            runtime
-                .approvals
-                .lock()
-                .expect("approvals")
-                .insert(request.into(), choices);
+            let first = {
+                let mut approvals = runtime.approvals.lock().expect("approvals");
+                let first = approvals.is_empty();
+                approvals.insert(request.into(), choices);
+                first
+            };
+            // The session list says a session is waiting on you, not just
+            // running, so every view can tell the two apart.
+            if first {
+                db(state, move |s| {
+                    s.set_session_status(id, SessionStatus::Waiting)
+                })
+                .await?;
+            }
         }
         Some("approval_resolved") => {
             if let Some(request) = event["id"].as_str() {
-                runtime.approvals.lock().expect("approvals").remove(request);
+                let last = {
+                    let mut approvals = runtime.approvals.lock().expect("approvals");
+                    approvals.remove(request).is_some() && approvals.is_empty()
+                };
+                if last && runtime.running() {
+                    db(state, move |s| {
+                        s.set_session_status(id, SessionStatus::Running)
+                    })
+                    .await?;
+                }
             }
         }
         Some("message") if event["role"] == "user" => return Ok(()), // The durable submission already contains this exact user message.

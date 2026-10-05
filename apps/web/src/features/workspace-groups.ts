@@ -14,6 +14,8 @@ export interface WorkspaceGroup {
   sessions: Session[];
   totalSessions: number;
   activeCount: number;
+  /** Sessions waiting on you: an approval or a question. */
+  waitingCount: number;
   pinned: boolean;
   expanded: boolean;
   matchesWorkspace: boolean;
@@ -55,6 +57,7 @@ export function groupWorkspaces(workspaces: readonly Workspace[], sessions: read
   return workspaces.map((workspace, index) => {
     const allSessions = grouped.get(workspace.id) ?? [];
     const activeCount = allSessions.filter(active).length;
+    const waitingCount = allSessions.filter(session => session.status === "waiting").length;
     const workspaceScore = fuzzyScore(query, `${workspace.name} ${workspace.root_path} ${workspace.id}`);
     const matchesWorkspace = workspaceScore !== null;
     const matches = allSessions.map((session, sessionIndex) => ({
@@ -67,7 +70,7 @@ export function groupWorkspaces(workspaces: readonly Workspace[], sessions: read
     const normalExpanded = Object.hasOwn(preferences.expanded, workspace.id) ? preferences.expanded[workspace.id] : defaultExpanded;
     const expanded = query ? (options.searchExpanded && Object.hasOwn(options.searchExpanded, workspace.id) ? options.searchExpanded[workspace.id] : true) : normalExpanded;
     const score = Math.min(workspaceScore ?? Infinity, matches[0]?.score ?? Infinity);
-    const group: WorkspaceGroup = { workspace, sessions: visibleSessions, totalSessions: allSessions.length, activeCount, pinned: pinned.has(workspace.id), expanded, matchesWorkspace };
+    const group: WorkspaceGroup = { workspace, sessions: visibleSessions, totalSessions: allSessions.length, activeCount, waitingCount, pinned: pinned.has(workspace.id), expanded, matchesWorkspace };
     return { group, index, score };
   }).filter(item => !query || item.group.matchesWorkspace || item.group.sessions.length)
     .sort((a, b) => Number(b.group.pinned) - Number(a.group.pinned)

@@ -29,6 +29,9 @@ import Icon from "./features/Icon.vue";
 import TabIcon from "./features/TabIcon.vue";
 import BottomSheet from "./features/BottomSheet.vue";
 import AgentActivity, { type ShowTarget } from "./features/AgentActivity.vue";
+import ToastHost from "./features/ToastHost.vue";
+import { showToast, type ToastAction } from "./features/toasts";
+import { attentionTitle, trackSessions, waitingIds } from "./features/attention";
 import { useMobile } from "./features/mobile";
 import { useI18n } from "./i18n";
 import { ApiConnectionError, ApiError, errorMessage, json, providerLabel, request, workspacePath } from "./features/api";
@@ -365,7 +368,11 @@ async function revealSession(id: string) {
   await nextTick();
   await workspaceSidebar.value?.revealSession(id);
 }
-function notice(message: string, values?: Record<string, number>) { sessionNotice.value = message; sessionNoticeValues.value = values; }
+/** What just happened, as a toast that goes away by itself; `sessionNotice` keeps the last one for the record. */
+function notice(message: string, values?: Record<string, number>, action?: ToastAction) {
+  sessionNotice.value = message; sessionNoticeValues.value = values;
+  if (message) showToast(t(message, values), { action });
+}
 async function archiveSession(session: Session, archived: boolean, announce = true): Promise<boolean> {
   if (!backendCapabilities.sessionArchive || archiveBusyIds.value.includes(session.id)) return false;
   archiveBusyIds.value = [...archiveBusyIds.value, session.id];
@@ -375,7 +382,7 @@ async function archiveSession(session: Session, archived: boolean, announce = tr
     const updated = await request<Session>(`/sessions/${encodeURIComponent(session.id)}/archive`, json("PATCH", { archived }));
     sessionsRevision++;
     sessions.value = sessions.value.map(item => item.id === updated.id ? updated : item);
-    if (announce) notice(archived ? "Session archived. History and running agents are unchanged." : "Session restored to its workspace list.");
+    if (announce) notice(archived ? "Session archived. History and running agents are unchanged." : "Session restored to its workspace list.", undefined, { label: t("Undo"), run: () => void archiveSession(updated, !archived) });
     return true;
   } catch (cause) {
     report(cause); return false;
@@ -387,7 +394,7 @@ async function archiveSessions(list: Session[], archived: boolean) {
   if (list.length === 1) { await archiveSession(list[0]!, archived); return; }
   notice("");
   const done = (await Promise.all(list.map(session => archiveSession(session, archived, false)))).filter(Boolean).length;
-  if (done) notice(archived ? "{count} sessions archived. History and running agents are unchanged." : "{count} sessions restored to their workspace lists.", { count: done });
+  if (done) notice(archived ? "{count} sessions archived. History and running agents are unchanged." : "{count} sessions restored to their workspace lists.", { count: done }, { label: t("Undo"), run: () => void archiveSessions(list, !archived) });
 }
 /**
  * Delete sessions for good. The server accepts only temporary sessions and
@@ -676,6 +683,14 @@ async function refreshResources() {
   finally { refreshingResources.value = false; }
 }
 /**
+ * Every fresh session list goes through the attention tracker, which knows
+ * which sessions are waiting on you and says so: a toast, a desktop
+ * notification in the background, and a count in the page title.
+ */
+watch(sessions, list => trackSessions(list, { focusedSessionId: selectedSessionId.value, open: openSession, t }));
+const baseTitle = typeof document === "undefined" ? "AgentDock" : document.title;
+watch(() => waitingIds.value.length, count => { if (typeof document !== "undefined") document.title = attentionTitle(baseTitle, count); }, { immediate: true });
+/**
  * A link to one session (/session/:id) opens it on the canvas once sessions
  * have loaded, and the address goes back to the canvas's.
  */
@@ -798,7 +813,6 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
       </aside>
       <main class="main-workspace">
         <div v-if="visibleError" class="app-error" role="alert"><span>{{ visibleError }}</span><button class="text-button" :disabled="refreshingResources||loading" @click="canvasReady?refreshResources():bootstrap()">{{ t('Retry') }}</button><button class="icon-button" :aria-label="t('Dismiss error')" @click="error='';connectionError=''"><Icon name="close" :size="14"/></button></div>
-        <div v-if="sessionNotice" class="canvas-compat-notice" role="status"><Icon name="check" :size="14"/><span>{{ t(sessionNotice, sessionNoticeValues) }}</span><button class="icon-button" :aria-label="t('Dismiss session notice')" @click="sessionNotice=''"><Icon name="close" :size="13"/></button></div>
         <div v-if="canvasReady && !backendCapabilities.sharedCanvas" class="canvas-compat-notice" role="status"><Icon name="info" :size="15"/><span>{{ t('This backend is older. The shared canvas is saved in this browser; running sessions and existing workspace layouts are unchanged.') }}<small>{{ t('Native configuration import and history loading require an updated backend.') }}</small></span></div>
         <div v-if="discardPrompt" class="confirmation-bar" role="alert">{{ t('“{session}” is a temporary window and is still working. Closing it discards the session and stops it.',{session:discardPrompt.session.title}) }}<button class="small-button" @click="discardPrompt=undefined">{{ t('Keep it open') }}</button><button class="small-button danger" @click="confirmDiscard">{{ t('Close and discard') }}</button></div>
         <div v-if="canvasConflict" class="confirmation-bar" role="alert">{{ t('Another page updated the shared canvas. Your current layout is kept locally.') }}<button class="small-button" @click="resolveCanvasConflict(false)">{{ t('Load server layout') }}</button><button class="small-button danger" @click="resolveCanvasConflict(true)">{{ t('Save my current layout instead') }}</button></div>
@@ -825,6 +839,7 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
   <WorkspaceDialog v-if="showWorkspace" :initial-path="workspaceInitialPath" @close="showWorkspace=false;workspaceInitialPath=undefined" @created="workspaceCreated"/>
   <HostFilePreview v-if="hostPreview" :key="hostPreview.path" :path="hostPreview.path" :line="hostPreview.line" @close="hostPreview=undefined" @add-workspace="folder=>{hostPreview=undefined;workspaceInitialPath=folder;showWorkspace=true}"/>
   <ImageLightbox />
+  <ToastHost />
   <AgentActivity :enabled="!showAuth && apiOnline" @changed="agentChanged" @show="agentShow" @canvas="agentCanvas" />
   <BottomSheet v-if="switcherOpen" :title="t('Open views')" @close="switcherOpen=false">
     <div class="switcher-list">

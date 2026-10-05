@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { setThemePreference, themePreference, type ThemePreference } from './theme';
+import { desktopNotifications, notificationSupport, setDesktopNotifications } from './attention';
 import type { EndpointProfile } from '@agentdock/protocol';
 import ProviderIcon from './ProviderIcon.vue';
 import { errorMessage, providerLabel } from './api';
@@ -46,6 +47,17 @@ async function setAgentTools(on: boolean) {
   finally { saving.value = false; }
 }
 const pick = (provider: PreferenceProvider, field: 'endpoint_profile_id' | 'effort' | 'permission') => (event: Event) => update(provider, field, (event.target as HTMLSelectElement).value);
+/** Desktop notifications need a secure page and the browser's permission; the row says which is missing. */
+const support = ref(notificationSupport());
+const notificationsPossible = computed(() => support.value !== 'unsupported' && support.value !== 'insecure' && support.value !== 'denied');
+const notificationNote = computed(() => ({
+  unsupported: 'This browser cannot show notifications.',
+  insecure: 'Browsers allow notifications only over https or on localhost.',
+  denied: 'This browser blocks notifications for this page; allow them in its site settings.',
+  default: 'When a session needs you while this page is in the background.',
+  granted: 'When a session needs you while this page is in the background.',
+}[support.value]));
+async function toggleNotifications(on: boolean) { await setDesktopNotifications(on); support.value = notificationSupport(); }
 </script>
 
 <template>
@@ -62,6 +74,10 @@ const pick = (provider: PreferenceProvider, field: 'endpoint_profile_id' | 'effo
       <label class="preference-row">
         <span><strong>{{ t('Appearance') }}</strong><small>{{ t('For this browser.') }}</small></span>
         <select :value="themePreference" :aria-label="t('Appearance')" @change="setThemePreference(($event.target as HTMLSelectElement).value as ThemePreference)"><option value="system">{{ t('Match system') }}</option><option value="light">{{ t('Light') }}</option><option value="dark">{{ t('Dark') }}</option></select>
+      </label>
+      <label class="preference-row">
+        <span><strong>{{ t('Desktop notifications') }}</strong><small>{{ t(notificationNote) }}</small></span>
+        <select :value="desktopNotifications ? 'on' : 'off'" :disabled="!notificationsPossible" :aria-label="t('Desktop notifications')" @change="toggleNotifications(($event.target as HTMLSelectElement).value === 'on')"><option value="off">{{ t('Off') }}</option><option value="on">{{ t('On') }}</option></select>
       </label>
     </article>
     <p v-if="!loaded" class="preferences-quiet">{{ t('Loading…') }}</p>

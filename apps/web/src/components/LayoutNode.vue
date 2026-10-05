@@ -7,6 +7,7 @@ import { useI18n } from "../i18n";
 import TabIcon from "../features/TabIcon.vue";
 import Icon from "../features/Icon.vue";
 import ContextMenu from "../features/ContextMenu.vue";
+import { sessionStatuses } from "../features/attention";
 const { t } = useI18n();
 
 const props = defineProps<{ node: LayoutNode; selected?: string | null; maximized?: string | null; locatedPaneId?: string | null; workspaceLabels?: Record<string, string>; mixedWorkspaces?: boolean; workspaceBranches?: Record<string, string>; sessionBranches?: Record<string, string>; sessionProviders?: Record<string, ProviderKind>; ephemeralSessionIds?: string[]; ephemeralSupported?: boolean }>();
@@ -103,6 +104,12 @@ const newSessionKinds: { provider: ProviderKind; title: string; ephemeral?: bool
   { provider: "codex", title: "New Codex session" },
   { provider: "terminal", title: "New terminal" },
 ];
+/** Running or waiting on you, for the dot on a session's tab; nothing for the rest. */
+function tabStatus(pane: PaneNode) {
+  const id = pane.metadata?.session_id;
+  const status = typeof id === "string" ? sessionStatuses[id] : undefined;
+  return status === "waiting" || status === "running" || status === "starting" ? status : undefined;
+}
 function titleFor(pane: PaneNode) {
   // Persist canonical built-in titles, not the chosen display language. Native
   // session/file titles may coincide with UI copy and must remain verbatim.
@@ -248,7 +255,7 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
         <div v-for="pane in tabs" :key="pane.id" :id="`dock-tab-${pane.id}`" :data-pane-tab-id="pane.id" role="tab" class="dock-tab" :class="{ 'is-active': pane.id === activePane?.id, 'is-ephemeral': isEphemeral(pane) }" :aria-selected="pane.id === activePane?.id" :aria-controls="`dock-panel-${pane.id}`" :aria-label="tabLabel(pane)" :tabindex="pane.id === activePane?.id ? 0 : -1" :title="t(isEphemeral(pane) ? '{title} · temporary window · discarded when closed' : '{title} · drag to arrange', { title: qualifiedTitle(pane) })" draggable="true" @contextmenu="openTabMenu($event, pane)" @dragstart="dragStart($event, pane)" @click.stop="select(pane)" @keydown="tabKey($event, pane)" @keydown.enter.prevent="select(pane)" @keydown.space.prevent="select(pane)">
           <TabIcon :kind="pane.kind" :metadata="pane.metadata" :session-providers="sessionProviders" />
           <span v-if="isEphemeral(pane)" class="dock-tab-ephemeral" role="img" :aria-label="t('Temporary window')" :title="t('Temporary window')" />
-          <span class="dock-tab-title">{{ titleFor(pane) }}</span>
+          <span class="dock-tab-title">{{ titleFor(pane) }}</span><span v-if="tabStatus(pane)" :class="['dock-tab-status', tabStatus(pane)]" role="img" :aria-label="t(tabStatus(pane)!)" :title="t(tabStatus(pane) === 'waiting' ? 'Needs you' : tabStatus(pane)!)" />
           <span v-if="mixedWorkspaces && workspaceFor(pane) && pane.id === activePane?.id" class="dock-tab-workspace">{{ workspaceFor(pane) }}</span><span v-if="branchFor(pane) && pane.id === activePane?.id" class="dock-tab-branch" :title="branchFor(pane)"><svg viewBox="0 0 16 16" width="9" height="9" aria-hidden="true"><path d="M5 3v7M5 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm0-7a2 2 0 1 0 0-.01M11 5a2 2 0 1 0 0-.01M11 7c0 2-2 3-6 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>{{ branchFor(pane) }}</span>
           <!-- The session menu is teleported here by the active session pane.
                Inactive tabs stay compact and do not reserve an empty action slot. -->
@@ -301,6 +308,12 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
 </template>
 
 <style scoped>
+.dock-tab-status { flex:none; width:7px; height:7px; border-radius:50%; background:var(--ok); }
+.dock-tab-status.starting { background:var(--muted); }
+.dock-tab-status.waiting { background:var(--warn); box-shadow:0 0 0 3px var(--warn-soft); animation:attention-pulse 1.6s ease-in-out infinite; }
+@keyframes attention-pulse { 50% { box-shadow:0 0 0 5px var(--warn-soft); } }
+@media (prefers-reduced-motion: reduce) { .dock-tab-status.waiting { animation:none; } }
+
 /* The menu is teleported to the body so a tab strip with overflow clipping
    cannot cut it off, and the backdrop makes any click elsewhere dismiss it. */
 .dock-tab-menu-backdrop{position:fixed;inset:0;z-index:60}

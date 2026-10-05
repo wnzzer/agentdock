@@ -82,7 +82,8 @@ function openMenu(session: Session, event: MouseEvent) {
   const target = (event.currentTarget as HTMLElement).getBoundingClientRect();
   menu.value = event.type === 'contextmenu' ? { session, x: event.clientX, y: event.clientY } : { session, x: target.right - 200, y: target.bottom + 4 };
 }
-function act(run: () => void) { menu.value = undefined; run(); }
+/** Close the menu, then act on the session it was opened for. */
+function act(run: (session: Session) => void) { const current = menu.value; menu.value = undefined; if (current) run(current.session); }
 const busy = (id: string) => props.archiveBusyIds.includes(id) || props.deleteBusyIds.includes(id) || props.keepBusyIds.includes(id);
 
 function relative(at?: string | null) {
@@ -151,15 +152,15 @@ function relative(at?: string | null) {
       </div>
 
       <ContextMenu v-if="menu" :x="menu.x" :y="menu.y" :label="t('Actions for {session}', { session: menu.session.title })" @close="menu = undefined">
-        <button role="menuitem" @click="act(() => emit('openSession', menu!.session))"><Icon name="layout" :size="14" />{{ t('Open') }}</button>
-        <button role="menuitem" @click="act(() => emit('renameRequest', menu!.session.id))"><Icon name="edit" :size="14" />{{ t('Rename') }}</button>
-        <button role="menuitem" @click="act(() => emit('sessionEnvironment', menu!.session.id))"><Icon name="settings" :size="14" />{{ t('Session environment') }}</button>
-        <button v-if="isEphemeralSession(menu.session)" role="menuitem" @click="act(() => emit('keepSession', menu!.session))"><Icon name="save" :size="14" />{{ t('Keep this session') }}</button>
+        <button role="menuitem" @click="act(session => emit('openSession', session))"><Icon name="layout" :size="14" />{{ t('Open') }}</button>
+        <button role="menuitem" @click="act(session => emit('renameRequest', session.id))"><Icon name="edit" :size="14" />{{ t('Rename') }}</button>
+        <button role="menuitem" @click="act(session => emit('sessionEnvironment', session.id))"><Icon name="settings" :size="14" />{{ t('Session environment') }}</button>
+        <button v-if="isEphemeralSession(menu.session)" role="menuitem" @click="act(session => emit('keepSession', session))"><Icon name="save" :size="14" />{{ t('Keep this session') }}</button>
         <hr />
-        <button v-if="archiveSupported" role="menuitem" @click="act(() => emit('archiveSession', menu!.session, !isSessionArchived(menu!.session)))"><Icon :name="isSessionArchived(menu.session) ? 'restore' : 'archive'" :size="14" />{{ t(isSessionArchived(menu.session) ? 'Restore' : 'Archive') }}</button>
+        <button v-if="archiveSupported" role="menuitem" @click="act(session => emit('archiveSession', session, !isSessionArchived(session)))"><Icon :name="isSessionArchived(menu.session) ? 'restore' : 'archive'" :size="14" />{{ t(isSessionArchived(menu.session) ? 'Restore' : 'Archive') }}</button>
         <template v-if="isSessionArchived(menu.session) || isEphemeralSession(menu.session)">
           <button v-if="!menu.confirmDelete" role="menuitem" class="danger-text" @click="menu.confirmDelete = true"><Icon name="close" :size="14" />{{ t('Delete') }}</button>
-          <button v-else role="menuitem" class="danger-text" @click="act(() => emit('deleteSessions', [menu!.session]))"><Icon name="close" :size="14" />{{ t('Delete permanently') }}</button>
+          <button v-else role="menuitem" class="danger-text" @click="act(session => emit('deleteSessions', [session]))"><Icon name="close" :size="14" />{{ t('Delete permanently') }}</button>
         </template>
       </ContextMenu>
     </div>

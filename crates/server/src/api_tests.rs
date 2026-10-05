@@ -3986,3 +3986,45 @@ async fn a_session_can_have_the_agent_tools_on_or_off_whatever_the_preference() 
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     f.state.runtime.stop(&claude.id.to_string()).await.unwrap();
 }
+
+#[tokio::test]
+async fn a_pending_approval_marks_the_session_waiting_until_the_last_is_resolved() {
+    let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
+    let workspace = f
+        .state
+        .store
+        .create_workspace("approvals", f.path.join("repo").to_str().unwrap())
+        .unwrap();
+    let session = f
+        .state
+        .store
+        .create_session(workspace.id, ProviderKind::ClaudeCode, "asks")
+        .unwrap();
+    let runtime = conversations::ChatRuntime::for_test();
+    let status = || {
+        f.state
+            .store
+            .get_session(session.id)
+            .unwrap()
+            .unwrap()
+            .status
+    };
+    let approval = |id: &str| json!({"type":"approval","id":id,"title":"Run","text":"Fixture","choices":["accept","decline"]});
+    let resolved = |id: &str| json!({"type":"approval_resolved","id":id});
+    for (event, expected) in [
+        (approval("a"), SessionStatus::Waiting),
+        (approval("b"), SessionStatus::Waiting),
+        (resolved("a"), SessionStatus::Waiting),
+        (resolved("b"), SessionStatus::Running),
+        (resolved("b"), SessionStatus::Running),
+    ] {
+        conversations::handle_event_for_test(&f.state, session.id, &runtime, event.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            format!("{:?}", status()),
+            format!("{expected:?}"),
+            "after {event}"
+        );
+    }
+}
