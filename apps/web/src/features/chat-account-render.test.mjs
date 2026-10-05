@@ -114,7 +114,7 @@ test('explicit preview snapshot renders real safe Markdown, tool and approval co
     assert.ok(html.includes('<strong>Real component</strong>')); assert.ok(html.includes('chat-pane'));
     assert.ok(html.includes('&lt;script&gt;')); assert.ok(!html.includes('<script>')); assert.ok(!html.includes('href="javascript:')); assert.ok(!html.includes('<img src=x'));
     assert.ok(html.includes('class="chat-tool"')); assert.ok(html.includes('chat-approval')); assert.ok(html.includes('99 context tokens'));
-    assert.match(html, /<button[^>]*disabled[^>]*>Allow once<\/button>/); assert.match(html, /<button[^>]*aria-label="Send message"[^>]*disabled/);
+    assert.match(html, /<button[^>]*disabled[^>]*>Allow once(<kbd[^>]*>[^<]*<\/kbd>)?<\/button>/); assert.match(html, /<button[^>]*aria-label="Send message"[^>]*disabled/);
     assert.ok(!html.includes('class="chat-floating-menu"')); assert.equal(calls, 0);
     assert.doesNotMatch(html, /<textarea[^>]*disabled/, 'local typing remains possible in the preview');
   } finally { globalThis.fetch = originalFetch; }
