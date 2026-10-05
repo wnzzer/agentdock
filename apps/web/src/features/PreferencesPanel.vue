@@ -4,7 +4,7 @@ import { setThemePreference, themePreference, type ThemePreference } from './the
 import { desktopNotifications, notificationSupport, setDesktopNotifications } from './attention';
 import type { EndpointProfile } from '@agentdock/protocol';
 import ProviderIcon from './ProviderIcon.vue';
-import { errorMessage, providerLabel } from './api';
+import { errorMessage, json, providerLabel, request } from './api';
 import { REASONING_EFFORTS, effortLabel } from './reasoning-effort';
 import { PERMISSION_CHOICES, loadPreferences, preferences, savePreferences, type PreferenceProvider, type Preferences } from './preferences';
 import { useI18n } from '../i18n';
@@ -58,6 +58,10 @@ const notificationNote = computed(() => ({
   granted: 'When a session needs you while this page is in the background.',
 }[support.value]));
 async function toggleNotifications(on: boolean) { await setDesktopNotifications(on); support.value = notificationSupport(); }
+/** Temporary read-only grants for the file preview, so they can be seen and ended. */
+const hostGrants = ref<Array<{ path: string; directory: boolean }>>([]);
+onMounted(async () => { try { hostGrants.value = await request('/host/grants'); } catch { hostGrants.value = []; } });
+async function revokeGrants() { try { hostGrants.value = await request('/host/grants/all', json('DELETE')); } catch { /* Left as listed. */ } }
 </script>
 
 <template>
@@ -79,6 +83,10 @@ async function toggleNotifications(on: boolean) { await setDesktopNotifications(
         <span><strong>{{ t('Desktop notifications') }}</strong><small>{{ t(notificationNote) }}</small></span>
         <select :value="desktopNotifications ? 'on' : 'off'" :disabled="!notificationsPossible" :aria-label="t('Desktop notifications')" @change="toggleNotifications(($event.target as HTMLSelectElement).value === 'on')"><option value="off">{{ t('Off') }}</option><option value="on">{{ t('On') }}</option></select>
       </label>
+      <div v-if="hostGrants.length" class="preference-row">
+        <span><strong>{{ t('Temporary file access') }}</strong><small>{{ t('Read-only, for the file preview, until AgentDock restarts.') }}</small><code v-for="item in hostGrants" :key="item.path" class="grant-path">{{ item.path }}{{ item.directory ? '/' : '' }}</code></span>
+        <button type="button" class="small-button danger" @click="revokeGrants">{{ t('Revoke all') }}</button>
+      </div>
     </article>
     <p v-if="!loaded" class="preferences-quiet">{{ t('Loading…') }}</p>
     <template v-else>
@@ -144,4 +152,5 @@ async function toggleNotifications(on: boolean) { await setDesktopNotifications(
 .preference-note{margin:-4px 0 8px;font-size:var(--text-xs);line-height:1.5;color:var(--muted)}
 .preference-note.danger{color:var(--danger-ink)}
 @media(max-width:520px){.preference-row{flex-direction:column;align-items:stretch;gap:6px}.preference-row select{width:100%;height:40px}}
+.grant-path{display:block;margin-top:4px;font-family:var(--mono);font-size:var(--text-xs);color:var(--ink-soft);overflow-wrap:anywhere}
 </style>

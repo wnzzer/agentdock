@@ -66,6 +66,7 @@ impl Fixture {
             runtime: RuntimeManager::new(),
             state_dir: path.join("state"),
             browse_roots: vec![dunce::canonicalize(path.join("repo")).unwrap()],
+            host_grants: crate::host_grants::HostGrants::default(),
             workspace_roots: vec![dunce::canonicalize(&path).unwrap()],
             native_sources: Vec::new(),
             native_bridge: PathBuf::from("packages/native-bridge/history.mjs"),
@@ -4027,4 +4028,46 @@ async fn a_pending_approval_marks_the_session_waiting_until_the_last_is_resolved
             "after {event}"
         );
     }
+}
+
+#[tokio::test]
+async fn a_granted_file_outside_the_roots_can_be_previewed_until_revoked() {
+    let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
+    let outside = f.path.join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("notes.log"), "outside the roots").unwrap();
+    let file = dunce::canonicalize(outside.join("notes.log")).unwrap();
+    let preview = format!("/api/host/file?path={}", url_escape(file.to_str().unwrap()));
+    let (status, _) = call(f.app(), "GET", &preview, Value::Null).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "outside the browsing roots");
+
+    let (status, grants) = call(
+        f.app(),
+        "POST",
+        "/api/host/grants",
+        json!({"path": file, "directory": false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(grants[0]["directory"], false);
+    let (status, body) = call(f.app(), "GET", &preview, Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["content"], "outside the roots");
+
+    let (status, _) = call(f.app(), "DELETE", "/api/host/grants/all", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = call(f.app(), "GET", &preview, Value::Null).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "revoked");
+}
+
+fn url_escape(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                (byte as char).to_string()
+            }
+            _ => format!("%{byte:02X}"),
+        })
+        .collect()
 }

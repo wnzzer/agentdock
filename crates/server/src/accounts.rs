@@ -1090,6 +1090,7 @@ mod tests {
                 runtime: RuntimeManager::new(),
                 state_dir: root.clone(),
                 browse_roots: vec![root.clone()],
+                host_grants: crate::host_grants::HostGrants::default(),
                 workspace_roots: vec![root.clone()],
                 native_sources: vec![],
                 native_bridge: root.join("unused-history.mjs"),

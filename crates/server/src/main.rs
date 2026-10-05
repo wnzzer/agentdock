@@ -17,6 +17,7 @@ mod embedded;
 mod environment;
 mod file_search;
 mod file_watch;
+mod host_grants;
 mod installation;
 mod mcp;
 mod model_catalog;
@@ -66,6 +67,8 @@ struct AppState {
     runtime: RuntimeManager,
     state_dir: PathBuf,
     browse_roots: Vec<PathBuf>,
+    /// Files and folders the person opened to the read-only preview, until restart.
+    host_grants: host_grants::HostGrants,
     workspace_roots: Vec<PathBuf>,
     native_sources: Vec<native_history::NativeSource>,
     native_bridge: PathBuf,
@@ -601,6 +604,7 @@ async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         accounts: accounts::AccountManager::new(),
         state_dir,
         browse_roots,
+        host_grants: host_grants::HostGrants::default(),
         workspace_roots,
         native_sources: native_history::sources(),
         security,
@@ -652,6 +656,7 @@ fn router(state: AppState) -> Router {
         .merge(clients::routes())
         .merge(resources::routes())
         .merge(usage::routes())
+        .merge(host_grants::routes())
         .merge(checkouts::routes())
         .merge(preferences::routes())
         .merge(secrets::routes())
@@ -847,7 +852,11 @@ async fn read_host_file(
         .as_deref()
         .ok_or_else(|| ApiError::bad("Path required"))?;
     Ok(Json(
-        workspace_io::read_host_file(&state.browse_roots, path).await?,
+        workspace_io::read_host_file(
+            &[state.browse_roots.clone(), state.host_grants.roots()].concat(),
+            path,
+        )
+        .await?,
     ))
 }
 async fn browse_directories(
