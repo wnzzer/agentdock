@@ -823,6 +823,7 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Close file explorer": "关闭文件浏览器",
   "Detached HEAD": "分离的 HEAD",
   "Git unavailable": "Git 不可用",
+  "Details": "详情",
   "No workspace": "尚无工作区",
   "{count} changes": "{count} 项变更",
   "{count} change": "{count} 项变更",

@@ -105,6 +105,8 @@
   --shadow-xl: 0 20px 60px #1b2a3633;
   --shadow-card: 0 0 0 1px #1b2a360d, 0 1px 2px -1px #1b2a360f, 0 2px 4px #1b2a360a;
 
+  --topbar-height: 48px;
+
   --ease-out: cubic-bezier(.16, 1, .3, 1);
   --duration-fast: .1s;
   --duration-normal: .18s;
@@ -138,9 +140,9 @@ svg { flex-shrink: 0; vertical-align: middle; }
 /* dvh knows about the browser's chrome; --app-height is set while a phone
    keyboard is covering the page, which dvh cannot see. */
 .app-shell { display: flex; flex-direction: column; height: 100vh; height: 100dvh; height: var(--app-height, 100dvh); width: 100%; overflow: hidden; }
-.topbar { height: 60px; flex-shrink: 0; display: flex; align-items: center; gap: 18px; padding: 0 21px; background: white; border-bottom: 1px solid var(--border); z-index: 30; }
+.topbar { height: var(--topbar-height); flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 0 16px; background: var(--surface); border-bottom: 1px solid var(--border); z-index: 30; }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 205px; }
-.brand>strong { font-size: var(--text-xl); letter-spacing: -.55px; display: flex; align-items: center; gap: 10px; }
+.brand>strong { font-size: var(--text-lg); font-weight: 650; letter-spacing: -.3px; display: flex; align-items: center; gap: 10px; }
 .brand-mark { width: 29px; height: 29px; background: var(--accent); border-radius: var(--radius-md); position: relative; transform: rotate(-3deg); box-shadow: var(--shadow-md); }
 .brand-mark:before, .brand-mark:after, .brand-mark span { position: absolute; content: ""; background: var(--surface); border-radius: var(--radius-xs); }
 .brand-mark:before { width: 4px; height: 17px; left: 8px; top: 6px; transform: skew(-17deg); }
@@ -276,8 +278,8 @@ svg { flex-shrink: 0; vertical-align: middle; }
 @media (max-width: 1100px) {
   /* The explorer leaves the grid and floats over the canvas. */
   .app-body { --rail-left: 205px; --rail-right: 0px; }
-  .explorer-panel { position: fixed; top: 60px; right: 0; bottom: 27px; width: min(310px, 88vw); z-index: 45; box-shadow: -6px 0 30px #2138491a; }
-  .explorer-overlay { display: block; position: fixed; inset: 60px 0 27px; border: 0; background: #2a3f511e; z-index: 40; }
+  .explorer-panel { position: fixed; top: var(--topbar-height); right: 0; bottom: 27px; width: min(310px, 88vw); z-index: 45; box-shadow: -6px 0 30px #2138491a; }
+  .explorer-overlay { display: block; position: fixed; inset: var(--topbar-height) 0 27px; border: 0; background: #2a3f511e; z-index: 40; }
   .explorer-close { display: inline-flex; }.brand { min-width: 165px; }
 }
 @media (max-width: 760px) {

@@ -17,6 +17,8 @@ const viewState = computed(() => gitViewState(props.workspaceId));
 const selected = computed({ get: () => viewState.value.selected, set: value => { viewState.value.selected = value; } });
 const diff = ref<GitDiff>();
 const loading = ref(false), diffLoading = ref(false), busy = ref(false), error = ref(""), diffError = ref("");
+/** Why the status itself could not be read: not a repository, or no Git. The pane then has nothing to act on. */
+const unavailable = ref("");
 const message = computed({ get: () => viewState.value.message, set: value => { viewState.value.message = value; } });
 const notice = ref<{ hash: string; message: string }>();
 const stagedFiles = computed(() => status.value.files.filter(isStagedFile));
@@ -40,7 +42,7 @@ async function openDiff(path: string, staged: boolean) {
 }
 async function refresh() {
   const requestId = ++revision;
-  loading.value = true; error.value = "";
+  loading.value = true; error.value = ""; unavailable.value = "";
   try {
     const next = await request<GitStatus>(`${workspacePath(props.workspaceId)}/git/status`);
     if (requestId !== revision) return;
@@ -51,7 +53,7 @@ async function refresh() {
     else if (changedFiles.value[0]) await openDiff(changedFiles.value[0].path, false);
     else if (stagedFiles.value[0]) await openDiff(stagedFiles.value[0].path, true);
     else { selected.value = undefined; diff.value = undefined; diffRevision++; }
-  } catch (cause) { if (requestId === revision) { status.value = { branch: null, files: [] }; selected.value = undefined; diff.value = undefined; error.value = errorMessage(cause); } }
+  } catch (cause) { if (requestId === revision) { status.value = { branch: null, files: [] }; selected.value = undefined; diff.value = undefined; unavailable.value = errorMessage(cause); } }
   finally { if (requestId === revision) loading.value = false; }
 }
 async function stage(files: GitFile[], unstage: boolean) {
@@ -112,7 +114,8 @@ onBeforeUnmount(() => { alive = false; revision++; diffRevision++; mutationEpoch
   <section :class="['git-pane', { 'is-phone': mobile, 'show-diff': mobile && diffOpen && !!selected }]">
     <div class="content-toolbar"><span class="git-branch-bar"><WorkspaceBranchMenu :workspace-id="workspaceId" :branch="status.branch" @switched="refresh" @changed="refresh" /><span class="count-badge">{{ status.files.length }}</span></span><button class="icon-button" :disabled="busy || loading" :aria-label="t('Refresh Git changes')" @click="refresh"><Icon name="refresh" :size="15" /></button></div>
     <div v-if="error" class="inline-error" role="alert">{{ error }}</div><div v-if="notice" class="inline-success" role="status">{{ t('Committed {hash} · {message}', notice) }}</div>
-    <div class="git-content">
+    <div v-if="unavailable" class="pane-empty git-unavailable"><span class="empty-icon"><Icon name="git" :size="24" /></span><h3>{{ t('Git unavailable') }}</h3><p>{{ t('Register a Git repository to review changes here.') }}</p><details><summary>{{ t('Details') }}</summary><code>{{ unavailable }}</code></details></div>
+    <div v-else class="git-content">
       <div class="git-sidebar">
         <form class="commit-form" @submit.prevent="commit"><textarea v-model="message" :aria-label="t('Commit message')" :placeholder="t('Commit message…')" rows="2" :disabled="busy" /><button class="primary-button" :disabled="busy || !message.trim() || !stagedFiles.length"><Icon name="check" :size="14" />{{ busy ? t('Working…') : t('Commit staged ({count})', { count: stagedFiles.length }) }}</button></form>
         <div v-if="discardTarget" class="confirmation-bar git-discard-confirm" role="alertdialog"><span>{{ discardTarget.length===1 ? t('Discard changes to {path}? This cannot be undone.', { path: discardTarget[0].path }) : t('Discard changes to {count} files? This cannot be undone.', { count: discardTarget.length }) }}<template v-if="discardNew"> {{ t('{count} new files will be deleted.', { count: discardNew }) }}</template></span><div class="toolbar-buttons"><button type="button" class="small-button danger" :disabled="busy" @click="discard">{{ t(busy ? 'Working…' : 'Discard') }}</button><button type="button" class="small-button" :disabled="busy" @click="discardTarget=undefined">{{ t('Cancel') }}</button></div></div>
@@ -122,7 +125,7 @@ onBeforeUnmount(() => { alive = false; revision++; diffRevision++; mutationEpoch
         <div v-if="selected" class="diff-title"><button v-if="mobile" type="button" class="icon-button git-back" :aria-label="t('Back to changes')" @click="diffOpen = false"><Icon name="chevron" :size="18" /></button><span class="truncate" :title="selected.path">{{ selected.path }}</span><span class="diff-badge">{{ t(selected.staged ? 'Staged' : 'Working tree') }}</span><button class="icon-button" :aria-label="t('Open changed file in editor')" @click="emit('openFile', selected.path)"><Icon name="file" :size="14" /></button></div>
         <div v-if="diffLoading" class="pane-empty"><p>{{ t('Loading diff…') }}</p></div>
         <div v-else-if="diffError" class="inline-error" role="alert">{{ diffError }}</div>
-        <div v-else-if="!selected" class="pane-empty"><span class="empty-icon teal"><Icon name="check" :size="26" /></span><h3>{{ t(loading ? 'Checking changes…' : error ? 'Git unavailable' : 'All clear') }}</h3><p>{{ t(error ? 'Register a Git repository to review changes here.' : 'File changes appear here as you and your agents work.') }}</p></div>
+        <div v-else-if="!selected" class="pane-empty"><span class="empty-icon teal"><Icon name="check" :size="26" /></span><h3>{{ t(loading ? 'Checking changes…' : 'All clear') }}</h3><p>{{ t('File changes appear here as you and your agents work.') }}</p></div>
         <template v-else-if="diff"><div v-if="diff.binary" class="inline-notice">{{ t('Binary file changed. Open it in Explorer for a preview.') }}</div><div v-if="diff.truncated" class="inline-notice">{{ t('This diff was truncated by the server output limit.') }}</div><div v-if="diff.diff" class="diff-lines" tabindex="0" :aria-label="t('Unified Git diff')"><div v-for="(line, index) in diffLines" :key="index" :class="['diff-line', line.kind]"><span class="line-number">{{ line.before }}</span><span class="line-number">{{ line.after }}</span><code>{{ line.text || ' ' }}</code></div></div><div v-else class="pane-empty"><p>{{ t('No textual diff for this change.') }}</p></div></template>
       </div>
     </div>
@@ -153,4 +156,7 @@ onBeforeUnmount(() => { alive = false; revision++; diffRevision++; mutationEpoch
 
 /* The composer's chips open upward; this one sits at the top of its pane. */
 .git-branch-bar{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--text-sm);font-weight:600}
+.git-unavailable details{margin-top:var(--space-3);max-width:420px;font-size:var(--text-xs);color:var(--muted)}
+.git-unavailable summary{cursor:pointer}
+.git-unavailable code{display:block;margin-top:var(--space-2);padding:var(--space-2) var(--space-3);border-radius:var(--radius-sm);background:var(--fill);font-family:var(--mono);text-align:left;overflow-wrap:anywhere;white-space:pre-wrap}
 </style>
