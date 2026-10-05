@@ -187,7 +187,7 @@ defineExpose({ revealSession });
         </div>
         <ul v-show="group.expanded" :id="`workspace-sessions-${group.workspace.id}`" class="workspace-session-list" :aria-label="t('Sessions in {workspace}', { workspace: group.workspace.name })">
         <SidebarSessionRow v-for="session in group.sessions" :key="session.id" :session="session" :selected="selectedSessionId === session.id" :archive-supported="archiveSupported" :archive-busy="archiveBusySet.has(session.id)" :keep-busy="keepBusySet.has(session.id)" :delete-busy="deleteBusySet.has(session.id)" @open="emit('openSession', $event)" @delete="deleteSession" @rename="renameSession" @environment="emit('sessionEnvironment', $event)" @archive="archiveSession" @keep="keepSession" />
-          <li v-if="!group.sessions.length" class="workspace-group-empty"><p>{{ t('No sessions in this workspace.') }}</p><button class="text-button" @click="emit('newSession', group.workspace.id)"><Icon name="plus" :size="12" />{{ t('New session') }}</button></li>
+          <li v-if="!group.sessions.length" class="workspace-group-empty"><p>{{ t('No sessions in this workspace.') }}</p><button class="text-button" @click="quick(group.workspace.id, quickProvider)"><Icon name="plus" :size="12" />{{ t('New {provider} session', { provider: quickLabel }) }}</button></li>
         </ul>
       </section>
       <div v-if="workspaces.length && !groups.length" class="workspace-nav-empty"><Icon name="search" :size="22" /><p>{{ t('No matching workspaces or sessions.') }}</p><button class="text-button" @click="query = ''">{{ t('Clear navigation search') }}</button></div>

@@ -687,6 +687,9 @@ async function refreshResources() {
   } catch (cause) { report(cause); }
   finally { refreshingResources.value = false; }
 }
+/** The main New session button starts one at once, with the client used last, as the sidebar's + does. */
+const quickProviderLabel = computed(() => { const provider = lastQuickProvider(); return provider === "terminal" ? t("Terminal") : providerLabel(provider); });
+function closeNewSessionMenu(event: Event) { (event.currentTarget as HTMLElement | null)?.closest("details")?.removeAttribute("open"); }
 /** The command palette and the shortcut sheet, and the keys that open everything else. */
 const paletteOpen = ref(false), shortcutsOpen = ref(false);
 const hint = (id: string) => { const shortcut = SHORTCUTS.find(item => item.id === id); return shortcut ? formatChord(shortcut.chord) : undefined; };
@@ -858,7 +861,16 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
       <div class="top-actions">
         <span v-if="loading||!apiOnline" class="connection-badge"><i :class="['state-dot', apiOnline ? 'running' : 'stopped']"/>{{ t(loading ? 'Connecting' : apiOnline ? 'Host connected' : 'Offline') }}</span>
         <button type="button" class="topbar-search" :title="t('Search and commands') + ' · ' + hint('palette')" :aria-label="t('Search and commands')" @click="paletteOpen=true"><Icon name="search" :size="14"/><span>{{ t('Search…') }}</span><kbd>{{ hint('palette') }}</kbd></button>
-        <button v-if="workspaces.length" class="primary-button new-session-top" :disabled="!selectedWorkspace" :aria-label="t('New session')" :title="selectedWorkspace?t('New session in {workspace}',{workspace:selectedWorkspace.name}):t('New session')" @click="mobile ? quickSession(contextWorkspace?.id) : newSession()"><Icon :name="mobile ? 'edit' : 'plus'" :size="mobile ? 19 : 14"/><span>{{ t('New session') }}</span></button>
+        <div v-if="workspaces.length" class="new-session-split">
+          <button class="primary-button new-session-top" :disabled="!contextWorkspace || quickBusy" :aria-label="t('New session')" :title="contextWorkspace ? t('New {provider} session in {workspace}', { provider: quickProviderLabel, workspace: contextWorkspace.name }) : t('New session')" @click="quickSession(contextWorkspace?.id)"><Icon :name="mobile ? 'edit' : 'plus'" :size="mobile ? 19 : 14"/><span>{{ t('New session') }}</span></button>
+          <details v-if="!mobile" class="new-session-more"><summary class="primary-button" :aria-label="t('More ways to start a session')" :title="t('More ways to start a session')"><Icon name="chevron" :size="12" class="new-session-caret"/></summary>
+            <nav class="new-session-menu" :aria-label="t('New session')">
+              <button v-for="provider in (['claude_code','codex','terminal'] as const)" :key="provider" type="button" :disabled="!contextWorkspace || quickBusy" @click="closeNewSessionMenu($event); quickSession(contextWorkspace?.id, provider)"><TabIcon :kind="provider === 'terminal' ? 'terminal' : 'agent_chat'" :metadata="provider === 'terminal' ? undefined : { provider }" :size="16" /><span class="new-session-label">{{ provider === 'terminal' ? t('New terminal') : t('New {provider} session', { provider: providerLabel(provider) }) }}</span></button>
+              <hr/>
+              <button type="button" :disabled="!contextWorkspace" @click="closeNewSessionMenu($event); newSession(contextWorkspace?.id)"><Icon name="settings" :size="15"/><span class="new-session-label">{{ t('New session with options…') }}</span><kbd>{{ hint('new-session') }}</kbd></button>
+            </nav>
+          </details>
+        </div>
         <button class="icon-button" :aria-label="t('Settings')" :title="t('Settings')" @click="openSettings()"><Icon name="settings"/></button>
         <button v-if="workspaces.length" :class="['icon-button',{selected:explorerOpen}]" :aria-pressed="explorerOpen" :aria-label="t(explorerOpen?'Collapse file panel':'Expand file panel')" :title="t(explorerOpen?'Collapse file panel':'Expand file panel')" @click="explorerOpen = !explorerOpen"><Icon name="panelRight"/></button>
       </div>
@@ -937,6 +949,11 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
 </template>
 
 <style scoped>
+.new-session-split{position:relative;display:inline-flex}.new-session-split>.new-session-top{border-top-right-radius:0;border-bottom-right-radius:0}
+.new-session-more>summary{list-style:none;min-height:30px;padding:0 7px;border-top-left-radius:0;border-bottom-left-radius:0;border-left:1px solid color-mix(in srgb, var(--on-accent) 25%, transparent);cursor:pointer}.new-session-more>summary::-webkit-details-marker{display:none}.new-session-caret{transform:rotate(90deg)}
+.new-session-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:60;min-width:240px;padding:6px;border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--shadow-lg),0 0 0 1px var(--border)}
+.new-session-menu>button{display:flex;align-items:center;gap:10px;width:100%;min-height:36px;padding:0 10px;border:0;border-radius:var(--radius-md);background:none;color:var(--ink);font-size:var(--text-sm);text-align:left;cursor:pointer}.new-session-menu>button:hover:not(:disabled){background:var(--fill)}.new-session-menu .new-session-label{flex:1;white-space:nowrap}
+.new-session-menu kbd{font:var(--text-xs) var(--font-body);color:var(--muted)}.new-session-menu hr{border:0;border-top:1px solid var(--border);margin:4px 2px}
 .topbar-search{display:inline-flex;align-items:center;gap:8px;min-width:200px;height:32px;padding:0 6px 0 10px;border:1px solid var(--line);border-radius:var(--radius-md);background:var(--sunken);color:var(--muted);font-size:var(--text-sm);cursor:pointer}.topbar-search:hover{border-color:var(--line-strong);color:var(--ink-soft)}.topbar-search>span{flex:1;text-align:left}.topbar-search kbd{padding:0 5px;border:1px solid var(--line);border-radius:var(--radius-xs);background:var(--surface);font:var(--text-xs) var(--font-body);color:var(--muted)}
 @media(max-width:1100px){.topbar-search{min-width:0}.topbar-search>span,.topbar-search kbd{display:none}.topbar-search{width:32px;justify-content:center;padding:0}}
 .language-select{color:var(--ink-soft);border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--sunken);font-size:var(--text-xs);padding:5px 3px 5px 7px;min-height:28px;cursor:pointer}

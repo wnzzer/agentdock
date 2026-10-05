@@ -5,12 +5,15 @@ import { useI18n } from "../i18n";
 const { t } = useI18n();
 /** `embedded` renders the content alone, for a dialog shown as one page inside
  * another dialog. The outer shell then owns the backdrop, heading and focus. */
-const props = withDefaults(defineProps<{ title: string; wide?: boolean; closable?: boolean; embedded?: boolean }>(), { closable: true });
+/** `dirty` makes Esc, the close button and a click outside ask before throwing edits away. */
+const props = withDefaults(defineProps<{ title: string; wide?: boolean; closable?: boolean; embedded?: boolean; dirty?: boolean }>(), { closable: true, dirty: false });
 const emit = defineEmits<{ close: [] }>();
 const dialog = ref<HTMLElement>();
+const confirming = ref(false);
+function requestClose() { if (!props.closable) return; if (props.dirty && !confirming.value) { confirming.value = true; return; } emit("close"); }
 let previousFocus: HTMLElement | null = null;
 function onKey(event: KeyboardEvent) {
-  if (event.key === "Escape" && props.closable) { event.preventDefault(); emit("close"); }
+  if (event.key === "Escape" && props.closable) { event.preventDefault(); if (confirming.value) confirming.value = false; else requestClose(); }
   if (event.key !== "Tab") return;
   const targets = Array.from(dialog.value?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href]') ?? []).filter(el => el.offsetParent !== null);
   const first = targets[0], last = targets[targets.length - 1];
@@ -22,6 +25,6 @@ onUnmounted(() => { if (!props.embedded) previousFocus?.focus(); });
 </script>
 <template>
   <div v-if="embedded" class="dialog-content embedded"><slot /></div>
-  <Teleport v-else to="body"><div class="modal-backdrop" @mousedown.self="closable && emit('close')"><section ref="dialog" :class="['dialog', { wide }]" role="dialog" aria-modal="true" :aria-label="title" @keydown="onKey"><header class="dialog-header"><h2>{{ title }}</h2><button v-if="closable" class="icon-button" :aria-label="t('Close {title}', { title })" @click="emit('close')"><Icon name="close" /></button></header><div class="dialog-content"><slot /></div></section></div></Teleport>
+  <Teleport v-else to="body"><div class="modal-backdrop" @mousedown.self="requestClose"><section ref="dialog" :class="['dialog', { wide }]" role="dialog" aria-modal="true" :aria-label="title" @keydown="onKey"><header class="dialog-header"><h2>{{ title }}</h2><button v-if="closable" class="icon-button" :aria-label="t('Close {title}', { title })" @click="requestClose"><Icon name="close" /></button></header><div v-if="confirming" class="confirmation-bar dialog-discard" role="alertdialog"><span>{{ t('Discard your changes?') }}</span><span class="flex-spacer" /><button type="button" class="small-button" @click="confirming = false">{{ t('Keep editing') }}</button><button type="button" class="small-button danger" @click="emit('close')">{{ t('Discard') }}</button></div><div class="dialog-content"><slot /></div></section></div></Teleport>
 </template>
-<style>.dialog-content.embedded{padding:0;overflow:visible}</style>
+<style>.dialog-content.embedded{padding:0;overflow:visible}.dialog .dialog-discard{margin:8px 22px 0}</style>

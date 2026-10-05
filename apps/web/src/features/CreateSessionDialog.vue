@@ -79,9 +79,12 @@ async function create() {
   finally { busy.value = false; }
 }
 onBeforeUnmount(()=>{revision++;});
+/** Anything chosen beyond the defaults, which closing by accident would throw away. */
+const dirty = computed(() => title.value !== t('{provider} session', { provider: providerLabel(provider.value) }) || !!model.value || !!effort.value || profileTouched.value || ephemeral.value || place.value !== 'here'
+  || [...environmentDrafts.value.values()].some(rows => rows.some(row => row.name || row.value)));
 </script>
 <template>
-  <ModalDialog :title="t('New session')" :closable="!busy" @close="!busy && emit('close')">
+  <ModalDialog :title="t('New session')" :closable="!busy" :dirty="dirty" @close="!busy && emit('close')">
     <form class="form-stack" @submit.prevent="create">
       <p class="form-description">{{ t('Create a session in {workspace}. It connects when opened.',{workspace:workspace.name}) }}</p>
       <p v-if="backendCapabilities.structuredChat && provider!=='terminal'" class="inline-notice">{{ t('Chat UI · mobile ready. The official CLI runs the agent and handles permissions; no prompt is sent until you press Send.') }}</p>

@@ -847,6 +847,8 @@ export const zhCN: Readonly<Record<string, string>> = {
   "exited": "已退出",
   "error": "错误",
   "Explorer": "文件",
+  "Discard your changes?": "放弃未保存的修改？",
+  "More ways to start a session": "更多新建方式",
   "Search and commands": "搜索与命令",
   "Keyboard shortcuts": "键盘快捷键",
   "Show or hide the sidebar": "显示或隐藏侧栏",
