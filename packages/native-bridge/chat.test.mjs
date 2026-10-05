@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, copyFile, chmod, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -216,13 +216,15 @@ test('oversized native question option lists fail closed before emitting an inco
   }
 });
 test('a request outside the workspace says so, and can be allowed for the whole session without touching settings',()=>{
-  const cwd='/work/repo';
+  // Resolved, so the same expectations hold where an absolute path gains a drive letter.
+  const cwd=resolve('/work/repo'),hosts=resolve('/etc/hosts'),data=resolve('/srv/data');
   // Claude: its own suggestions are kept to this session.
   {
     const events=[],sent=[],chat=new ClaudeChat({cwd},event=>events.push(event));chat.active={id:'active'};chat.port={send:message=>sent.push(message)};
+    try {
     chat.request({type:'control_request',request_id:'read',request:{subtype:'can_use_tool',tool_name:'Read',tool_use_id:'tool',blocked_path:'/etc/hosts',input:{file_path:'/etc/hosts'},permission_suggestions:[{type:'addDirectories',directories:['/etc'],destination:'localSettings'}]}});
     const approval=events.find(event=>event.type==='approval');
-    assert.deepEqual(approval.scope,{access:'read',outside:['/etc/hosts']});
+    assert.deepEqual(approval.scope,{access:'read',outside:[hosts]});
     assert.deepEqual(approval.choices,['accept','accept_session','decline','cancel']);
     chat.answer({request_id:approval.id,decision:'accept_session'});
     const response=sent.pop().response.response;
@@ -233,11 +235,12 @@ test('a request outside the workspace says so, and can be allowed for the whole 
     const inside=events.filter(event=>event.type==='approval').pop();
     assert.deepEqual(inside.scope,{access:'write'});
     assert.deepEqual(inside.choices,['accept','decline','cancel']);
-    chat.clearApprovals(false);
+    } finally { chat.clearApprovals(false); }
   }
   // Codex: acceptForSession when the client offers it, and a session-scoped grant for permissions.
   {
     const events=[],sent=[],chat=new CodexChat({cwd},event=>events.push(event));chat.active={id:'active'};chat.nativeSessionId='fixture-thread';chat.port={send:message=>sent.push(message)};
+    try {
     chat.request({id:'run',method:'item/commandExecution/requestApproval',params:{threadId:'fixture-thread',command:'cat /var/log/syslog',cwd,availableDecisions:['accept','acceptForSession','decline','cancel']}});
     const command=events.find(event=>event.type==='approval');
     assert.deepEqual(command.choices,['accept','accept_session','decline','cancel']);
@@ -246,13 +249,13 @@ test('a request outside the workspace says so, and can be allowed for the whole 
     assert.deepEqual(sent.pop(),{id:'run',result:{decision:'acceptForSession'}});
     chat.request({id:'grant',method:'item/permissions/requestApproval',params:{threadId:'fixture-thread',reason:'Write outside',permissions:{fileSystem:{write:['/srv/data']}}}});
     const permission=events.filter(event=>event.type==='approval').pop();
-    assert.deepEqual(permission.scope,{access:'write',outside:['/srv/data']});
+    assert.deepEqual(permission.scope,{access:'write',outside:[data]});
     chat.answer({request_id:permission.id,decision:'accept_session'});
     assert.deepEqual(sent.pop(),{id:'grant',result:{permissions:{fileSystem:{write:['/srv/data']}},scope:'session'}});
     // An older client that names no decisions is offered nothing it may not accept.
     chat.request({id:'old',method:'item/fileChange/requestApproval',params:{threadId:'fixture-thread',grantRoot:'/opt'}});
     assert.deepEqual(events.filter(event=>event.type==='approval').pop().choices,['accept','decline','cancel']);
-    chat.clearApprovals(false);
+    } finally { chat.clearApprovals(false); }
   }
   assert.doesNotThrow(()=>validateChatInput({type:'approval',request_id:'one',decision:'accept_session'}));
 });
