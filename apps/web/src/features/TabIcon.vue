@@ -18,5 +18,5 @@ const appearance = computed(() => resolveTabIcon(props.kind, props.metadata, pro
   <span class="tab-icon" :style="{ color: appearance.color, backgroundColor: appearance.background, width: `${size + 6}px`, height: `${size + 6}px` }" :data-tab-icon="appearance.type" :data-icon-provider="appearance.provider" aria-hidden="true"><ProviderIcon v-if="appearance.provider" :provider="appearance.provider" :size="size" /><Icon v-else :name="appearance.icon" :size="size" /></span>
 </template>
 <style scoped>
-.tab-icon{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:5px;line-height:1;vertical-align:middle;opacity:1}.tab-icon>svg{display:block;flex-shrink:0}
+.tab-icon{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:var(--radius-sm);line-height:1;vertical-align:middle;opacity:1}.tab-icon>svg{display:block;flex-shrink:0}
 </style>

@@ -60,24 +60,24 @@ defineExpose({ close });
 
 <style>
 .sheet-backdrop{position:fixed;inset:0;z-index:90;background:var(--overlay)}
-.bottom-sheet{position:fixed;left:0;right:0;bottom:0;z-index:91;display:flex;flex-direction:column;max-height:min(82dvh,calc(var(--app-height,100dvh) - 40px));background:var(--surface);border-radius:18px 18px 0 0;box-shadow:0 -8px 40px #1b2a3624;padding-bottom:env(safe-area-inset-bottom);outline:0;transition:transform .26s cubic-bezier(.2,.8,.2,1)}
+.bottom-sheet{position:fixed;left:0;right:0;bottom:0;z-index:91;display:flex;flex-direction:column;max-height:min(82dvh,calc(var(--app-height,100dvh) - 40px));background:var(--surface);border-radius:var(--radius-xl) var(--radius-xl) 0 0;box-shadow:0 -8px 40px #1b2a3624;padding-bottom:env(safe-area-inset-bottom);outline:0;transition:transform .26s cubic-bezier(.2,.8,.2,1)}
 .sheet-grip{display:flex;justify-content:center;padding:9px 0 6px;flex:none;touch-action:none;cursor:grab}
-.sheet-grip>i{display:block;width:38px;height:5px;border-radius:3px;background:#d5dde2}
+.sheet-grip>i{display:block;width:38px;height:5px;border-radius:var(--radius-xs);background:var(--line)}
 .sheet-header{flex:none;padding:2px 20px 10px}
-.sheet-header h2{font-size:16px;font-weight:600;color:var(--ink);margin:0}
+.sheet-header h2{font-size:var(--text-lg);font-weight:600;color:var(--ink);margin:0}
 .sheet-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:0 10px 12px}
 .sheet-fade-enter-active,.sheet-fade-leave-active{transition:opacity .22s ease}
 .sheet-fade-enter-from,.sheet-fade-leave-to{opacity:0}
 .sheet-rise-enter-active,.sheet-rise-leave-active{transition:transform .26s cubic-bezier(.2,.8,.2,1)}
 .sheet-rise-enter-from,.sheet-rise-leave-to{transform:translateY(100%)}
 /* Rows a sheet is usually made of: one choice per line, thumb-high. */
-.sheet-row{display:flex;align-items:center;gap:12px;width:100%;min-height:52px;padding:8px 12px;border:0;border-radius:12px;background:none;color:var(--ink);font:inherit;font-size:15px;text-align:left;cursor:pointer}
+.sheet-row{display:flex;align-items:center;gap:12px;width:100%;min-height:52px;padding:8px 12px;border:0;border-radius:var(--radius-lg);background:none;color:var(--ink);font:inherit;font-size:var(--text-lg);text-align:left;cursor:pointer}
 .sheet-row:active,.sheet-row.current{background:var(--teal-soft)}
 .sheet-row.current{color:var(--teal-deep);font-weight:600}
 .sheet-row>svg{flex:none;color:var(--ink-soft)}
 .sheet-row-copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
 .sheet-row-copy>strong{font-weight:inherit;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sheet-row-copy>small{font-size:12px;color:var(--ink-soft);font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sheet-section{margin:14px 12px 6px;font-size:12px;font-weight:600;letter-spacing:.3px;color:var(--ink-soft)}
+.sheet-row-copy>small{font-size:var(--text-sm);color:var(--ink-soft);font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sheet-section{margin:14px 12px 6px;font-size:var(--text-sm);font-weight:600;letter-spacing:.3px;color:var(--ink-soft)}
 .sheet-divider{height:1px;margin:8px 12px;background:var(--border);border:0}
 </style>

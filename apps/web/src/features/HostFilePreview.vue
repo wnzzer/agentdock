@@ -59,13 +59,13 @@ async function copyPath() {
 <style scoped>
 .host-file{display:flex;flex-direction:column;gap:10px;min-height:0;height:min(620px,calc(100vh - 200px))}
 .host-file header{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.host-file header code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;color:var(--ink-soft)}
-.host-file-badge{flex-shrink:0;font-size:10.5px;padding:2px 8px;border-radius:6px;background:var(--fill);color:var(--muted)}
-.host-file-quiet{font-size:12px;color:var(--muted)}
-.host-file-body{flex:1;min-height:0;overflow:auto;border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:8px 0;font:12px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace}
+.host-file header code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--text-sm);color:var(--ink-soft)}
+.host-file-badge{flex-shrink:0;font-size:var(--text-xs);padding:2px 8px;border-radius:var(--radius-sm);background:var(--fill);color:var(--muted)}
+.host-file-quiet{font-size:var(--text-sm);color:var(--muted)}
+.host-file-body{flex:1;min-height:0;overflow:auto;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface);padding:8px 0;font:var(--text-sm)/1.65 var(--mono)}
 .host-file-line{display:flex;min-width:max-content}
 .host-file-line>span{flex:none;width:48px;padding-right:12px;text-align:right;color:var(--muted);user-select:none}
 .host-file-line>code{white-space:pre;padding-right:16px;color:var(--ink);font:inherit}
-.host-file-line.target{background:#fff6d6}
+.host-file-line.target{background:var(--warn-line)}
 .host-file-line.target>span{color:var(--ink)}
 </style>

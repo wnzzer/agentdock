@@ -39,15 +39,15 @@ const label = computed(() => meter.value
 </template>
 
 <style scoped>
-.context-ring{display:inline-flex;align-items:center;gap:5px;color:var(--ink-soft);font-size:10px;line-height:1;white-space:nowrap}
+.context-ring{display:inline-flex;align-items:center;gap:5px;color:var(--ink-soft);font-size:var(--text-xs);line-height:1;white-space:nowrap}
 .context-ring svg{display:block;flex-shrink:0}
 .context-ring-scale{opacity:.72;font-variant-numeric:tabular-nums}
-.context-ring-track{stroke:#e3eaec}
+.context-ring-track{stroke:var(--fill-hover)}
 .context-ring-value{stroke:var(--teal);transition:stroke-dashoffset .3s ease}
-.context-ring.high .context-ring-value{stroke:#C77916}
-.context-ring.high .context-ring-text{color:#9c6a1c}
+.context-ring.high .context-ring-value{stroke:var(--warn)}
+.context-ring.high .context-ring-text{color:var(--warn-ink)}
 .context-ring.full .context-ring-value{stroke:#D94B55}
-.context-ring.full .context-ring-text{color:#b2404c}
+.context-ring.full .context-ring-text{color:var(--danger)}
 .context-ring-text{font-variant-numeric:tabular-nums}
 @media (prefers-reduced-motion: reduce){.context-ring-value{transition:none}}
 </style>

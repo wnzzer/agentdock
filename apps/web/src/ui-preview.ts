@@ -1,4 +1,5 @@
 import { createApp } from 'vue';
+import '@fontsource-variable/inter';
 import ChatPreview from './features/ChatPreview.vue';
 import './styles.css';
 

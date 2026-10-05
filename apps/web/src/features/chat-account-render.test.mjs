@@ -94,8 +94,8 @@ test('new first-view application copy switches between Chinese and English witho
 test('the native chat renderer never uses raw HTML and both new views provide mobile-sized touch targets', () => {
   const chat = readFileSync(new URL('./ChatSessionPane.vue', import.meta.url), 'utf8'), accounts = readFileSync(new URL('./AccountsDialog.vue', import.meta.url), 'utf8');
   assert.ok(!chat.includes('v-html')); assert.ok(!chat.includes('innerHTML'));
-  assert.match(chat, /font-size:16px/); assert.match(chat, /min-height:44px/); assert.match(chat, /safe-area-inset-bottom/);
-  assert.match(accounts, /font-size:16px/); assert.match(accounts, /min-height:44px/);
+  assert.match(chat, /font-size:var\(--input-text\)/); assert.match(chat, /min-height:44px/); assert.match(chat, /safe-area-inset-bottom/);
+  assert.match(accounts, /font-size:var\(--input-text\)/); assert.match(accounts, /min-height:44px/);
   assert.ok(!chat.includes('localStorage')); assert.ok(!accounts.includes('localStorage'));
 });
 

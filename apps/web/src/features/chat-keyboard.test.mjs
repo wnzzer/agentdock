@@ -32,21 +32,21 @@ test('the composer contract documents the outer focus ring and compact desktop t
   const source = await readFile(new URL('./ChatSessionPane.vue', import.meta.url), 'utf8');
   assert.match(source, /\.chat-composer:focus-within\{border-color:var\(--focus\)/);
   assert.match(source, /\.chat-composer>textarea:focus-visible\{outline:0/);
-  assert.match(source, /\.chat-message :deep\(\.chat-markdown\)\{font-size:13px;line-height:1\.7\}/);
+  assert.match(source, /\.chat-message :deep\(\.chat-markdown\)\{font-size:var\(--text-md\);line-height:1\.7\}/);
 });
 
 test('the composer uses compact desktop controls and restores touch targets on mobile', async () => {
   const { readFile } = await import('node:fs/promises');
   // A Windows checkout may carry CRLF; the rules below match line by line.
   const source = (await readFile(new URL('./ChatSessionPane.vue', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
-  assert.match(source, /\.chat-composer\{margin:0 12px 8px;padding:8px 9px max\(5px,env\(safe-area-inset-bottom\)\);border-radius:10px\}/);
+  assert.match(source, /\.chat-composer\{margin:0 12px 8px;padding:8px 9px max\(5px,env\(safe-area-inset-bottom\)\);border-radius:var\(--radius-md\)\}/);
   // Endpoint and thinking depth are one shared chip control now, not a native
   // select, so their density contract lives with that primitive.
   const chip = await readFile(new URL('./ChipMenu.vue', import.meta.url), 'utf8');
-  assert.match(chip, /\.chip-menu>summary\{[^}]*min-height:28px;[^}]*border-radius:7px/);
+  assert.match(chip, /\.chip-menu>summary\{[^}]*min-height:28px;[^}]*border-radius:var\(--radius-sm\)/);
   assert.match(chip, /@media\(pointer:coarse\)\{\.chip-menu>summary\{min-height:44px/);
-  assert.match(source, /\.chat-send\{width:30px;height:30px;min-width:30px;min-height:0;border-radius:8px/);
-  assert.match(source, /\.chat-composer \.chat-attach\{width:30px;height:30px;min-width:30px;min-height:0;border-radius:8px\}/);
+  assert.match(source, /\.chat-send\{width:30px;height:30px;min-width:30px;min-height:0;border-radius:var\(--radius-md\)/);
+  assert.match(source, /\.chat-composer \.chat-attach\{width:30px;height:30px;min-width:30px;min-height:0;border-radius:var\(--radius-md\)\}/);
   // Touch targets follow the pointing device, not the pane width: a narrow pane
   // on a desktop is still a mouse, and a phone needs 44px at any width.
   // Touch sizing lives in one coarse-pointer block, so a second one would
@@ -61,7 +61,7 @@ test('the composer uses compact desktop controls and restores touch targets on m
   // The 16px input font belongs to the touch rule; it exists to stop iOS
   // zooming on focus, not because a pane is narrow. Only a real text field can
   // trigger that zoom, so the chip summaries are deliberately not included.
-  assert.match(coarse, /\.chat-composer>textarea\{font-size:16px\}/);
+  assert.match(coarse, /\.chat-composer>textarea\{font-size:var\(--input-text\)\}/);
   const width = /@container\(max-width:480px\)\{\n(?:.*\n)*?\}/.exec(source)[0];
   assert.equal(/min-height:44px|width:44px/.test(width), false, width);
 });

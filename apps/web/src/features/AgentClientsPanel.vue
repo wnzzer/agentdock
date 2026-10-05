@@ -105,29 +105,29 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); });
 <style scoped>
 .clients-page{min-width:0}
 .settings-lead{display:flex;align-items:center;gap:12px;margin:2px 0 16px}
-.settings-lead p{flex:1;margin:0;font-size:12px;line-height:1.7;color:var(--ink-soft)}
-.settings-lead-action{display:grid;place-items:center;width:30px;height:30px;flex-shrink:0;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink-soft);cursor:pointer}
+.settings-lead p{flex:1;margin:0;font-size:var(--text-sm);line-height:1.7;color:var(--ink-soft)}
+.settings-lead-action{display:grid;place-items:center;width:30px;height:30px;flex-shrink:0;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface);color:var(--ink-soft);cursor:pointer}
 .settings-lead-action:hover:not(:disabled){color:var(--teal);border-color:var(--teal-line)}
-.clients-quiet{font-size:11px;line-height:1.7;color:var(--muted);margin:8px 0 0}
-.client-card{border:1px solid var(--border);border-radius:12px;padding:13px 14px;margin-bottom:10px;background:var(--surface)}
+.clients-quiet{font-size:var(--text-xs);line-height:1.7;color:var(--muted);margin:8px 0 0}
+.client-card{border:1px solid var(--border);border-radius:var(--radius-lg);padding:13px 14px;margin-bottom:10px;background:var(--surface)}
 .client-card header{display:flex;align-items:center;gap:11px}
 .client-card header>div{flex:1;min-width:0}
-.client-card strong{display:block;font-size:13px;font-weight:600;color:var(--ink)}
-.client-card strong em{font-style:normal;font-weight:450;font-size:11px;color:var(--muted);margin-left:4px}
-.client-card small{display:block;margin-top:3px;font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.client-card small code{font-size:10.5px;color:var(--ink-soft)}
-.client-mark{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;background:#F0E9FF;color:#7552B8;flex-shrink:0}
+.client-card strong{display:block;font-size:var(--text-md);font-weight:600;color:var(--ink)}
+.client-card strong em{font-style:normal;font-weight:450;font-size:var(--text-xs);color:var(--muted);margin-left:4px}
+.client-card small{display:block;margin-top:3px;font-size:var(--text-xs);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.client-card small code{font-size:var(--text-xs);color:var(--ink-soft)}
+.client-mark{display:grid;place-items:center;width:34px;height:34px;border-radius:var(--radius-md);background:#F0E9FF;color:#7552B8;flex-shrink:0}
 .client-mark.claude_code{background:#FFF0E5;color:#B75B27}
-.client-state{border-radius:20px;padding:4px 9px;font-size:10.5px;background:var(--fill);color:var(--ink-soft);flex-shrink:0}
-.client-state.installed{background:#eaf6f0;color:var(--accent-ink)}
-.client-state.missing{background:#fbf5e8;color:#9c844c}
+.client-state{border-radius:var(--radius-xl);padding:4px 9px;font-size:var(--text-xs);background:var(--fill);color:var(--ink-soft);flex-shrink:0}
+.client-state.installed{background:var(--ok-soft);color:var(--accent-ink)}
+.client-state.missing{background:var(--warn-soft);color:#9c844c}
 .client-actions{margin:8px 0 0 45px}
-.client-link{border:0;background:none;padding:2px 0;font:inherit;font-size:11.5px;color:var(--teal);cursor:pointer}
+.client-link{border:0;background:none;padding:2px 0;font:inherit;font-size:var(--text-sm);color:var(--teal);cursor:pointer}
 .client-link:hover:not(:disabled){text-decoration:underline}
 .client-link:disabled{opacity:.5;cursor:not-allowed}
 .clients-unavailable{text-align:center;padding:34px 20px;color:var(--muted)}
 .clients-unavailable>svg{margin:auto}
-.clients-unavailable h3{font-size:17px;font-weight:550;margin:15px 0 9px;color:var(--ink)}
-.clients-unavailable p{font-size:12px;line-height:1.9;color:var(--ink-soft);max-width:430px;margin:auto}
+.clients-unavailable h3{font-size:var(--text-xl);font-weight:550;margin:15px 0 9px;color:var(--ink)}
+.clients-unavailable p{font-size:var(--text-sm);line-height:1.9;color:var(--ink-soft);max-width:430px;margin:auto}
 @media(pointer:coarse){.settings-lead-action{width:44px;height:44px}.client-link{min-height:44px}}
 </style>

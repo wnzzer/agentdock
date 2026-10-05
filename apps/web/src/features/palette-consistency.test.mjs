@@ -36,7 +36,8 @@ test('chat retains mobile sizing and semantic warning/error colors within the or
   assert.match(style, /\.chat-send\{[^}]*background:var\(--teal\)/);
   assert.match(style, /\.chat-composer\{[^}]*background:var\(--surface\)/);
   assert.ok(style.includes('min-height:44px'));
-  assert.ok(style.includes('font-size:16px'));
+  assert.ok(style.includes('font-size:var(--input-text)'));
+  assert.ok(readFileSync(new URL('../styles.css', import.meta.url), 'utf8').includes('--input-text: 16px'));
   assert.ok(style.includes('safe-area-inset-bottom'));
   assert.ok(style.includes('#fffaee'));
   // The semantic error colour is unchanged; it is now named rather than repeated.

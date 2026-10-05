@@ -50,7 +50,7 @@ const dash = computed(() => left.value === undefined || left.value === 0 ? 0 : C
 </template>
 
 <style scoped>
-.quota-meter{--quota:var(--teal);--quota-soft:var(--teal-soft);position:relative;display:grid;grid-template-columns:64px minmax(0,1fr);align-items:center;gap:14px;padding:14px 16px;border:1px solid var(--border);border-radius:14px;background:linear-gradient(180deg,var(--surface),var(--sunken));min-width:0}
+.quota-meter{--quota:var(--teal);--quota-soft:var(--teal-soft);position:relative;display:grid;grid-template-columns:64px minmax(0,1fr);align-items:center;gap:14px;padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius-lg);background:linear-gradient(180deg,var(--surface),var(--sunken));min-width:0}
 .quota-meter.warn{--quota:#c88a1c;--quota-soft:#fdf3e1}
 .quota-meter.danger{--quota:#c2415a;--quota-soft:#fdecef}
 .quota-meter.unknown{--quota:var(--muted)}
@@ -59,13 +59,13 @@ const dash = computed(() => left.value === undefined || left.value === 0 ? 0 : C
 .quota-value{fill:none;stroke:var(--quota);stroke-width:7;stroke-linecap:round;transition:stroke-dasharray .6s cubic-bezier(.2,.8,.2,1)}
 .quota-figure{grid-row:1;grid-column:1;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1;color:var(--quota);pointer-events:none}
 .quota-figure>span{display:flex;align-items:baseline}
-.quota-figure em{font-style:normal;font-size:9.5px;font-weight:500;color:var(--muted);margin-top:3px}
-.quota-figure strong{font-size:17px;font-weight:650;letter-spacing:-.4px;font-variant-numeric:tabular-nums}
-.quota-figure small{font-size:10px;font-weight:600;margin-left:1px}
+.quota-figure em{font-style:normal;font-size:var(--text-xs);font-weight:500;color:var(--muted);margin-top:3px}
+.quota-figure strong{font-size:var(--text-xl);font-weight:650;letter-spacing:-.4px;font-variant-numeric:tabular-nums}
+.quota-figure small{font-size:var(--text-xs);font-weight:600;margin-left:1px}
 .quota-copy{display:flex;flex-direction:column;gap:2px;min-width:0}
-.quota-title{font-size:11px;font-weight:600;letter-spacing:.3px;color:var(--ink-soft);text-transform:uppercase}
-.quota-left{font-size:14px;font-weight:600;color:var(--muted)}
-.quota-reset{font-size:14px;font-weight:600;color:var(--ink);margin-top:3px}
-.quota-exact{font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.quota-title{font-size:var(--text-xs);font-weight:600;letter-spacing:.3px;color:var(--ink-soft);text-transform:uppercase}
+.quota-left{font-size:var(--text-base);font-weight:600;color:var(--muted)}
+.quota-reset{font-size:var(--text-base);font-weight:600;color:var(--ink);margin-top:3px}
+.quota-exact{font-size:var(--text-xs);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media(prefers-reduced-motion:reduce){.quota-value{transition:none}}
 </style>

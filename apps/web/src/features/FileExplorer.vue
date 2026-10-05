@@ -463,53 +463,53 @@ defineExpose({ reveal });
 .search-results{overflow:auto;flex:1;padding:0 7px 12px;min-height:0}
 .search-hit{align-items:center;gap:8px;padding:8px 7px;min-height:34px}
 .search-hit-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.search-hit-name mark{background:#d9efe6;color:#146d5e;border-radius:2px;padding:0 1px}
+.search-hit-name mark{background:var(--accent-line);color:var(--accent-hover);border-radius:var(--radius-xs);padding:0 1px}
 /* The folder is context, not the answer, so it yields space to the name. */
-.search-hit-dir{flex-shrink:1;min-width:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:right;font-size:8px;color:#b0bac2}
+.search-hit-dir{flex-shrink:1;min-width:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:right;font-size:var(--text-xs);color:var(--faint)}
 
 /* Typing a name, in the place the name will be. */
 .tree-compose,.tree-rename{display:flex;align-items:center;gap:6px;min-height:34px}
-.tree-compose{margin:0 7px 4px;padding:4px 7px;border:1px solid #d7e2e0;border-radius:7px;background:#f7faf9}
+.tree-compose{margin:0 7px 4px;padding:4px 7px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--sunken)}
 .tree-rename{padding-left:calc(7px + var(--tree-depth) * 13px)}
-.tree-compose input,.tree-rename input{flex:1;min-width:0;border:1px solid #cfdad8;border-radius:5px;padding:4px 6px;font:inherit;font-size:11px;background:#fff}
+.tree-compose input,.tree-rename input{flex:1;min-width:0;border:1px solid var(--line-strong);border-radius:var(--radius-sm);padding:4px 6px;font:inherit;font-size:var(--text-xs);background:var(--surface)}
 .tree-compose input:focus,.tree-rename input:focus{outline:2px solid #9ccdc2;outline-offset:-1px}
-.tree-compose-base{flex-shrink:1;min-width:0;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;font-size:10px;color:#8c9aa4}
-.tree-compose .text-button,.tree-rename .text-button{flex:none;font-size:10px}
+.tree-compose-base{flex-shrink:1;min-width:0;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;font-size:var(--text-xs);color:var(--muted)}
+.tree-compose .text-button,.tree-rename .text-button{flex:none;font-size:var(--text-xs)}
 
 /* Teleported so the tree's own scrolling and clipping cannot cut it off. */
 .tree-menu-backdrop{position:fixed;inset:0;z-index:60}
-.tree-menu{position:fixed;min-width:198px;padding:5px;background:var(--surface);border:1px solid var(--border);border-radius:11px;box-shadow:0 14px 38px #243b4c2b}
-.tree-menu button{display:block;width:100%;min-height:32px;padding:7px 10px;border:0;border-radius:7px;background:none;text-align:left;font-size:12px;color:var(--ink-soft);white-space:nowrap;cursor:pointer}
+.tree-menu{position:fixed;min-width:198px;padding:5px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);box-shadow:var(--shadow-lg)}
+.tree-menu button{display:block;width:100%;min-height:32px;padding:7px 10px;border:0;border-radius:var(--radius-sm);background:none;text-align:left;font-size:var(--text-sm);color:var(--ink-soft);white-space:nowrap;cursor:pointer}
 .tree-menu button:hover:not(:disabled){background:var(--fill);color:var(--ink)}
 .tree-menu button:disabled{opacity:.5;cursor:not-allowed}
 .tree-menu hr{border:0;border-top:1px solid var(--border);margin:4px 6px}
 .tree-menu-danger{color:var(--danger-ink)}
 .tree-menu-danger:hover:not(:disabled){background:var(--danger-soft);color:var(--danger)}
-.tree-menu-confirm{padding:6px 10px;margin:0;font-size:11px;line-height:1.6;color:var(--ink-soft);white-space:normal;max-width:220px}
+.tree-menu-confirm{padding:6px 10px;margin:0;font-size:var(--text-xs);line-height:1.6;color:var(--ink-soft);white-space:normal;max-width:220px}
 @media(pointer:coarse){.tree-menu button{min-height:44px}}
 .file-breadcrumb { max-height: 66px; overflow: auto; }
 .file-breadcrumb button { max-width: 100%; }
 .file-search { gap: 5px; }
 .file-search input { min-width: 0; }
 .clear-filter { width: 17px; height: 17px; padding: 1px; }
-.tree-filter-note { margin: -5px 14px 10px; font-size: 9px; line-height: 15px; color: #80949f; }
+.tree-filter-note { margin: -5px 14px 10px; font-size: var(--text-xs); line-height: 15px; color: var(--muted); }
 .file-tree { padding-top: 2px; scroll-padding: 6px; }
 .tree-row { padding: 7px 7px 7px calc(3px + var(--tree-depth) * 15px); gap: 5px; position: relative; }
-.tree-row > svg { flex-shrink: 0; color: #98a9b2; }
+.tree-row > svg { flex-shrink: 0; color: var(--faint); }
 .tree-row.is-directory > svg { color: #82a79d; }
 .tree-row > span { min-width: 38px; }
-.tree-row.is-selected { background: #e8f4ef; box-shadow: inset 2px 0 #45a18c; }
-.tree-row.is-selected > span { color: #296e60; }
-.tree-row:focus-visible { outline: 1px solid #55a692; outline-offset: -2px; background: #f1f8f5; }
-.tree-disclosure { display: flex; width: 11px; height: 15px; align-items: center; justify-content: center; flex: 0 0 11px; color: #9aaaae; }
+.tree-row.is-selected { background: var(--accent-soft); box-shadow: inset 2px 0 #45a18c; }
+.tree-row.is-selected > span { color: var(--accent-hover); }
+.tree-row:focus-visible { outline: 1px solid var(--focus); outline-offset: -2px; background: var(--ok-soft); }
+.tree-disclosure { display: flex; width: 11px; height: 15px; align-items: center; justify-content: center; flex: 0 0 11px; color: var(--faint); }
 .tree-disclosure > svg { transition: transform 120ms ease; }
 .tree-disclosure.expanded > svg { transform: rotate(90deg); }
 .tree-folder-state { padding-left: calc(25px + var(--tree-depth) * 15px); }
 .tree-folder-state:empty { display: none; }
-.tree-folder-state p { color: #9aabb3; font-size: 9px; line-height: 17px; padding: 3px 0 7px; }
-.tree-error { display: flex; gap: 7px; align-items: baseline; font-size: 9px; line-height: 16px; padding: 4px 0 8px; color: #af6876; }
+.tree-folder-state p { color: var(--faint); font-size: var(--text-xs); line-height: 17px; padding: 3px 0 7px; }
+.tree-error { display: flex; gap: 7px; align-items: baseline; font-size: var(--text-xs); line-height: 16px; padding: 4px 0 8px; color: #af6876; }
 .tree-error > span { min-width: 0; overflow-wrap: anywhere; }
-.tree-error > button { flex-shrink: 0; color: #728e86; font-size: 9px; }
+.tree-error > button { flex-shrink: 0; color: #728e86; font-size: var(--text-xs); }
 .inline-error.tree-error { margin: 0 12px 8px; }
 @media (prefers-reduced-motion: reduce) { .tree-disclosure > svg { transition: none; } }
 </style>

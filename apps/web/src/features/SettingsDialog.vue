@@ -67,10 +67,10 @@ function select(next: SettingsSection) { if (next !== section.value) leave(() =>
    long form used to carry the whole dialog, navigation and list with it. */
 .settings-layout{display:grid;grid-template-columns:168px minmax(0,1fr);gap:20px;height:min(640px,calc(100vh - 190px));min-height:420px}
 .settings-nav{display:flex;flex-direction:column;gap:3px;border-right:1px solid var(--border);padding-right:14px}
-.settings-nav-item{display:flex;align-items:center;gap:10px;width:100%;min-height:40px;text-align:left;padding:8px 10px;border:0;border-radius:9px;background:none;color:var(--ink-soft);cursor:pointer;font:inherit}
+.settings-nav-item{display:flex;align-items:center;gap:10px;width:100%;min-height:40px;text-align:left;padding:8px 10px;border:0;border-radius:var(--radius-md);background:none;color:var(--ink-soft);cursor:pointer;font:inherit}
 .settings-nav-item:hover{background:var(--fill)}
 .settings-nav-item.selected{background:var(--teal-soft);color:var(--teal)}
-.settings-nav-item strong{font-size:12.5px;font-weight:550;color:inherit}
+.settings-nav-item strong{font-size:var(--text-md);font-weight:550;color:inherit}
 .settings-nav-item:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .settings-page{min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden;padding-right:4px}
 @media(max-width:680px){

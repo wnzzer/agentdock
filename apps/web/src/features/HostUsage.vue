@@ -69,25 +69,25 @@ function toggle() { open.value = !open.value; if (open.value) { if (timer) clear
 
 <style scoped>
 .host-usage{position:relative;display:flex}
-.host-usage-chip{display:flex;align-items:center;gap:12px;padding:0 4px;border:0;background:none;color:inherit;font:inherit;cursor:pointer;border-radius:5px}
+.host-usage-chip{display:flex;align-items:center;gap:12px;padding:0 4px;border:0;background:none;color:inherit;font:inherit;cursor:pointer;border-radius:var(--radius-sm)}
 .host-usage-chip:hover{background:var(--fill)}
 .host-meter{display:flex;align-items:center;gap:5px;font-variant-numeric:tabular-nums;color:var(--ink-soft)}
 .host-meter b{font-weight:600;color:var(--muted)}
-.host-meter i{--bar:var(--teal);position:relative;width:34px;height:4px;border-radius:3px;background:var(--fill);overflow:hidden}
-.host-meter i::after{content:"";position:absolute;inset:0 auto 0 0;width:var(--fill);background:var(--bar);border-radius:3px;transition:width .6s ease}
+.host-meter i{--bar:var(--teal);position:relative;width:34px;height:4px;border-radius:var(--radius-xs);background:var(--fill);overflow:hidden}
+.host-meter i::after{content:"";position:absolute;inset:0 auto 0 0;width:var(--fill);background:var(--bar);border-radius:var(--radius-xs);transition:width .6s ease}
 .host-meter.warn i{--bar:#c88a1c}.host-meter.danger i{--bar:#c2415a}
-.host-meter.danger{color:#c2415a}
-.host-usage-panel{position:absolute;right:0;bottom:calc(100% + 8px);z-index:60;width:300px;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:0 12px 32px #243b4c24;font-size:11.5px;color:var(--ink)}
+.host-meter.danger{color:var(--danger)}
+.host-usage-panel{position:absolute;right:0;bottom:calc(100% + 8px);z-index:60;width:300px;padding:12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--shadow-lg);font-size:var(--text-sm);color:var(--ink)}
 .host-usage-panel header{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:8px}
-.host-usage-panel header strong{font-size:12.5px}
-.host-usage-panel header small{color:var(--muted);font-size:10.5px}
+.host-usage-panel header strong{font-size:var(--text-md)}
+.host-usage-panel header small{color:var(--muted);font-size:var(--text-xs)}
 .host-usage-panel ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;max-height:240px;overflow:auto}
-.host-usage-panel li{display:grid;grid-template-columns:14px minmax(0,1fr) 38px 56px;align-items:center;gap:8px;padding:5px 4px;border-radius:6px}
+.host-usage-panel li{display:grid;grid-template-columns:14px minmax(0,1fr) 38px 56px;align-items:center;gap:8px;padding:5px 4px;border-radius:var(--radius-sm)}
 .host-usage-panel li:hover{background:var(--sunken)}
 .host-usage-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .host-usage-figure{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink-soft)}
 .host-usage-empty{margin:6px 0;color:var(--muted)}
-.host-usage-note{display:block;margin-top:8px;font-size:10px;color:var(--muted)}
+.host-usage-note{display:block;margin-top:8px;font-size:var(--text-xs);color:var(--muted)}
 @media(max-width:520px){.host-usage-chip{gap:8px}.host-meter i{display:none}.host-meter{white-space:nowrap}}
 @media(prefers-reduced-motion:reduce){.host-meter i::after{transition:none}}
 </style>

@@ -818,12 +818,12 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
 </template>
 
 <style scoped>
-.language-select{color:#607681;border:1px solid #e1e8e9;border-radius:6px;background:#f9fbfa;font-size:10px;padding:5px 3px 5px 7px;min-height:28px;cursor:pointer}
-.new-session-top{padding:5px 9px;font-size:10px;min-height:30px}.top-actions{gap:9px}.main-workspace{padding:10px 12px 0}.canvas-compat-notice>span{flex:1;min-width:0}
-.canvas-compat-notice{display:flex;align-items:center;gap:8px;flex:none;padding:8px 11px;margin-bottom:10px;background:#f1f7f4;border:1px solid #dce8e1;border-radius:7px;font-size:11px;line-height:17px;color:#628276}.canvas-compat-notice>svg{flex:none}.canvas-compat-notice small{display:block;color:#8a9d94;font-size:10px}
-.explorer-workspace-control{display:flex;align-items:end;gap:6px;padding:10px;border-bottom:1px solid #e6ece9;background:#f8fbf9;flex:none}.explorer-workspace-control label{min-width:0;flex:1;font-size:9px;color:#8b9f94}.explorer-workspace-control label>span{display:block;margin-bottom:4px}.explorer-workspace-control select{width:100%;font-size:11px;padding:5px;border:1px solid #dce6df;border-radius:5px;background:white;color:#5d7868}.explorer-workspace-control button{white-space:nowrap;font-size:9px}
-@media(max-width:700px){.canvas-compat-notice{font-size:10px}.canvas-compat-notice small{display:none}.workspace-heading h1{font-size:19px}.workspace-heading .branch-badge{display:none}}
-@media(max-width:380px){.language-select{font-size:9px;width:60px;padding-left:4px}}
+.language-select{color:var(--ink-soft);border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--sunken);font-size:var(--text-xs);padding:5px 3px 5px 7px;min-height:28px;cursor:pointer}
+.new-session-top{padding:5px 9px;font-size:var(--text-xs);min-height:30px}.top-actions{gap:9px}.main-workspace{padding:10px 12px 0}.canvas-compat-notice>span{flex:1;min-width:0}
+.canvas-compat-notice{display:flex;align-items:center;gap:8px;flex:none;padding:8px 11px;margin-bottom:10px;background:var(--ok-soft);border:1px solid var(--accent-line);border-radius:var(--radius-sm);font-size:var(--text-xs);line-height:17px;color:#628276}.canvas-compat-notice>svg{flex:none}.canvas-compat-notice small{display:block;color:#8a9d94;font-size:var(--text-xs)}
+.explorer-workspace-control{display:flex;align-items:end;gap:6px;padding:10px;border-bottom:1px solid var(--fill-hover);background:var(--sunken);flex:none}.explorer-workspace-control label{min-width:0;flex:1;font-size:var(--text-xs);color:#8b9f94}.explorer-workspace-control label>span{display:block;margin-bottom:4px}.explorer-workspace-control select{width:100%;font-size:var(--text-xs);padding:5px;border:1px solid var(--accent-line);border-radius:var(--radius-sm);background:white;color:#5d7868}.explorer-workspace-control button{white-space:nowrap;font-size:var(--text-xs)}
+@media(max-width:700px){.canvas-compat-notice{font-size:var(--text-xs)}.canvas-compat-notice small{display:none}.workspace-heading h1{font-size:var(--text-xl)}.workspace-heading .branch-badge{display:none}}
+@media(max-width:380px){.language-select{font-size:var(--text-xs);width:60px;padding-left:4px}}
 @media(max-width:1100px){.top-crumb>span,.top-crumb>svg{display:none}.connection-badge{display:none}}
 @media(max-width:700px){.main-workspace{padding:6px 6px 0}.new-session-top>span{display:none}.new-session-top{width:30px;padding:5px}.workspace-refresh-top{display:none}.top-actions{gap:5px}}
 </style>

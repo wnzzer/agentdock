@@ -224,43 +224,43 @@ onBeforeUnmount(()=>{discoveryRevision++;});
   </ModalDialog>
 </template>
 <style scoped>
-.secret-mode{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:11px;color:var(--ink-soft)}
+.secret-mode{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:var(--text-xs);color:var(--ink-soft)}
 .secret-mode>label{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
 .secret-clear{margin-left:8px;font-size:inherit}
 .model-fetch {display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid var(--fill-hover);padding-top:12px;}
-.model-fetch strong {font-size:12px;}.model-effective {margin:0;color:#087e73;font-size:12px;}.form-help {overflow-wrap:anywhere;}
-.shared-config-panel{border:1px solid #d9e9e3;border-radius:8px;background:#f5fbf8;padding:12px}.shared-config-panel>strong{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:550;color:#3d8071}.shared-config-panel>code{display:block;margin-top:8px;font-size:10px;overflow-wrap:anywhere;color:#567e78}.shared-config-panel p{font-size:10px;line-height:18px;color:#6e8584;margin-top:8px}.shared-config-consent{padding:12px;border:1px solid #ece4c8;border-radius:8px;background:#fffaf0}.shared-config-consent p{font-size:10px;line-height:18px;color:#837e66;margin:0 0 8px}.shared-config-consent>label{flex-direction:row;align-items:flex-start;gap:8px;line-height:17px;color:#626b5b}.shared-config-consent input{width:14px;height:14px;margin-top:2px;flex-shrink:0;accent-color:#258672}.profile-card .shared-profile-label{color:#478b7d}.profile-card .profile-path{max-width:143px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#98aaa6}
+.model-fetch strong {font-size:var(--text-sm);}.model-effective {margin:0;color:var(--accent-ink);font-size:var(--text-sm);}.form-help {overflow-wrap:anywhere;}
+.shared-config-panel{border:1px solid var(--accent-line);border-radius:var(--radius-md);background:var(--sunken);padding:12px}.shared-config-panel>strong{display:flex;align-items:center;gap:7px;font-size:var(--text-xs);font-weight:550;color:var(--accent-ink)}.shared-config-panel>code{display:block;margin-top:8px;font-size:var(--text-xs);overflow-wrap:anywhere;color:#567e78}.shared-config-panel p{font-size:var(--text-xs);line-height:18px;color:var(--ink-soft);margin-top:8px}.shared-config-consent{padding:12px;border:1px solid var(--warn-line);border-radius:var(--radius-md);background:var(--warn-soft)}.shared-config-consent p{font-size:var(--text-xs);line-height:18px;color:#837e66;margin:0 0 8px}.shared-config-consent>label{flex-direction:row;align-items:flex-start;gap:8px;line-height:17px;color:#626b5b}.shared-config-consent input{width:14px;height:14px;margin-top:2px;flex-shrink:0;accent-color:var(--accent)}.profile-card .shared-profile-label{color:var(--accent-ink)}.profile-card .profile-path{max-width:143px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--faint)}
 
 /* Settings-page type scale: the shared form styles run from 8px to 11px in a
    pale grey, which read as faint rather than calm at this density. */
 .profiles-layout{margin-top:0;grid-template-columns:210px minmax(0,1fr)}
-.profile-card{align-items:center;padding:9px 10px;border-radius:9px;margin-bottom:3px}
+.profile-card{align-items:center;padding:9px 10px;border-radius:var(--radius-md);margin-bottom:3px}
 .profile-card.selected{background:var(--teal-soft);border-color:var(--teal-line)}
-.profile-card strong{font-size:12.5px;line-height:18px;color:var(--ink);font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.profile-card small{font-size:10.5px;line-height:15px;color:var(--muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.profile-card strong{font-size:var(--text-md);line-height:18px;color:var(--ink);font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.profile-card small{font-size:var(--text-xs);line-height:15px;color:var(--muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .profile-card>span:last-child{flex:1}
-.profiles-list>.secondary-button{font-size:12px;min-height:36px}
-.profiles-accounts-hint{margin-top:14px;font-size:11px;line-height:1.6;color:var(--muted);text-align:left}
+.profiles-list>.secondary-button{font-size:var(--text-sm);min-height:36px}
+.profiles-accounts-hint{margin-top:14px;font-size:var(--text-xs);line-height:1.6;color:var(--muted);text-align:left}
 .profiles-accounts-link{border:0;background:none;padding:0;font:inherit;color:var(--teal);cursor:pointer}
 .profiles-accounts-link:hover{text-decoration:underline}
 .form-stack{gap:14px}
-.form-stack>h3{font-size:14px;font-weight:600;color:var(--ink)}
-.form-stack label{font-size:11.5px;color:var(--ink-soft)}
-.form-stack label>small{font-size:10px;color:var(--muted)}
-.form-stack input,.form-stack select,.form-stack textarea{font-size:12.5px;color:var(--ink);border-color:var(--border);background:var(--surface);border-radius:8px}
-.form-stack textarea{display:block;width:100%;padding:9px 11px;border:1px solid var(--border);line-height:1.6;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;resize:vertical;outline:0}
-.form-stack textarea:focus{border-color:#b5d6c8}
-.form-stack textarea::placeholder{color:#b1bdc5}
-.form-help{font-size:11px;line-height:1.7;color:var(--muted)}
-.model-fetch strong{font-size:13px;color:var(--ink)}
-.shared-config-panel>strong{font-size:12px}
-.shared-config-panel>code{font-size:11px}
-.shared-config-panel p,.shared-config-consent p{font-size:11.5px;line-height:1.7}
-.pane-empty p{font-size:12px;color:var(--muted)}
+.form-stack>h3{font-size:var(--text-base);font-weight:600;color:var(--ink)}
+.form-stack label{font-size:var(--text-sm);color:var(--ink-soft)}
+.form-stack label>small{font-size:var(--text-xs);color:var(--muted)}
+.form-stack input,.form-stack select,.form-stack textarea{font-size:var(--text-md);color:var(--ink);border-color:var(--border);background:var(--surface);border-radius:var(--radius-md)}
+.form-stack textarea{display:block;width:100%;padding:9px 11px;border:1px solid var(--border);line-height:1.6;font-family:var(--mono);font-size:var(--text-sm);resize:vertical;outline:0}
+.form-stack textarea:focus{border-color:var(--ok-line)}
+.form-stack textarea::placeholder{color:var(--faint)}
+.form-help{font-size:var(--text-xs);line-height:1.7;color:var(--muted)}
+.model-fetch strong{font-size:var(--text-md);color:var(--ink)}
+.shared-config-panel>strong{font-size:var(--text-sm)}
+.shared-config-panel>code{font-size:var(--text-xs)}
+.shared-config-panel p,.shared-config-consent p{font-size:var(--text-sm);line-height:1.7}
+.pane-empty p{font-size:var(--text-sm);color:var(--muted)}
 /* The list stays put while a long form scrolls beside it. */
 .profiles-list{position:sticky;top:0;align-self:start}
 .form-stack input,.form-stack select{font-weight:400}
-.form-stack :deep(.model-picker-input>input){width:auto;flex:1 1 0;min-width:0;font-weight:400;font-size:12.5px;color:var(--ink);background:var(--surface);border-color:var(--border);border-radius:8px}
+.form-stack :deep(.model-picker-input>input){width:auto;flex:1 1 0;min-width:0;font-weight:400;font-size:var(--text-md);color:var(--ink);background:var(--surface);border-color:var(--border);border-radius:var(--radius-md)}
 @media(max-width:760px){
   .profiles-layout{grid-template-columns:minmax(0,1fr)}
   .profiles-list{position:static;border-right:0;padding-right:0;border-bottom:1px solid var(--border);padding-bottom:10px}

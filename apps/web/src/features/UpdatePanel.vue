@@ -102,20 +102,20 @@ async function restart() {
 <style scoped>
 .update-page{min-width:0}
 .settings-lead{margin:2px 0 16px}
-.settings-lead p{margin:0;font-size:12px;line-height:1.7;color:var(--ink-soft)}
+.settings-lead p{margin:0;font-size:var(--text-sm);line-height:1.7;color:var(--ink-soft)}
 .update-card{padding-bottom:13px}
 .update-row{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
 .update-row>span{min-width:110px}
 .update-row>span:nth-child(2){flex:1}
-.update-row strong{display:block;font-size:12px;font-weight:550;color:var(--ink)}
-.update-row small{display:block;margin-top:2px;font-size:12px;font-family:var(--mono,ui-monospace,monospace);color:var(--ink-soft)}
-.update-state{margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:12px;line-height:1.6;color:var(--ink-soft)}
+.update-row strong{display:block;font-size:var(--text-sm);font-weight:550;color:var(--ink)}
+.update-row small{display:block;margin-top:2px;font-size:var(--text-sm);font-family:var(--mono,ui-monospace,monospace);color:var(--ink-soft)}
+.update-state{margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:var(--text-sm);line-height:1.6;color:var(--ink-soft)}
 .update-state[role=status]{display:flex;align-items:center;gap:7px}
 .update-state.warn{color:var(--danger-ink)}
 .update-state p{margin:0 0 10px}
 .update-command{display:flex;align-items:center;gap:8px;min-width:0}
-.update-command code{flex:1;min-width:0;overflow-x:auto;white-space:nowrap;padding:7px 9px;border-radius:7px;background:var(--fill);font-size:11.5px;color:var(--ink)}
+.update-command code{flex:1;min-width:0;overflow-x:auto;white-space:nowrap;padding:7px 9px;border-radius:var(--radius-sm);background:var(--fill);font-size:var(--text-sm);color:var(--ink)}
 .update-actions{display:flex;gap:8px;flex-wrap:wrap}
 .primary-button.danger{background:var(--danger-ink);border-color:var(--danger-ink)}
-.update-hint{margin:10px 0 0;font-size:11px;line-height:1.6;color:var(--muted)}
+.update-hint{margin:10px 0 0;font-size:var(--text-xs);line-height:1.6;color:var(--muted)}
 </style>

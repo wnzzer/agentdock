@@ -304,8 +304,8 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
 /* The menu is teleported to the body so a tab strip with overflow clipping
    cannot cut it off, and the backdrop makes any click elsewhere dismiss it. */
 .dock-tab-menu-backdrop{position:fixed;inset:0;z-index:60}
-.dock-tab-menu{position:fixed;min-width:180px;padding:5px;background:var(--surface);border:1px solid var(--border);border-radius:11px;box-shadow:0 14px 38px #243b4c2b}
-.dock-tab-menu button{display:block;width:100%;min-height:32px;padding:7px 10px;border:0;border-radius:7px;background:none;text-align:left;font-size:12px;color:var(--ink-soft);white-space:nowrap;cursor:pointer}
+.dock-tab-menu{position:fixed;min-width:180px;padding:5px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);box-shadow:var(--shadow-lg)}
+.dock-tab-menu button{display:block;width:100%;min-height:32px;padding:7px 10px;border:0;border-radius:var(--radius-sm);background:none;text-align:left;font-size:var(--text-sm);color:var(--ink-soft);white-space:nowrap;cursor:pointer}
 .dock-tab-menu button:hover:not(:disabled){background:var(--fill);color:var(--ink)}
 .dock-tab-menu button:disabled{opacity:.4;cursor:not-allowed}
 .dock-tab-menu hr{border:0;border-top:1px solid var(--border);margin:4px 6px}
@@ -316,47 +316,47 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
 .dock-separator { position:relative;outline:none;touch-action:none;z-index:2; }
 .is-horizontal>.dock-separator { cursor:col-resize; }
 .is-vertical>.dock-separator { cursor:row-resize; }
-.dock-separator::after { content:"";position:absolute;border-radius:4px;inset:1px;background:transparent;transition:background .12s; }
-.dock-separator:hover::after,.dock-separator:focus-visible::after { background:#51b9b0; }
-.dock-pane { position:relative;display:flex;flex-direction:column;min-width:0;min-height:0;width:100%;height:100%;overflow:hidden;border:1px solid #dfe5e9;border-radius:10px;background:#fff;box-sizing:border-box;box-shadow:0 2px 8px #263a4910;container:dock-pane / inline-size; }
+.dock-separator::after { content:"";position:absolute;border-radius:var(--radius-xs);inset:1px;background:transparent;transition:background .12s; }
+.dock-separator:hover::after,.dock-separator:focus-visible::after { background:var(--focus); }
+.dock-pane { position:relative;display:flex;flex-direction:column;min-width:0;min-height:0;width:100%;height:100%;overflow:hidden;border:1px solid var(--line);border-radius:var(--radius-md);background:var(--surface);box-sizing:border-box;box-shadow:var(--shadow-md);container:dock-pane / inline-size; }
 .dock-pane.is-selected { border-color:#8bcac4;box-shadow:0 0 0 1px #b6e3dd60,0 2px 8px #263a4910; }
-.dock-pane.is-located { border-color:#269e8d;box-shadow:inset 0 0 0 1px #46b29d,0 0 0 1px #b6e3dd60;animation:dock-locate 1.4s ease-out; }.dock-pane.is-located .dock-tab.is-active { background:var(--accent-soft); }
+.dock-pane.is-located { border-color:var(--ok);box-shadow:inset 0 0 0 1px #46b29d,0 0 0 1px #b6e3dd60;animation:dock-locate 1.4s ease-out; }.dock-pane.is-located .dock-tab.is-active { background:var(--accent-soft); }
 @keyframes dock-locate { from { box-shadow:inset 0 0 0 3px #70cabb,0 0 0 1px #b6e3dd60; } to { box-shadow:inset 0 0 0 1px #46b29d,0 0 0 1px #b6e3dd60; } }
 @media(prefers-reduced-motion:reduce) { .dock-pane.is-located { animation:none; } }
-.dock-header { display:flex;align-items:center;gap:3px;min-width:0;height:39px;min-height:39px;padding:0 5px 0 0;background:#fafbfc;border-bottom:1px solid #e8ecef; }
+.dock-header { display:flex;align-items:center;gap:3px;min-width:0;height:39px;min-height:39px;padding:0 5px 0 0;background:var(--sunken);border-bottom:1px solid var(--fill-hover); }
 .dock-tabs { display:flex;align-items:stretch;flex:1;min-width:0;height:100%;overflow-x:auto; }
 /* Tabs are reached by clicking, not by dragging a bar, so this one only has to
    show that more exist. A full-width scrollbar would take a quarter of the strip. */
 .dock-tabs::-webkit-scrollbar { height: 5px; }
 .dock-tabs::-webkit-scrollbar-thumb { border-width: 1px; }
-.dock-tab { display:flex;align-items:center;gap:7px;max-width:210px;min-width:85px;flex-shrink:0;padding:0 8px 0 11px;color:#78838e;font-size:11px;cursor:grab;border-bottom:2px solid transparent;outline:none;user-select:none; }
-.dock-tab.is-active { max-width:360px;color:#243746;background:#fff;border-bottom-color:#16a398; }
+.dock-tab { display:flex;align-items:center;gap:7px;max-width:210px;min-width:85px;flex-shrink:0;padding:0 8px 0 11px;color:var(--muted);font-size:var(--text-xs);cursor:grab;border-bottom:2px solid transparent;outline:none;user-select:none; }
+.dock-tab.is-active { max-width:360px;color:var(--ink);background:var(--surface);border-bottom-color:var(--focus); }
 .dock-tab:focus-visible { box-shadow:inset 0 0 0 2px #53b9b0; }
 .dock-tab-title { min-width:48px;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600; }
-.dock-tab-branch { display:inline-flex;align-items:center;gap:3px;max-width:96px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;font-size:8px;border-radius:4px;padding:1px 4px;background:var(--fill);color:var(--ink-soft); }
-.dock-tab-workspace { max-width:80px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;font-size:8px;border-radius:4px;padding:1px 4px;background:#eaf2ed;color:#789b88; }
-.dock-tab.is-ephemeral { border-bottom-style:dashed; }.dock-tab.is-ephemeral.is-active { border-bottom-color:#8973b4; }
-.dock-tab-ephemeral { flex-shrink:0;width:5px;height:5px;margin-left:-3px;border-radius:50%;background:#8973b4;box-shadow:0 0 0 2px #efeaf8; }
+.dock-tab-branch { display:inline-flex;align-items:center;gap:3px;max-width:96px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;font-size:var(--text-xs);border-radius:var(--radius-xs);padding:1px 4px;background:var(--fill);color:var(--ink-soft); }
+.dock-tab-workspace { max-width:80px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;font-size:var(--text-xs);border-radius:var(--radius-xs);padding:1px 4px;background:var(--ok-soft);color:#789b88; }
+.dock-tab.is-ephemeral { border-bottom-style:dashed; }.dock-tab.is-ephemeral.is-active { border-bottom-color:var(--violet); }
+.dock-tab-ephemeral { flex-shrink:0;width:5px;height:5px;margin-left:-3px;border-radius:50%;background:var(--violet);box-shadow:0 0 0 2px #efeaf8; }
 .dock-tab-session-actions{position:relative;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:none}
 .dock-tab:not(.is-active)>.dock-tab-session-actions { display:none; }
-.dock-tab-close { display:grid;place-items:center;border:0;padding:0;background:transparent;width:17px;height:19px;color:#98a2aa;cursor:pointer;border-radius:4px;font-size:14px;flex-shrink:0; }
-.dock-tab-close:hover { color:#be4453;background:#fff0f1; }
+.dock-tab-close { display:grid;place-items:center;border:0;padding:0;background:transparent;width:17px;height:19px;color:var(--faint);cursor:pointer;border-radius:var(--radius-xs);font-size:var(--text-base);flex-shrink:0; }
+.dock-tab-close:hover { color:var(--danger);background:var(--danger-soft); }
 .dock-tab:not(.is-active):not(:hover):not(:focus-within) .dock-tab-close { opacity:0; }
 @media(pointer:coarse) { .dock-tab:not(.is-active) .dock-tab-close { opacity:1; } }
 .dock-actions { display:flex;align-items:center;gap:1px;flex-shrink:0; }
-.dock-action { display:grid;place-items:center;width:24px;height:25px;padding:0;border:0;border-radius:5px;background:transparent;color:#74818c;cursor:pointer;font-size:16px;list-style:none; }
-.dock-action:hover,.dock-action:focus-visible { background:#eaf3f2;color:#087e73;outline:none; }
+.dock-action { display:grid;place-items:center;width:24px;height:25px;padding:0;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--ink-soft);cursor:pointer;font-size:var(--text-lg);list-style:none; }
+.dock-action:hover,.dock-action:focus-visible { background:var(--accent-soft);color:var(--accent-ink);outline:none; }
 .dock-action::-webkit-details-marker { display:none; }
-.dock-add-menu { position:static; }.dock-menu-items { position:absolute;right:6px;top:37px;z-index:10;min-width:154px;background:#fff;border:1px solid #dce4e8;border-radius:8px;padding:5px;box-shadow:0 8px 22px #1e334222; }
-.dock-menu-items button { display:flex;align-items:center;gap:9px;width:100%;border:0;border-radius:5px;padding:8px;background:transparent;color:#485b68;text-align:left;font-size:12px;cursor:pointer; }.dock-menu-items button:hover { background:#ecf7f5;color:#087e73; }
-.dock-adaptive { color:#a1aaaF;font-size:12px;padding:0 3px; }
+.dock-add-menu { position:static; }.dock-menu-items { position:absolute;right:6px;top:37px;z-index:10;min-width:154px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md);padding:5px;box-shadow:var(--shadow-lg); }
+.dock-menu-items button { display:flex;align-items:center;gap:9px;width:100%;border:0;border-radius:var(--radius-sm);padding:8px;background:transparent;color:var(--ink-soft);text-align:left;font-size:var(--text-sm);cursor:pointer; }.dock-menu-items button:hover { background:var(--ok-soft);color:var(--accent-ink); }
+.dock-adaptive { color:var(--faint);font-size:var(--text-sm);padding:0 3px; }
 .dock-content { display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;overflow:hidden; }
 .dock-content :deep(> *) { min-width:0;min-height:0; }
-.dock-empty-label { padding:12px;color:#9aa4ad;font-size:11px; }
-.dock-empty { flex:1;min-height:0;overflow:auto;display:flex;align-items:center;justify-content:center;flex-direction:column;padding:20px;color:#758590;text-align:center; }
-.dock-empty-symbol { color:#9ab7bb;font-size:30px;margin-bottom:10px; }.dock-empty strong { font-size:13px;font-weight:500;color:#5b707d; }.dock-empty p { font-size:11px;margin:6px 0 17px; }
-.dock-empty-choices { display:flex;flex-wrap:wrap;justify-content:center;gap:6px;max-width:350px; }.dock-empty-choices button { display:flex;align-items:center;gap:6px;border:1px solid #e1e9ec;border-radius:6px;padding:6px 9px;background:#fff;font-size:11px;color:#607583;cursor:pointer; }.dock-empty-choices button:hover { background:#eff9f7;border-color:#afdad3; }
-.dock-drop-overlay { position:absolute;inset:5px;z-index:20;display:flex;align-items:center;justify-content:center;pointer-events:none;border:2px solid #24a69a;border-radius:8px;background:#b9eae280;color:#086d63;backdrop-filter:blur(1px);font-size:12px;font-weight:600; }.dock-drop-overlay span { border-radius:20px;padding:7px 12px;background:#fffffff0;box-shadow:0 2px 8px #27655a15; }.drop-left { right:50%; }.drop-right { left:50%; }.drop-top { bottom:50%; }.drop-bottom { top:50%; }
+.dock-empty-label { padding:12px;color:var(--faint);font-size:var(--text-xs); }
+.dock-empty { flex:1;min-height:0;overflow:auto;display:flex;align-items:center;justify-content:center;flex-direction:column;padding:20px;color:var(--muted);text-align:center; }
+.dock-empty-symbol { color:var(--faint);font-size:30px;margin-bottom:10px; }.dock-empty strong { font-size:var(--text-md);font-weight:500;color:var(--ink-soft); }.dock-empty p { font-size:var(--text-xs);margin:6px 0 17px; }
+.dock-empty-choices { display:flex;flex-wrap:wrap;justify-content:center;gap:6px;max-width:350px; }.dock-empty-choices button { display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:var(--radius-sm);padding:6px 9px;background:var(--surface);font-size:var(--text-xs);color:var(--ink-soft);cursor:pointer; }.dock-empty-choices button:hover { background:var(--ok-soft);border-color:var(--ok-line); }
+.dock-drop-overlay { position:absolute;inset:5px;z-index:20;display:flex;align-items:center;justify-content:center;pointer-events:none;border:2px solid var(--focus);border-radius:var(--radius-md);background:#b9eae280;color:var(--accent-hover);backdrop-filter:blur(1px);font-size:var(--text-sm);font-weight:600; }.dock-drop-overlay span { border-radius:var(--radius-xl);padding:7px 12px;background:color-mix(in srgb, var(--surface) 94%, transparent);box-shadow:var(--shadow-md); }.drop-left { right:50%; }.drop-right { left:50%; }.drop-top { bottom:50%; }.drop-bottom { top:50%; }
 @container dock-pane (max-width:480px) { .dock-tab-workspace,.dock-tab-branch { display:none; }.dock-tab,.dock-tab.is-active { max-width:180px; } }
 @media(max-width:520px) { .dock-tab,.dock-tab.is-active { min-width:72px;max-width:180px;padding-left:7px;gap:5px; }.dock-tab-workspace,.dock-tab-branch { display:none; }.dock-action { width:23px; }.dock-adaptive { display:none; } }
 </style>

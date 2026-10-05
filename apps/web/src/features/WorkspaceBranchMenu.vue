@@ -168,52 +168,52 @@ onBeforeUnmount(close);
 </template>
 
 <style scoped>
-.ws-branch{display:inline-flex;align-items:center;gap:4px;min-width:0;max-width:160px;padding:1px 6px;border:1px solid transparent;border-radius:5px;background:none;color:inherit;font:inherit;cursor:pointer}
+.ws-branch{display:inline-flex;align-items:center;gap:4px;min-width:0;max-width:160px;padding:1px 6px;border:1px solid transparent;border-radius:var(--radius-sm);background:none;color:inherit;font:inherit;cursor:pointer}
 .ws-branch span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ws-branch:hover,.ws-branch[aria-expanded=true]{background:var(--fill-hover);color:var(--ink);border-color:var(--line)}
-.ws-branch.compact{font-size:10px;color:var(--ink-soft);background:var(--fill);max-width:110px}
-.ws-branch-panel{position:fixed;z-index:1200;overflow-y:auto;padding:8px;border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:0 12px 32px #243b4c29;font-size:12px;color:var(--ink);text-align:left}
+.ws-branch.compact{font-size:var(--text-xs);color:var(--ink-soft);background:var(--fill);max-width:110px}
+.ws-branch-panel{position:fixed;z-index:1200;overflow-y:auto;padding:8px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--shadow-lg);font-size:var(--text-sm);color:var(--ink);text-align:left}
 .ws-branch-panel header{font-weight:600;margin:2px 4px}
-.ws-branch-panel>p{margin:4px 4px 8px;font-size:10.5px;line-height:1.5;color:var(--muted)}
-.ws-branch-panel .ws-branch-error{color:var(--danger-ink);background:var(--danger-soft);border-radius:7px;padding:6px 8px}
-.ws-row{display:flex;flex-wrap:wrap;align-items:center;border-radius:7px}
+.ws-branch-panel>p{margin:4px 4px 8px;font-size:var(--text-xs);line-height:1.5;color:var(--muted)}
+.ws-branch-panel .ws-branch-error{color:var(--danger-ink);background:var(--danger-soft);border-radius:var(--radius-sm);padding:6px 8px}
+.ws-row{display:flex;flex-wrap:wrap;align-items:center;border-radius:var(--radius-sm)}
 .ws-row:hover{background:var(--sunken)}
-.ws-row-main{flex:1;min-width:0;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 8px;border:0;border-radius:7px;background:none;cursor:pointer;text-align:left;font:12px ui-monospace,monospace;color:var(--ink)}
+.ws-row-main{flex:1;min-width:0;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 8px;border:0;border-radius:var(--radius-sm);background:none;cursor:pointer;text-align:left;font:var(--text-sm) var(--mono);color:var(--ink)}
 .ws-row-main span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ws-row.current .ws-row-main{background:var(--teal-soft);color:var(--teal);font-weight:600;cursor:default}
 .ws-row-main:disabled{cursor:not-allowed}
 .ws-row:not(.current) .ws-row-main:disabled span{color:var(--muted)}
-.ws-row-main small{flex-shrink:0;font:10px system-ui,sans-serif;color:var(--muted)}
+.ws-row-main small{flex-shrink:0;font:var(--text-xs) system-ui,sans-serif;color:var(--muted)}
 .ws-tree{flex-direction:column;align-items:flex-start;gap:1px;cursor:default}
-.ws-tree small{font:10px ui-monospace,monospace}
-.ws-more{flex-shrink:0;width:26px;height:26px;margin-right:2px;border:0;border-radius:6px;background:none;color:var(--muted);font-size:14px;line-height:1;cursor:pointer;opacity:0}
+.ws-tree small{font:var(--text-xs) var(--mono)}
+.ws-more{flex-shrink:0;width:26px;height:26px;margin-right:2px;border:0;border-radius:var(--radius-sm);background:none;color:var(--muted);font-size:var(--text-base);line-height:1;cursor:pointer;opacity:0}
 .ws-row:hover .ws-more,.ws-more:focus-visible,.ws-more[aria-expanded=true]{opacity:1}
 .ws-more:hover{background:var(--fill);color:var(--ink)}
 .ws-actions{flex-basis:100%;display:flex;gap:6px;padding:2px 8px 8px}
 /* One set of buttons for the whole menu: neutral by default, filled only to
    commit a form, red only for what destroys something. */
-.ws-btn{height:28px;padding:0 10px;border:1px solid var(--line);border-radius:7px;background:var(--surface);font-size:11px;color:var(--ink-soft);cursor:pointer;white-space:nowrap}
+.ws-btn{height:28px;padding:0 10px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface);font-size:var(--text-xs);color:var(--ink-soft);cursor:pointer;white-space:nowrap}
 .ws-btn:hover:not(:disabled){background:var(--fill);color:var(--ink)}
 .ws-btn:disabled{opacity:.45;cursor:not-allowed}
-.ws-btn.primary{background:var(--teal);border-color:var(--teal);color:#fff}
-.ws-btn.primary:hover:not(:disabled){background:var(--teal-deep);color:#fff}
+.ws-btn.primary{background:var(--teal);border-color:var(--teal);color:var(--on-accent)}
+.ws-btn.primary:hover:not(:disabled){background:var(--teal-deep);color:var(--on-accent)}
 .ws-btn.danger{color:var(--danger-ink)}
 .ws-btn.danger:hover:not(:disabled){background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger-ink)}
-.ws-btn.danger.solid{background:var(--danger);border-color:var(--danger);color:#fff}
-.ws-btn.danger.solid:hover:not(:disabled){background:var(--danger-ink);color:#fff}
+.ws-btn.danger.solid{background:var(--danger);border-color:var(--danger);color:var(--on-accent)}
+.ws-btn.danger.solid:hover:not(:disabled){background:var(--danger-ink);color:var(--on-accent)}
 .ws-btn.quiet{border-color:transparent;background:none}
 .ws-btn.quiet:hover:not(:disabled){background:var(--fill)}
-.ws-confirm{flex-basis:100%;margin:2px 6px 8px;padding:8px 10px;border:1px solid #f1dfe4;border-radius:8px;background:#fff7f8}
-.ws-confirm p{margin:0 0 8px;font-size:11px;line-height:1.5;color:var(--danger-ink)}
+.ws-confirm{flex-basis:100%;margin:2px 6px 8px;padding:8px 10px;border:1px solid var(--danger-line);border-radius:var(--radius-md);background:var(--danger-soft)}
+.ws-confirm p{margin:0 0 8px;font-size:var(--text-xs);line-height:1.5;color:var(--danger-ink)}
 .ws-confirm div{display:flex;gap:6px}
 .ws-blocking{margin:0 0 8px}
-.ws-blocking ul{margin:0 0 8px;padding-left:18px;font-size:12px;color:var(--ink)}
+.ws-blocking ul{margin:0 0 8px;padding-left:18px;font-size:var(--text-sm);color:var(--ink)}
 .ws-blocking li{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ws-blocking .ws-branch-note{color:var(--ink-soft)}
 .ws-rename{flex:1;display:flex;gap:6px;padding:4px}
-.ws-rename input,.ws-create input{flex:1;min-width:0;height:30px;padding:0 8px;border:1px solid var(--line);border-radius:7px;font:12px ui-monospace,monospace;background:var(--surface);color:var(--ink)}
+.ws-rename input,.ws-create input{flex:1;min-width:0;height:30px;padding:0 8px;border:1px solid var(--line);border-radius:var(--radius-sm);font:var(--text-sm) var(--mono);background:var(--surface);color:var(--ink)}
 .ws-create{display:flex;gap:6px;margin:8px 2px 2px;padding-top:8px;border-top:1px solid var(--line)}
 .ws-trees{margin-top:8px;padding-top:6px;border-top:1px solid var(--line)}
-.ws-trees header{font-size:10.5px;color:var(--muted);margin:4px 6px}
+.ws-trees header{font-size:var(--text-xs);color:var(--muted);margin:4px 6px}
 @media(pointer:coarse){.ws-more{opacity:1;width:36px;height:36px}.ws-row-main{min-height:44px}.ws-create input,.ws-rename input,.ws-btn{height:40px}}
 </style>

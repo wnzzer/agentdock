@@ -147,10 +147,10 @@ onBeforeUnmount(() => { alive = false; revision++; diffRevision++; mutationEpoch
 
 <style scoped>
 .git-group-actions{display:flex;align-items:center;gap:10px}
-.git-discard{color:var(--muted);font-size:14px}
+.git-discard{color:var(--muted);font-size:var(--text-base)}
 .git-discard:hover:not(:disabled){color:var(--danger)}
 .git-discard-confirm{margin:0 0 10px}
 
 /* The composer's chips open upward; this one sits at the top of its pane. */
-.git-branch-bar{display:flex;align-items:center;gap:8px;min-width:0;font-size:12px;font-weight:600}
+.git-branch-bar{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--text-sm);font-weight:600}
 </style>

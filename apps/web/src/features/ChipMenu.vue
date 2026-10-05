@@ -114,16 +114,16 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onOutside); 
 .chip-menu{position:relative;flex:0 1 auto;min-width:0}
 /* The border is always there and usually invisible, so a chip that lights up
    does not shift the row by a pixel as it does. */
-.chip-menu>summary{list-style:none;display:flex;align-items:center;gap:5px;min-height:28px;max-width:100%;padding:0 8px;border:1px solid transparent;border-radius:7px;background:var(--fill);font-size:11px;color:var(--ink-soft);cursor:pointer;white-space:nowrap}
+.chip-menu>summary{list-style:none;display:flex;align-items:center;gap:5px;min-height:28px;max-width:100%;padding:0 8px;border:1px solid transparent;border-radius:var(--radius-sm);background:var(--fill);font-size:var(--text-xs);color:var(--ink-soft);cursor:pointer;white-space:nowrap}
 .chip-menu>summary::-webkit-details-marker{display:none}
 .chip-menu>summary:hover{background:var(--fill-hover)}
-.chip-menu[open]>summary{background:#e2e8ec;color:#3d4f5c}
+.chip-menu[open]>summary{background:var(--border);color:var(--ink)}
 .chip-menu.is-disabled>summary{cursor:not-allowed;opacity:.55}
 /* A set control is legible as set from across the row, not only once read:
    colour alone is a weak signal among four chips that otherwise match. */
-.chip-menu.is-active>summary{color:var(--teal);font-weight:600;background:#e9f3f0;border-color:#c2ddd5}
-.chip-menu.is-danger>summary,.chip-menu.is-danger.is-active>summary{color:#a85c4e;background:#fdf1ee;border-color:#e6b5ad}
-.chip-menu.is-danger[open]>summary{background:#fbe8e3;color:#8f4b3e}
+.chip-menu.is-active>summary{color:var(--teal);font-weight:600;background:var(--accent-soft);border-color:var(--ok-line)}
+.chip-menu.is-danger>summary,.chip-menu.is-danger.is-active>summary{color:#a85c4e;background:var(--danger-soft);border-color:#e6b5ad}
+.chip-menu.is-danger[open]>summary{background:var(--danger-soft);color:#8f4b3e}
 /* The mark names the control; the label says what it is set to. Together they
    are what tells four chips apart at a glance. */
 .chip-menu>summary>svg{flex:0 0 auto;opacity:.8}
@@ -133,11 +133,11 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onOutside); 
 /* Inside a settings sheet (see .chip-rows) each chip is a full-width row:
    what it is on the left, what it is set to on the right. */
 .chip-rows .chip-menu{width:100%}
-.chip-rows .chip-menu>summary{min-height:54px;gap:12px;padding:0 12px;border-radius:12px;background:none;border-color:transparent;font-size:15px;color:var(--ink)}
+.chip-rows .chip-menu>summary{min-height:54px;gap:12px;padding:0 12px;border-radius:var(--radius-lg);background:none;border-color:transparent;font-size:var(--text-lg);color:var(--ink)}
 .chip-rows .chip-menu>summary:active,.chip-rows .chip-menu[open]>summary{background:var(--teal-soft)}
 .chip-rows .chip-menu>summary>svg:first-child{width:18px;height:18px}
 .chip-rows .chip-menu-caption{display:block;flex:1;min-width:0;font-weight:400;overflow:hidden;text-overflow:ellipsis}
-.chip-rows .chip-menu-label{flex:0 1 auto;max-width:55%;color:var(--ink-soft);font-size:14px;font-weight:400}
+.chip-rows .chip-menu-label{flex:0 1 auto;max-width:55%;color:var(--ink-soft);font-size:var(--text-base);font-weight:400}
 .chip-rows .chip-menu.is-active .chip-menu-label{color:var(--teal-deep);font-weight:600}
 .chip-rows .chip-menu.is-danger .chip-menu-label{color:#a85c4e;font-weight:600}
 .chip-rows .chip-menu.is-active>summary,.chip-rows .chip-menu.is-danger>summary{background:none;border-color:transparent}
@@ -145,8 +145,8 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onOutside); 
 .chip-rows .chip-menu-caret,.chip-rows .chip-menu[open] .chip-menu-caret{transform:none}
 .chip-menu-caret{transform:rotate(90deg);flex:0 0 auto;opacity:.55}
 .chip-menu[open] .chip-menu-caret{transform:rotate(-90deg)}
-.chip-menu-panel{position:fixed;bottom:var(--chip-bottom);left:var(--chip-left);z-index:60;background:var(--surface);border:1px solid var(--border);border-radius:13px;box-shadow:0 12px 35px #243b4c24}
+.chip-menu-panel{position:fixed;bottom:var(--chip-bottom);left:var(--chip-left);z-index:60;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg)}
 /* Density follows the pointing device, not the pane width: a narrow pane on a
    desktop is still a mouse. */
-@media(pointer:coarse){.chip-menu>summary{min-height:44px;border-radius:9px;padding:0 10px;font-size:11px}}
+@media(pointer:coarse){.chip-menu>summary{min-height:44px;border-radius:var(--radius-md);padding:0 10px;font-size:var(--text-xs)}}
 </style>

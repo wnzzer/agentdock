@@ -40,15 +40,15 @@ async function copy() {
 </template>
 
 <style scoped>
-.copy-text-button{display:inline-flex;align-items:center;justify-content:center;min-height:36px;min-width:64px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink-soft);font:inherit;font-size:12px;cursor:pointer;touch-action:manipulation;user-select:none}
+.copy-text-button{display:inline-flex;align-items:center;justify-content:center;min-height:36px;min-width:64px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface);color:var(--ink-soft);font:inherit;font-size:var(--text-sm);cursor:pointer;touch-action:manipulation;user-select:none}
 .copy-text-button:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .copy-text-button:disabled{opacity:.5}
-.copy-icon-button{display:inline-grid;place-items:center;width:26px;height:26px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--muted);--icon-color:currentColor;cursor:pointer;touch-action:manipulation;user-select:none}
+.copy-icon-button{display:inline-grid;place-items:center;width:26px;height:26px;padding:0;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--muted);--icon-color:currentColor;cursor:pointer;touch-action:manipulation;user-select:none}
 .copy-icon-button:hover{background:var(--fill);color:var(--ink-soft)}
 .copy-icon-button.copied{color:var(--teal)}
 .copy-icon-button:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
 .copy-icon-button:disabled{opacity:.5}
-.copy-help{margin:8px 10px;font-size:14px;line-height:1.7}
-.copy-manual-text{display:block;width:100%;height:35dvh;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink);font:16px/1.6 ui-monospace,monospace;resize:vertical;-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
-@media(any-pointer:coarse){.copy-text-button{min-height:44px;min-width:80px;font-size:13px}.copy-icon-button{width:32px;height:32px}}
+.copy-help{margin:8px 10px;font-size:var(--text-base);line-height:1.7}
+.copy-manual-text{display:block;width:100%;height:35dvh;padding:12px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface);color:var(--ink);font:var(--text-lg)/1.6 var(--mono);resize:vertical;-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
+@media(any-pointer:coarse){.copy-text-button{min-height:44px;min-width:80px;font-size:var(--text-md)}.copy-icon-button{width:32px;height:32px}}
 </style>
