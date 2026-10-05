@@ -11,10 +11,12 @@ import { backendCapabilities } from "./backend-capabilities";
 import { environmentRows, mergeEnvironment, parseEnvironmentRows, type EnvironmentRow } from "./environment-model";
 import EnvironmentEditor from "./EnvironmentEditor.vue";
 import ModalDialog from "./ModalDialog.vue";
+import SessionDraftShell from "./SessionDraftShell.vue";
 import ProviderIcon from "./ProviderIcon.vue";
 import ModelPicker from "./ModelPicker.vue";
 const { t }=useI18n();
-const props = defineProps<{ workspace: Workspace; profiles: EndpointProfile[]; initialProvider?: ProviderKind }>();
+/** `inline` draws the form as a draft tab on the canvas instead of a dialog over it. */
+const props = defineProps<{ workspace: Workspace; profiles: EndpointProfile[]; initialProvider?: ProviderKind; inline?: boolean }>();
 const emit = defineEmits<{ close: []; created: [session: Session]; profiles: [] }>();
 const provider = ref<ProviderKind>(props.initialProvider ?? "claude_code");
 /** Preferences choose the account and depth a new session starts with; the form can still change both. */
@@ -84,7 +86,7 @@ const dirty = computed(() => title.value !== t('{provider} session', { provider:
   || [...environmentDrafts.value.values()].some(rows => rows.some(row => row.name || row.value)));
 </script>
 <template>
-  <ModalDialog :title="t('New session')" :closable="!busy" :dirty="dirty" @close="!busy && emit('close')">
+  <component :is="inline ? SessionDraftShell : ModalDialog" :title="t('New session')" :closable="!busy" :dirty="dirty" @close="!busy && emit('close')">
     <form class="form-stack" @submit.prevent="create">
       <p class="form-description">{{ t('Create a session in {workspace}. It connects when opened.',{workspace:workspace.name}) }}</p>
       <p v-if="backendCapabilities.structuredChat && provider!=='terminal'" class="inline-notice">{{ t('Chat UI · mobile ready. The official CLI runs the agent and handles permissions; no prompt is sent until you press Send.') }}</p>
@@ -118,7 +120,7 @@ const dirty = computed(() => title.value !== t('{provider} session', { provider:
       <div v-if="error" class="inline-error" role="alert">{{ error }}</div>
       <div class="dialog-actions"><button type="button" class="secondary-button" :disabled="busy" @click="emit('close')">{{ t('Cancel') }}</button><button class="primary-button" :disabled="busy || !title.trim() || !validProfile || !validEnvironment || place==='worktree' && !worktreeBranch.trim()">{{ busy?t('Creating…'):t('Create session') }}</button></div>
     </form>
-  </ModalDialog>
+  </component>
 </template>
 <style scoped>.session-place{display:flex;flex-direction:column;gap:7px;padding:10px 11px;border:1px solid var(--border);border-radius:var(--radius-md);font-size:var(--text-sm)}.session-place>span{font-weight:550;color:var(--ink-soft)}.session-place-options{display:flex;gap:16px}.session-place-options label{flex-direction:row;align-items:center;gap:6px;font-size:var(--text-sm);color:var(--ink);white-space:nowrap}.session-place-options input[type=radio]{display:inline-block;width:auto;margin:0;padding:0;accent-color:var(--teal)}.session-place input[type=text],.session-place input:not([type]){height:34px;padding:0 9px;border:1px solid var(--line);border-radius:var(--radius-sm);font:var(--text-sm) var(--mono)}.session-place small{font-size:var(--text-xs);color:var(--muted);line-height:1.5}.session-ephemeral-choice{flex-direction:row;align-items:flex-start;gap:9px;padding:9px 11px;border:1px solid var(--violet-soft);border-radius:var(--radius-sm);background:var(--bg)}.session-ephemeral-choice input[type=checkbox]{width:14px;height:14px;min-width:14px;margin:2px 0 0;flex:0 0 14px;accent-color:var(--violet)}.session-ephemeral-choice strong{display:block;font-size:var(--text-xs);font-weight:550;color:#6f5c93}.session-ephemeral-choice small{display:block;margin-top:3px;font-size:var(--text-xs);line-height:15px;color:var(--muted);font-weight:400}
 .session-model-bar{display:flex;align-items:end;gap:8px}.session-model-bar>label{flex:1;min-width:0}.session-model-bar>button{margin-bottom:1px;white-space:nowrap}.native-session-notice>strong{display:flex;align-items:center;gap:6px;font-weight:550;color:var(--accent-ink)}.native-session-notice>code{display:block;margin:8px 0;font-size:var(--text-xs);overflow-wrap:anywhere}.native-session-notice p{margin:7px 0 0;line-height:18px}</style>

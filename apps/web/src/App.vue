@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from
 import { shellHeight } from "./features/viewport-height";
 import type { EndpointProfile, FileEntry, GitStatus, LayoutDocument, LayoutNode, PaneNode, ProviderKind, Session, Workspace } from "@agentdock/protocol";
 import Canvas from "./components/Canvas.vue";
+import { randomId } from "./features/random-id";
 import { createDefaultLayoutDocument, flattenPanes, validateLayout } from "./layout/layout-engine";
 import WorkspaceSidebar from "./features/WorkspaceSidebar.vue";
 import WorkspacePane from "./features/WorkspacePane.vue";
@@ -22,7 +23,6 @@ import { announceFilesChanged, createFileWatch } from "./features/file-watch";
 import { onPageReturn } from "./features/page-return";
 import WorkspaceBranchMenu from "./features/WorkspaceBranchMenu.vue";
 import ImageLightbox from "./features/ImageLightbox.vue";
-import CreateSessionDialog from "./features/CreateSessionDialog.vue";
 import SessionEnvironmentDialog from "./features/SessionEnvironmentDialog.vue";
 import SessionRenameDialog from "./features/SessionRenameDialog.vue";
 import AuthDialog from "./features/AuthDialog.vue";
@@ -106,12 +106,11 @@ const ephemeralIds = computed(() => ephemeralSessionIds(sessions.value));
 const discardPrompt = ref<{ paneId: string; session: Session }>();
 const sessionNotice = ref(""), sessionNoticeValues = ref<Record<string, number>>();
 const enablingChat = new Set<string>();
-const sessionWorkspaceId = ref<string>(), historyWorkspaceId = ref<string>(), sessionProvider = ref<ProviderKind>();
+const historyWorkspaceId = ref<string>();
 const environmentSessionId = ref<string>();
 const renameSessionId = ref<string>();
 const environmentSession = computed(() => sessions.value.find(session => session.id === environmentSessionId.value));
 const renameSessionTarget = computed(() => sessions.value.find(session => session.id === renameSessionId.value));
-const sessionWorkspace = computed(() => workspaces.value.find(workspace => workspace.id === sessionWorkspaceId.value));
 const historyWorkspace = computed(() => workspaces.value.find(workspace => workspace.id === historyWorkspaceId.value));
 const gitStatuses = ref<Record<string, GitStatus>>({}), gitAvailable = ref<Record<string, boolean>>({});
 const fileRefresh = ref<Record<string, number>>({}), gitRefresh = ref<Record<string, number>>({});
@@ -564,9 +563,26 @@ function openFiles(id = selectedWorkspaceId.value) {
   if (!workspaces.value.some(workspace => workspace.id === id)) return;
   explorerWorkspaceId.value = id; explorerPinned.value = false; explorerOpen.value = true; sidebarOpen.value = false;
 }
+/**
+ * The configured way to start a session: a draft tab on the canvas holding the
+ * form. Nothing exists on the server until Create, and the draft survives a
+ * detour to settings, which a dialog closed to make way for it could not.
+ */
 function newSession(id = selectedWorkspaceId.value, provider: ProviderKind = "claude_code") {
   if (!workspaces.value.some(workspace => workspace.id === id)) return;
-  sessionWorkspaceId.value = id; sessionProvider.value = provider;
+  if (route.name !== "canvas") void router.push({ name: "canvas" });
+  sidebarOpen.value = false;
+  // One draft per workspace: asking again returns to the form already started.
+  const existing = flattenPanes(layout.value.root).find(pane => pane.metadata?.draft === true && paneString(pane, "workspace_id") === id);
+  if (existing) { void canvas.value?.focusPane(existing.id); return; }
+  canvas.value?.openPane({ type: "pane", id: `draft-${randomId()}`, kind: "agent_chat", title: t("New session"), metadata: { workspace_id: id, draft: true, provider } });
+}
+/** The draft tab becomes the session it created, in the same place. */
+function draftCreated(paneId: string, session: Session) {
+  sessionsRevision++;
+  sessions.value = [session, ...sessions.value.filter(item => item.id !== session.id)];
+  if (session.interaction_mode === "structured") sessionConnections.requestOpen(session.id);
+  canvas.value?.replaceWith(paneId, sessionPane(session));
 }
 /**
  * One click from the sidebar to a usable session. The configuration dialog is
@@ -606,8 +622,7 @@ function createSessionInPane(targetId: string, provider: ProviderKind, ephemeral
   void quickSession(workspaceId, provider, ephemeral, targetId);
 }
 function loadHistory(id: string) { if (backendCapabilities.nativeHistory) historyWorkspaceId.value = id; }
-async function sessionCreated(session: Session) { sessionWorkspaceId.value = undefined; await nextTick(); openSession(session); }
-async function historyLoaded(session: Session) { historyWorkspaceId.value = undefined; await sessionCreated(session); }
+async function historyLoaded(session: Session) { historyWorkspaceId.value = undefined; await nextTick(); openSession(session); }
 /** A worktree made while creating a session: registered without leaving the dialog. */
 function worktreeWorkspace(workspace: Workspace) { workspaceRegistryRevision++; workspaces.value = [workspace, ...workspaces.value.filter(item => item.id !== workspace.id)]; }
 async function workspaceCreated(workspace: Workspace) {
@@ -897,7 +912,7 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
         <div v-if="localRecovery" class="canvas-compat-notice"><span>{{ t('A local recovery layout is available.') }}</span><button class="text-button" @click="restoreLocalRecovery">{{ t('Restore local layout') }}</button><button class="icon-button" :aria-label="t('Dismiss error')" @click="localRecovery=undefined"><Icon name="close" :size="13"/></button></div>
         <template v-if="workspaces.length">
           <Canvas v-if="canvasReady" ref="canvas" v-model="layout" :compact="mobile" :selected-pane-id="selectedPaneId" :default-workspace-id="contextWorkspace?.id" :accept-pane="acceptDroppedPane" :confirm-close-pane="confirmClosePane" :ephemeral-session-ids="ephemeralIds" :ephemeral-supported="backendCapabilities.ephemeralSessions" @create-session="createSessionInPane" :workspace-labels="Object.fromEntries(workspaces.map(workspace=>[workspace.id,workspace.name]))" :mixed-workspaces="new Set(flattenPanes(layout.root).map(pane=>paneString(pane,'workspace_id')).filter(Boolean)).size>1" :session-branches="Object.fromEntries(sessions.flatMap(session=>session.checkout_path&&session.checkout_branch?[[session.id,session.checkout_branch]]:[]))" :workspace-branches="Object.fromEntries(Object.entries(gitStatuses).flatMap(([id,status])=>status.branch?[[id,status.branch]]:[]))" :session-providers="sessionProviders" @select-pane="selectPane" @open-pane="sessionPaneDropped">
-            <template #pane="{ pane }"><WorkspacePane :key="pane.id" :pane="pane" :workspaces="workspaces" :sessions="sessions" :profiles="profiles" :git-refresh="gitRefresh" @session-changed="refreshSessions" @new-session="(id,provider)=>newSession(id??selectedWorkspaceId,provider)" @open-session="openSession" @reveal-session="revealSession" @keep-session="keepSessionById" @rename-request="requestRenameSession" @session-environment="environmentSessionId=$event" @structured-session="enableChat" @profiles="openSettings('endpoints')" @git-changed="gitChanged" @open-file="openFile" @open-reference="openReference" @files-saved="filesSaved" @browse="id=>openFiles(id??selectedWorkspaceId)"/></template>
+            <template #pane="{ pane }"><WorkspacePane :key="pane.id" :pane="pane" :workspaces="workspaces" :sessions="sessions" :profiles="profiles" :git-refresh="gitRefresh" @session-changed="refreshSessions" @new-session="(id,provider)=>newSession(id??selectedWorkspaceId,provider)" @open-session="openSession" @reveal-session="revealSession" @keep-session="keepSessionById" @rename-request="requestRenameSession" @session-environment="environmentSessionId=$event" @structured-session="enableChat" @profiles="openSettings('endpoints')" @git-changed="gitChanged" @open-file="openFile" @open-reference="openReference" @files-saved="filesSaved" @browse="id=>openFiles(id??selectedWorkspaceId)" @draft-created="draftCreated" @close-draft="id=>canvas?.closePane(id)"/></template>
           </Canvas>
           <div v-else class="pane-empty"><p>{{ t('Opening workspace…') }}</p></div>
         </template>
@@ -944,7 +959,6 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
       <button type="button" class="sheet-row" @click="sheetAction(() => openChanges(contextWorkspace!.id))"><Icon name="git" :size="20" /><span class="sheet-row-copy"><strong>{{ t('Git Changes') }}</strong><small v-if="currentGitAvailable">{{ t(currentGit.files.length===1?'{count} change':'{count} changes',{count:currentGit.files.length}) }}</small></span></button>
     </template>
   </BottomSheet>
-  <CreateSessionDialog v-if="sessionWorkspace" :workspace="sessionWorkspace" :profiles="profiles" :initial-provider="sessionProvider" @close="sessionWorkspaceId=undefined" @created="sessionCreated" @profiles="sessionWorkspaceId=undefined;openSettings('endpoints')"/>
   <SessionEnvironmentDialog v-if="environmentSession" :key="environmentSession.id" :session="environmentSession" @close="environmentSessionId=undefined" @saved="sessionEnvironmentSaved"/>
   <SessionRenameDialog v-if="renameSessionTarget" :key="renameSessionTarget.id" :session="renameSessionTarget" @close="renameSessionId=undefined" @save="saveRenameSession"/>
   <LoadHistoryDialog v-if="historyWorkspace && backendCapabilities.nativeHistory" :workspace="historyWorkspace" @close="historyWorkspaceId=undefined" @loaded="historyLoaded"/>

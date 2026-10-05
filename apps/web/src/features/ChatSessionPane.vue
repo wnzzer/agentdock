@@ -9,6 +9,7 @@ import { onPageReturn } from './page-return';
 import { acknowledgeDraft, appendChatEvent, approvalPayloadAnswers, canClearContext, chatDrafts, createChatDraftStore, conversationView, isChatEvent, parseConversationSnapshot, pendingMessageRetry, pruneChatEvents, sessionConfigurationPayload, type ChatDraft, type ChatEvent, type ChatItem, type ConversationSnapshot, type NativeModel } from './chat-model';
 import ProviderIcon from './ProviderIcon.vue';
 import Icon from './Icon.vue';
+import ContextMenu from './ContextMenu.vue';
 import ChipMenu from './ChipMenu.vue';
 import BottomSheet from './BottomSheet.vue';
 import AgentToolsSwitch from './AgentToolsSwitch.vue';
@@ -322,9 +323,6 @@ function openTimelineMenu(event: MouseEvent) {
   timelineMenu.value = { x: event.clientX, y: event.clientY, text: String(window.getSelection() ?? '') };
 }
 function closeTimelineMenu() { timelineMenu.value = null; }
-const timelineMenuStyle = computed(() => timelineMenu.value
-  ? { left: Math.min(timelineMenu.value.x, window.innerWidth - 210) + 'px', top: Math.min(timelineMenu.value.y, window.innerHeight - 170) + 'px' }
-  : {});
 async function copyFromTimeline(value: string) {
   closeTimelineMenu();
   if (!value) return;
@@ -935,7 +933,7 @@ function keydown(event: KeyboardEvent) {
 
 <template>
   <section :class="['chat-pane', { 'has-tab-menu': !!paneId, 'is-phone': mobile }]" :aria-label="t('Conversation with {provider}', {provider:providerLabel(session.provider)})" @keydown="paneKeydown">
-    <Teleport to="body"><div v-if="timelineMenu" class="chat-timeline-backdrop" @pointerdown="closeTimelineMenu" @contextmenu.prevent="closeTimelineMenu"><nav class="chat-timeline-menu" :style="timelineMenuStyle" role="menu" :aria-label="t('Conversation actions')" @pointerdown.stop @keydown.esc.stop.prevent="closeTimelineMenu"><button v-if="timelineMenu.text" type="button" role="menuitem" @click="copyFromTimeline(timelineMenu!.text)">{{ t('Copy selection') }}</button><button type="button" role="menuitem" @click="closeTimelineMenu(); scrollToLatest(true)">{{ t('Latest message') }}</button><button type="button" role="menuitem" :disabled="loading" @click="closeTimelineMenu(); load()">{{ t('Refresh conversation') }}</button><template v-if="clearAvailable"><hr/><button type="button" role="menuitem" :disabled="actionBusy" :title="t('Runs this client\'s own /clear: the transcript and its context are dropped together.')" @click="clearContext">{{ t('Clear context') }}</button></template></nav></div></Teleport>
+    <ContextMenu v-if="timelineMenu" :x="timelineMenu.x" :y="timelineMenu.y" :label="t('Conversation actions')" @close="closeTimelineMenu"><button v-if="timelineMenu.text" role="menuitem" @click="copyFromTimeline(timelineMenu!.text)">{{ t('Copy selection') }}</button><button role="menuitem" @click="closeTimelineMenu(); scrollToLatest(true)">{{ t('Latest message') }}</button><button role="menuitem" :disabled="loading" @click="closeTimelineMenu(); load()">{{ t('Refresh conversation') }}</button><template v-if="clearAvailable"><hr/><button role="menuitem" :disabled="actionBusy" :title="t('Runs this client\'s own /clear: the transcript and its context are dropped together.')" @click="clearContext">{{ t('Clear context') }}</button></template></ContextMenu>
     <Teleport v-if="!isPreview" to="body" :disabled="!paneId"><details ref="sessionMenu" :style="tabMenuStyle" :class="['chat-menu','chat-floating-menu', { 'chat-tab-menu': !!paneId }]" @toggle="positionMenu" @keydown.esc.stop.prevent="closeSessionMenu(true)"><summary :aria-label="t('Session actions')" :title="t('Session actions')"><Icon name="more" :size="17" /></summary><nav :style="tabMenuPanelStyle"><div class="chat-menu-status"><span class="chat-status-dot" :class="{working:turnBusy}" />{{ t(statusLabel,{provider:providerLabel(session.provider)}) }}</div><button @click="closeSessionMenu(); load()"><Icon name="refresh" :size="14" />{{ t('Refresh conversation') }}</button><button @click="closeSessionMenu(); emit('environment',session.id)"><Icon name="settings" :size="14" />{{ t('Session environment') }}</button><button @click="closeSessionMenu(); emit('profiles')"><Icon name="account" :size="14" />{{ t('Manage endpoint profiles') }}</button><button v-if="legacyAvailable" @click="closeSessionMenu(); emit('legacy')"><Icon name="terminal" :size="14" />{{ t('Open native client view') }}</button><button v-if="terminalReopenAvailable" :disabled="actionBusy" :title="t('For interactive commands such as /config, which the conversation view cannot display')" @click="closeSessionMenu(); openInTerminal()"><Icon name="terminal" :size="14" />{{ t('Open this session in a terminal') }}</button><slot name="session-actions" :close-menu="closeSessionMenu" /><AgentToolsSwitch v-if="capabilities.agentTools" :session-id="session.id" /><button v-if="running" class="chat-end-button" :disabled="actionBusy" @click="requestEnd"><Icon name="stop" :size="14" />{{ t('End session…') }}</button></nav></details></Teleport>
     <div v-if="!supported" class="chat-notice">{{ t('Structured conversation requires an updated backend. Your native session is unchanged.') }}<button v-if="legacyAvailable" class="chat-link" @click="emit('legacy')">{{ t('Open native client view') }}</button></div>
     <div v-if="error" class="chat-alert" role="alert">{{ error }}<button @click="load()">{{ t('Refresh conversation') }}</button></div>
@@ -1021,12 +1019,6 @@ function keydown(event: KeyboardEvent) {
 .chat-permission nav button.danger strong{color:#a85c4e}
 .chat-permission nav button.danger:hover,.chat-permission nav button.danger.selected{background:var(--danger-soft)}
 .chat-permission nav button.danger small{color:#b07a70}
-.chat-timeline-backdrop{position:fixed;inset:0;z-index:60}
-.chat-timeline-menu{position:fixed;min-width:196px;padding:5px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);box-shadow:var(--shadow-lg)}
-.chat-timeline-menu button{display:block;width:100%;min-height:32px;padding:7px 10px;border:0;border-radius:var(--radius-sm);background:none;text-align:left;font-size:var(--text-sm);color:var(--ink-soft);white-space:nowrap;cursor:pointer}
-.chat-timeline-menu button:hover:not(:disabled){background:var(--fill);color:var(--ink)}
-.chat-timeline-menu button:disabled{opacity:.5;cursor:not-allowed}
-.chat-timeline-menu hr{border:0;border-top:1px solid var(--border);margin:4px 6px}
 .chat-effort :deep(.chip-menu-panel){padding:13px 14px 10px}
 .chat-effort-body{width:218px;max-width:74cqw}
 
@@ -1137,7 +1129,6 @@ function keydown(event: KeyboardEvent) {
    is here too: it stops iOS zooming the page on focus. */
 @media(pointer:coarse){
   .chat-composer>textarea{font-size:var(--input-text)}
-  .chat-timeline-menu button{min-height:44px}
   /* A finger needs a taller pill to drag along. */
   .chat-effort-body{width:236px}
   .chat-effort-slider{height:34px}

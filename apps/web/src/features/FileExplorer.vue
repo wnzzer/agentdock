@@ -11,6 +11,7 @@ import { nameTaken, newFilePath, renamedPath } from "./file-actions";
 import { directoriesToReload, onFilesChanged } from "./file-watch";
 import type { SearchResults } from "./file-search";
 import Icon from "./Icon.vue";
+import ContextMenu from "./ContextMenu.vue";
 import { filePane } from "./pane-context";
 import { useI18n } from "../i18n";
 
@@ -69,9 +70,6 @@ function pressMove(event: PointerEvent) {
 }
 function pressEnd() { clearTimeout(pressTimer); pressTimer = undefined; pressOrigin = undefined; }
 function closeRowMenu() { rowMenu.value = null; confirmDelete.value = false; }
-const rowMenuStyle = computed(() => rowMenu.value
-  ? { left: Math.min(rowMenu.value.x, window.innerWidth - 210) + "px", top: Math.min(rowMenu.value.y, window.innerHeight - 190) + "px" }
-  : {});
 /** Clipboard access can be refused (insecure origin, denied permission), so a
  * failure says so rather than silently doing nothing. */
 async function copyText(value: string, label: string) {
@@ -455,7 +453,7 @@ defineExpose({ reveal });
       <div v-if="root?.loading" class="small-empty" role="status">{{ t('Loading files…') }}</div>
       <div v-else-if="root?.loaded && !rows.length" class="small-empty">{{ t(query.trim() ? 'No matching loaded files.' : 'This directory is empty.') }}</div>
     </div>
-    <Teleport to="body"><div v-if="rowMenu" class="tree-menu-backdrop" @pointerdown="closeRowMenu" @contextmenu.prevent="closeRowMenu"><nav class="tree-menu" :style="rowMenuStyle" role="menu" :aria-label="t('File actions')" @pointerdown.stop @keydown.esc.stop.prevent="closeRowMenu"><template v-if="!rowMenu.entry"><button type="button" role="menuitem" @click="startCreate('')">{{ t('New file') }}</button><button type="button" role="menuitem" @click="startCreate('', true)">{{ t('New folder') }}</button><button type="button" role="menuitem" @click="closeRowMenu(); refresh()">{{ t('Refresh files') }}</button></template><template v-else><button v-if="rowMenu.entry.kind === 'directory'" type="button" role="menuitem" @click="startCreate(rowMenu!.entry!.path)">{{ t('New file here') }}</button><button type="button" role="menuitem" @click="startCreate(rowMenu!.entry!.path, true)">{{ t('New folder here') }}</button><button type="button" role="menuitem" @click="copyText(rowMenu.entry.path, 'path')">{{ t(copied === 'path' ? 'Copied' : 'Copy path') }}</button><button type="button" role="menuitem" @click="copyText(rowMenu.entry.name, 'name')">{{ t(copied === 'name' ? 'Copied' : 'Copy name') }}</button><button v-if="rowMenu.entry.kind === 'file'" type="button" role="menuitem" @click="closeRowMenu(); open(rowMenu!.entry)">{{ t('Open') }}</button><button type="button" role="menuitem" @click="closeRowMenu(); loadDirectory(rowMenu!.entry.kind === 'directory' ? rowMenu!.entry.path : treeParent(rowMenu!.entry.path) ?? '', true)">{{ t('Refresh files') }}</button><button type="button" role="menuitem" @click="startRename(rowMenu!.entry)">{{ t('Rename…') }}</button><hr/><template v-if="confirmDelete"><p class="tree-menu-confirm">{{ t(rowMenu.entry.kind === 'directory' ? 'Delete {name} and everything inside it? This cannot be undone.' : 'Delete {name}? This cannot be undone.', { name: rowMenu.entry.name }) }}</p><button type="button" role="menuitem" class="tree-menu-danger" :disabled="deleting" :aria-busy="deleting" @click="deleteEntry">{{ t(deleting ? 'Deleting…' : 'Delete permanently') }}</button><button type="button" role="menuitem" @click="confirmDelete = false">{{ t('Cancel') }}</button></template><button v-else type="button" role="menuitem" class="tree-menu-danger" @click="confirmDelete = true">{{ t('Delete…') }}</button></template></nav></div></Teleport>
+    <ContextMenu v-if="rowMenu" :x="rowMenu.x" :y="rowMenu.y" :label="t('File actions')" :width="198" @close="closeRowMenu"><template v-if="!rowMenu.entry"><button role="menuitem" @click="startCreate('')">{{ t('New file') }}</button><button role="menuitem" @click="startCreate('', true)">{{ t('New folder') }}</button><button role="menuitem" @click="closeRowMenu(); refresh()">{{ t('Refresh files') }}</button></template><template v-else><button v-if="rowMenu.entry.kind === 'directory'" role="menuitem" @click="startCreate(rowMenu!.entry!.path)">{{ t('New file here') }}</button><button role="menuitem" @click="startCreate(rowMenu!.entry!.path, true)">{{ t('New folder here') }}</button><button role="menuitem" @click="copyText(rowMenu.entry.path, 'path')">{{ t(copied === 'path' ? 'Copied' : 'Copy path') }}</button><button role="menuitem" @click="copyText(rowMenu.entry.name, 'name')">{{ t(copied === 'name' ? 'Copied' : 'Copy name') }}</button><button v-if="rowMenu.entry.kind === 'file'" role="menuitem" @click="closeRowMenu(); open(rowMenu!.entry)">{{ t('Open') }}</button><button role="menuitem" @click="closeRowMenu(); loadDirectory(rowMenu!.entry.kind === 'directory' ? rowMenu!.entry.path : treeParent(rowMenu!.entry.path) ?? '', true)">{{ t('Refresh files') }}</button><button role="menuitem" @click="startRename(rowMenu!.entry)">{{ t('Rename…') }}</button><hr/><template v-if="confirmDelete"><p class="context-menu-note">{{ t(rowMenu.entry.kind === 'directory' ? 'Delete {name} and everything inside it? This cannot be undone.' : 'Delete {name}? This cannot be undone.', { name: rowMenu.entry.name }) }}</p><button role="menuitem" class="danger" :disabled="deleting" :aria-busy="deleting" @click="deleteEntry">{{ t(deleting ? 'Deleting…' : 'Delete permanently') }}</button><button role="menuitem" @click="confirmDelete = false">{{ t('Cancel') }}</button></template><button v-else role="menuitem" class="danger" @click="confirmDelete = true">{{ t('Delete…') }}</button></template></ContextMenu>
     <footer class="explorer-footer">{{ t('{count} loaded items · host filesystem', { count: loadedCount }) }}<span>{{ t('Click to open · drag into a pane') }}</span></footer>
   </section>
 </template>
@@ -477,16 +475,6 @@ defineExpose({ reveal });
 .tree-compose .text-button,.tree-rename .text-button{flex:none;font-size:var(--text-xs)}
 
 /* Teleported so the tree's own scrolling and clipping cannot cut it off. */
-.tree-menu-backdrop{position:fixed;inset:0;z-index:60}
-.tree-menu{position:fixed;min-width:198px;padding:5px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);box-shadow:var(--shadow-lg)}
-.tree-menu button{display:block;width:100%;min-height:32px;padding:7px 10px;border:0;border-radius:var(--radius-sm);background:none;text-align:left;font-size:var(--text-sm);color:var(--ink-soft);white-space:nowrap;cursor:pointer}
-.tree-menu button:hover:not(:disabled){background:var(--fill);color:var(--ink)}
-.tree-menu button:disabled{opacity:.5;cursor:not-allowed}
-.tree-menu hr{border:0;border-top:1px solid var(--border);margin:4px 6px}
-.tree-menu-danger{color:var(--danger-ink)}
-.tree-menu-danger:hover:not(:disabled){background:var(--danger-soft);color:var(--danger)}
-.tree-menu-confirm{padding:6px 10px;margin:0;font-size:var(--text-xs);line-height:1.6;color:var(--ink-soft);white-space:normal;max-width:220px}
-@media(pointer:coarse){.tree-menu button{min-height:44px}}
 .file-breadcrumb { max-height: 66px; overflow: auto; }
 .file-breadcrumb button { max-width: 100%; }
 .file-search { gap: 5px; }

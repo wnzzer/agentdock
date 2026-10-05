@@ -190,7 +190,7 @@ function openPane(pane: PaneNode) {
     selectPane(pane);
     return;
   }
-  const reusable = pane.kind !== "git_diff" ? panes.value.find(candidate => candidate.kind === pane.kind && !candidate.metadata?.session_id && !candidate.metadata?.path && (!candidate.metadata?.workspace_id || candidate.metadata.workspace_id === pane.metadata?.workspace_id)) : undefined;
+  const reusable = pane.kind !== "git_diff" ? panes.value.find(candidate => candidate.kind === pane.kind && !candidate.metadata?.session_id && !candidate.metadata?.path && !candidate.metadata?.draft && (!candidate.metadata?.workspace_id || candidate.metadata.workspace_id === pane.metadata?.workspace_id)) : undefined;
   if (reusable) {
     commit(replacePane(working.value.root, reusable.id, pane));
     if (maximized.value === reusable.id) maximized.value = pane.id;
@@ -199,6 +199,14 @@ function openPane(pane: PaneNode) {
   }
   const target = selected.value && findNode(working.value.root, selected.value) ? containerId(working.value.root, selected.value) : working.value.root.id;
   drop(target, pane, "center");
+}
+/** Put `pane` where `id` is -- a draft tab becoming the session it created. */
+function replaceWith(id: string, pane: PaneNode) {
+  if (findNode(working.value.root, pane.id)) { close(id); void focusPane(pane.id); return; }
+  if (findNode(working.value.root, id)?.type !== "pane") { openPane(pane); return; }
+  commit(replacePane(working.value.root, id, pane));
+  if (maximized.value === id) maximized.value = pane.id;
+  selectPane(pane);
 }
 async function focusPane(id: string): Promise<boolean> {
   const pane = findNode(working.value.root, id);
@@ -217,7 +225,7 @@ async function focusPane(id: string): Promise<boolean> {
   locateTimer = setTimeout(() => { locatedPaneId.value = null; }, 1400);
   return true;
 }
-defineExpose({ openPane, openPaneAt, focusPane, closePane: close, maximizePane: maximize });
+defineExpose({ openPane, openPaneAt, replaceWith, focusPane, closePane: close, maximizePane: maximize });
 
 /**
  * Sideways swipe between open views on a phone, in the order the view

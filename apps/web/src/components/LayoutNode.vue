@@ -41,11 +41,6 @@ function openTabMenu(event: MouseEvent, pane: PaneNode) {
   tabMenu.value = { pane, x: event.clientX, y: event.clientY };
 }
 function closeTabMenu() { tabMenu.value = null; }
-const tabMenuStyle = computed(() => tabMenu.value
-  // Kept inside the viewport: a tab near the right or bottom edge would
-  // otherwise open a menu that runs off the screen.
-  ? { left: Math.min(tabMenu.value.x, window.innerWidth - 190) + 'px', top: Math.min(tabMenu.value.y, window.innerHeight - 180) + 'px' }
-  : {});
 const menuOthers = computed(() => tabMenu.value ? tabs.value.filter(pane => pane.id !== tabMenu.value!.pane.id) : []);
 const menuRight = computed(() => {
   const current = tabMenu.value; if (!current) return [];
@@ -266,7 +261,7 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
           <button class="dock-tab-close" type="button" :aria-label="t('Close {title} pane', { title: tabLabel(pane) })" :title="t(isEphemeral(pane) ? 'Close and discard this temporary session' : 'Close pane (session keeps running)')" @pointerdown.stop @click.stop="emit('close', pane.id)"><Icon name="close" :size="12" /></button>
         </div>
         <span v-if="!tabs.length" class="dock-empty-label">{{ t('Empty pane') }}</span>
-        <Teleport to="body"><div v-if="tabMenu" class="dock-tab-menu-backdrop" @pointerdown="closeTabMenu" @contextmenu.prevent="closeTabMenu"><nav class="dock-tab-menu" :style="tabMenuStyle" role="menu" :aria-label="t('Tab actions')" @pointerdown.stop @keydown.esc.stop.prevent="closeTabMenu"><button type="button" role="menuitem" @click="closePanes([tabMenu.pane])">{{ t('Close tab') }}</button><button type="button" role="menuitem" :disabled="!menuOthers.length" @click="closePanes(menuOthers)">{{ t('Close other tabs') }}</button><button type="button" role="menuitem" :disabled="!menuRight.length" @click="closePanes(menuRight)">{{ t('Close tabs to the right') }}</button><button type="button" role="menuitem" @click="closePanes(tabs)">{{ t('Close all tabs') }}</button><hr/><button type="button" role="menuitem" @click="closeTabMenu(); emit('maximize', tabMenu!.pane.id)">{{ t(maximized === tabMenu.pane.id ? 'Restore layout' : 'Maximize pane') }}</button><button type="button" role="menuitem" @click="closeTabMenu(); emit('split', tabMenu!.pane.id, 'horizontal')">{{ t('Split side by side') }}</button><button type="button" role="menuitem" @click="closeTabMenu(); emit('split', tabMenu!.pane.id, 'vertical')">{{ t('Split top and bottom') }}</button></nav></div></Teleport>
+        <ContextMenu v-if="tabMenu" :x="tabMenu.x" :y="tabMenu.y" :label="t('Tab actions')" :width="180" @close="closeTabMenu"><button role="menuitem" @click="closePanes([tabMenu.pane])">{{ t('Close tab') }}</button><button role="menuitem" :disabled="!menuOthers.length" @click="closePanes(menuOthers)">{{ t('Close other tabs') }}</button><button role="menuitem" :disabled="!menuRight.length" @click="closePanes(menuRight)">{{ t('Close tabs to the right') }}</button><button role="menuitem" @click="closePanes(tabs)">{{ t('Close all tabs') }}</button><hr/><button role="menuitem" @click="closeTabMenu(); emit('maximize', tabMenu!.pane.id)">{{ t(maximized === tabMenu.pane.id ? 'Restore layout' : 'Maximize pane') }}</button><button role="menuitem" @click="closeTabMenu(); emit('split', tabMenu!.pane.id, 'horizontal')">{{ t('Split side by side') }}</button><button role="menuitem" @click="closeTabMenu(); emit('split', tabMenu!.pane.id, 'vertical')">{{ t('Split top and bottom') }}</button></ContextMenu>
       </div>
       <div class="dock-actions" @pointerdown.stop>
         <button v-if="node.type === 'stack' && node.collapsedFrom" type="button" class="dock-action dock-adaptive" :title="t('Reset folded split to 1:1; expands when space allows')" :aria-label="t('Restore folded split ratio')" @click="emit('resize', targetId, 0.5, true)"><Icon name="restore" :size="13" /></button>
@@ -314,15 +309,6 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
 @keyframes attention-pulse { 50% { box-shadow:0 0 0 5px var(--warn-soft); } }
 @media (prefers-reduced-motion: reduce) { .dock-tab-status.waiting { animation:none; } }
 
-/* The menu is teleported to the body so a tab strip with overflow clipping
-   cannot cut it off, and the backdrop makes any click elsewhere dismiss it. */
-.dock-tab-menu-backdrop{position:fixed;inset:0;z-index:60}
-.dock-tab-menu{position:fixed;min-width:180px;padding:5px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);box-shadow:var(--shadow-lg)}
-.dock-tab-menu button{display:block;width:100%;min-height:32px;padding:7px 10px;border:0;border-radius:var(--radius-sm);background:none;text-align:left;font-size:var(--text-sm);color:var(--ink-soft);white-space:nowrap;cursor:pointer}
-.dock-tab-menu button:hover:not(:disabled){background:var(--fill);color:var(--ink)}
-.dock-tab-menu button:disabled{opacity:.4;cursor:not-allowed}
-.dock-tab-menu hr{border:0;border-top:1px solid var(--border);margin:4px 6px}
-@media(pointer:coarse){.dock-tab-menu button{min-height:44px}}
 .dock-split,.dock-child { width:100%;height:100%;min-width:0;min-height:0; }
 .dock-split { display:grid; }
 .dock-child { overflow:hidden; }
