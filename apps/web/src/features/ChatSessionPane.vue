@@ -1308,6 +1308,9 @@ function keydown(event: KeyboardEvent) {
 .chat-composer:not(.is-phone){margin-inline:max(16px,calc((100% - 860px) / 2))}
 .chat-composer:not(.is-phone) footer>span:first-child{opacity:0;transition:opacity var(--duration-normal)}
 .chat-composer:not(.is-phone):focus-within footer>span:first-child{opacity:1}
+.chat-native-note{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:var(--space-2) var(--space-4);padding:var(--space-4);border:0;border-radius:var(--radius-lg);background:var(--sunken);box-shadow:inset 0 0 0 1px var(--border)}
+.chat-native-note>p{flex-basis:100%;margin:0;color:var(--ink-soft)}
+.chat-pane:not(.is-phone) .chat-native-note>.chat-primary{min-height:36px;padding:0 16px;border-radius:var(--radius-md);font-weight:550}
 /* Approval and question cards: a calm surface with one coloured voice (amber
    for a permission, teal for a question) on the icon and the left edge, so the
    request reads as part of the conversation rather than a warning banner. */

@@ -846,7 +846,7 @@ export const zhCN: Readonly<Record<string, string>> = {
   "disconnected": "已断开",
   "exited": "已退出",
   "error": "错误",
-  "Explorer": "文件浏览器",
+  "Explorer": "文件",
   "Refresh files": "刷新文件",
   "Close explorer": "关闭文件浏览器",
   "Directory path": "目录路径",
