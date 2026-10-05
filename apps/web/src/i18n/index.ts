@@ -848,6 +848,7 @@ export const zhCN: Readonly<Record<string, string>> = {
   "error": "错误",
   "Explorer": "文件",
   "Draft": "草稿",
+  "from the session log, {time} ago": "来自会话记录，{time}前",
   "This file is outside the folders AgentDock may browse": "这个文件不在 AgentDock 可浏览的范围内",
   "You can allow read-only access for now. It ends when AgentDock restarts, and it opens nothing to editing, browsing or agents.": "可以临时允许只读查看。AgentDock 重启后失效，也不会因此开放编辑、目录浏览或给 Agent 授权。",
   "Allow reading this file": "临时允许读取此文件",

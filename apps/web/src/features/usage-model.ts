@@ -61,6 +61,8 @@ export interface Allowance {
   estimated_total_cost: number | null;
   estimated_remaining_cost: number | null;
   low_confidence: boolean;
+  /** When the client last logged this reading, if it came from its session log rather than an account check. */
+  observed_at: number | null;
 }
 
 /** 1.2K, 34.5M, 1.1B: tokens at a glance. */

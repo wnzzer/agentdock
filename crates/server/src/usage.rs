@@ -1010,6 +1010,72 @@ pub struct Allowance {
     pub estimated_remaining_cost: Option<f64>,
     /// Too little used yet, or too little seen here, to extrapolate from.
     pub low_confidence: bool,
+    /// Set when the reading came from the client's own session log rather
+    /// than an account check: when the client last reported it.
+    pub observed_at: Option<i64>,
+}
+
+struct LoggedLimits {
+    limits: crate::accounts::Limits,
+    plan: Option<String>,
+    observed_at: i64,
+}
+
+/// The newest rate-limit reading Codex wrote under `home`. Every token count
+/// it logs carries one, so a Codex account has figures without a query.
+fn codex_logged_limits(home: &Path) -> Option<LoggedLimits> {
+    let mut files = Vec::new();
+    jsonl_files(&home.join("sessions"), &mut files, 4);
+    let modified = |file: &PathBuf| std::fs::metadata(file).and_then(|m| m.modified()).ok();
+    files.sort_by_key(|file| std::cmp::Reverse(modified(file)));
+    // The newest few: a session that never reached a model call has none.
+    for file in files.iter().take(5) {
+        let Ok(text) = std::fs::read_to_string(file) else {
+            continue;
+        };
+        for line in text.lines().rev() {
+            if !line.contains("\"rate_limits\"") {
+                continue;
+            }
+            let Ok(value) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            let Some(limits) = value
+                .pointer("/payload/rate_limits")
+                .filter(|v| v.is_object())
+            else {
+                continue;
+            };
+            let window = |key: &str| {
+                let entry = limits.get(key).filter(|v| v.is_object())?;
+                Some(crate::accounts::LimitWindow {
+                    used_percent: entry.get("used_percent")?.as_f64()?,
+                    window_minutes: entry.get("window_minutes").and_then(Value::as_f64),
+                    resets_at: entry.get("resets_at").cloned().filter(|v| !v.is_null()),
+                    window_kind: None,
+                    mapping_basis: None,
+                })
+            };
+            let (primary, secondary) = (window("primary"), window("secondary"));
+            if primary.is_none() && secondary.is_none() {
+                continue;
+            }
+            return Some(LoggedLimits {
+                limits: crate::accounts::Limits {
+                    primary,
+                    secondary,
+                    reset_credits: None,
+                    reset_credits_source: None,
+                },
+                plan: limits
+                    .get("plan_type")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                observed_at: timestamp(&value)?,
+            });
+        }
+    }
+    None
 }
 
 fn epoch(value: &Value) -> Option<i64> {
@@ -1057,13 +1123,27 @@ async fn allowance(State(state): State<AppState>) -> Result<Json<Vec<Allowance>>
     let rows = tokio::task::spawn_blocking(move || {
         let mut rows = Vec::new();
         for account in accounts {
-            let Some(limits) = &account.limits else {
-                continue;
-            };
             let provider = match account.provider {
                 agentdock_domain::ProviderKind::Codex => Provider::Codex,
                 _ => Provider::ClaudeCode,
             };
+            let checked = account
+                .limits
+                .clone()
+                .filter(|limits| limits.primary.is_some() || limits.secondary.is_some());
+            // Nobody pressed Check usage for a Codex account: its own session
+            // logs carry the reading Codex last received.
+            let (limits, observed_at, logged_plan) = match checked {
+                Some(limits) => (limits, None, None),
+                None if provider == Provider::Codex => {
+                    match codex_logged_limits(Path::new(&account.storage_path)) {
+                        Some(logged) => (logged.limits, Some(logged.observed_at), logged.plan),
+                        None => continue,
+                    }
+                }
+                None => continue,
+            };
+            let limits = &limits;
             let calls = collect(&[(PathBuf::from(&account.storage_path), None)]);
             for (window, limit) in [
                 ("primary", &limits.primary),
@@ -1099,7 +1179,7 @@ async fn allowance(State(state): State<AppState>) -> Result<Json<Vec<Allowance>>
                     account_id: account.id.to_string(),
                     account: account.name.clone(),
                     provider,
-                    plan: account.plan.clone(),
+                    plan: account.plan.clone().or_else(|| logged_plan.clone()),
                     window,
                     window_minutes: minutes,
                     used_percent: limit.used_percent,
@@ -1112,6 +1192,7 @@ async fn allowance(State(state): State<AppState>) -> Result<Json<Vec<Allowance>>
                     estimated_total_cost: total_cost,
                     estimated_remaining_cost: remaining_cost,
                     low_confidence: low,
+                    observed_at,
                 });
             }
         }
@@ -1365,5 +1446,37 @@ mod tests {
         assert_eq!(price("claude-opus-4-1-20250805"), Some((15.0, 75.0, 1.50)));
         assert_eq!(price("claude-fable-5-1"), Some((10.0, 50.0, 0.25)));
         assert_eq!(price("gpt-6-astra"), None);
+    }
+
+    #[test]
+    fn a_codex_account_reads_its_limits_from_the_newest_session_log() {
+        let home =
+            std::env::temp_dir().join(format!("agentdock-codex-limits-{}", uuid::Uuid::new_v4()));
+        let day = home.join("sessions/2026/10/04");
+        std::fs::create_dir_all(&day).unwrap();
+        let line = |at: &str, used: f64| {
+            serde_json::json!({"timestamp":at,"type":"event_msg","payload":{"type":"token_count","info":null,
+                "rate_limits":{"primary":{"used_percent":used,"window_minutes":10080,"resets_at":1791077410},"secondary":null,"plan_type":"plus"}}})
+            .to_string()
+        };
+        std::fs::write(
+            day.join("rollout.jsonl"),
+            [
+                line("2026-10-04T10:00:00Z", 9.0),
+                line("2026-10-04T11:00:00Z", 11.0),
+                "{\"type\":\"session_meta\"}".into(),
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        let logged = codex_logged_limits(&home).expect("a reading");
+        let primary = logged.limits.primary.unwrap();
+        assert_eq!(primary.used_percent, 11.0, "the last reading wins");
+        assert_eq!(primary.window_minutes, Some(10080.0));
+        assert!(logged.limits.secondary.is_none());
+        assert_eq!(logged.plan.as_deref(), Some("plus"));
+        assert_eq!(logged.observed_at, 1791111600);
+        assert!(codex_logged_limits(&home.join("missing")).is_none());
+        std::fs::remove_dir_all(home).ok();
     }
 }

@@ -188,7 +188,7 @@ const insights = computed(() => {
             <span class="quota-window">{{ windowShort(row) }}</span>
             <span :class="['quota-bar', level(row.used_percent)]"><i :style="{ width: Math.min(100, row.used_percent) + '%' }" /></span>
             <span class="quota-percent">{{ Math.round(row.used_percent) }}%</span>
-            <small class="quota-left"><template v-if="row.estimated_remaining_tokens !== null">{{ t('≈ {tokens} left', { tokens: formatTokens(row.estimated_remaining_tokens) }) }}<template v-if="row.estimated_remaining_cost !== null"> · {{ formatCost(row.estimated_remaining_cost) }}</template><template v-if="row.low_confidence"> ?</template> · </template>{{ resetText(row) }}</small>
+            <small class="quota-left"><template v-if="row.estimated_remaining_tokens !== null">{{ t('≈ {tokens} left', { tokens: formatTokens(row.estimated_remaining_tokens) }) }}<template v-if="row.estimated_remaining_cost !== null"> · {{ formatCost(row.estimated_remaining_cost) }}</template><template v-if="row.low_confidence"> ?</template> · </template>{{ resetText(row) }}<template v-if="row.observed_at"> · {{ t('from the session log, {time} ago', { time: formatDuration(Math.max(0, Date.now() / 1000 - row.observed_at)) }) }}</template></small>
           </div>
         </article>
       </section>
