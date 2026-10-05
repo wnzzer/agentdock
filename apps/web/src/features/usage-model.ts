@@ -11,6 +11,8 @@ export interface UsageBucket {
   cost: number;
   unpriced: number;
   calls: number;
+  user_messages: number;
+  active_minutes: number;
 }
 export interface Price { input: number; output: number; cache_read: number }
 export interface UsageModel extends UsageBucket { model: string; provider: UsageProvider; price: Price | null; custom_price: boolean }
@@ -33,6 +35,11 @@ export interface UsageReport {
   models: UsageModel[];
   providers: UsageModel[];
   heatmap: number[][];
+  heatmap_cost: number[][];
+  heatmap_active: number[][];
+  duration_seconds: number;
+  previous_duration_seconds: number;
+  options: { providers: UsageProvider[]; models: string[]; projects: string[] };
   conversations: UsageConversation[];
   conversation_count: number;
   directories: Array<[string, number]>;
@@ -41,6 +48,7 @@ export interface Allowance {
   account_id: string;
   account: string;
   provider: UsageProvider;
+  plan: string | null;
   window: "primary" | "secondary";
   window_minutes: number;
   used_percent: number;
@@ -89,4 +97,11 @@ export function cacheSavings(models: readonly UsageModel[]): number {
 export function rangeStart(days: number, now = new Date()): number {
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1));
   return Math.floor(start.getTime() / 1000);
+}
+
+/** 9h 50m, 1292h 59m: time spent, in hours past a day as the dashboard reads it. */
+export function formatHours(minutes: number): string {
+  const total = Math.max(0, Math.round(minutes));
+  const hours = Math.floor(total / 60), rest = total % 60;
+  return hours ? `${hours}h ${rest}m` : `${rest}m`;
 }

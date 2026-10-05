@@ -47,6 +47,9 @@ struct Call {
     /// Claude logs a reply more than once; one key per real call.
     dedupe: Option<Arc<str>>,
     tokens: Tokens,
+    /// A message the person sent, rather than a model call: it counts toward
+    /// messages and activity, never tokens.
+    user: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize)]
@@ -201,7 +204,56 @@ fn empty() -> Arc<str> {
     Arc::from("")
 }
 
+/// A message the person typed: text, not a tool result passed back, not a
+/// note the client wrote into the conversation itself.
+fn claude_user_message(line: &str, source: &Source, state: &mut FileState) {
+    let Ok(value) = serde_json::from_str::<Value>(line) else {
+        return;
+    };
+    if value.get("type").and_then(Value::as_str) != Some("user")
+        || value.get("isMeta").and_then(Value::as_bool) == Some(true)
+    {
+        return;
+    }
+    let typed = match value
+        .get("message")
+        .and_then(|message| message.get("content"))
+    {
+        Some(Value::String(text)) => !text.trim().is_empty(),
+        Some(Value::Array(blocks)) => {
+            blocks
+                .iter()
+                .any(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+                && !blocks
+                    .iter()
+                    .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_result"))
+        }
+        _ => false,
+    };
+    let Some(at) = timestamp(&value).filter(|_| typed) else {
+        return;
+    };
+    state.calls.push(Call {
+        at,
+        provider: Provider::ClaudeCode,
+        model: empty(),
+        conversation: Arc::from(value.get("sessionId").and_then(Value::as_str).unwrap_or("")),
+        cwd: Arc::from(value.get("cwd").and_then(Value::as_str).unwrap_or("")),
+        home_session: source.home_session.clone(),
+        dedupe: value
+            .get("uuid")
+            .and_then(Value::as_str)
+            .map(|id| Arc::from(format!("user:{id}"))),
+        user: true,
+        tokens: Tokens::default(),
+    });
+}
+
 fn parse_claude(line: &str, source: &Source, state: &mut FileState) {
+    if line.contains("\"type\":\"user\"") {
+        claude_user_message(line, source, state);
+        return;
+    }
     if !line.contains("\"usage\"") {
         return;
     }
@@ -240,6 +292,7 @@ fn parse_claude(line: &str, source: &Source, state: &mut FileState) {
         cwd: Arc::from(value.get("cwd").and_then(Value::as_str).unwrap_or("")),
         home_session: source.home_session.clone(),
         dedupe,
+        user: false,
         tokens: Tokens {
             input: number(usage, "input_tokens"),
             cache_read: number(usage, "cache_read_input_tokens"),
@@ -256,6 +309,7 @@ fn parse_claude(line: &str, source: &Source, state: &mut FileState) {
 
 fn parse_codex(line: &str, source: &Source, state: &mut FileState) {
     let interesting = line.contains("\"token_count\"")
+        || line.contains("\"task_started\"")
         || line.contains("\"turn_context\"")
         || line.contains("\"session_meta\"");
     if !interesting {
@@ -281,6 +335,23 @@ fn parse_codex(line: &str, source: &Source, state: &mut FileState) {
             if let Some(cwd) = payload.get("cwd").and_then(Value::as_str) {
                 state.codex_cwd = Arc::from(cwd);
             }
+        }
+        // Codex starts a task for each message the person sends.
+        Some("event_msg")
+            if payload.get("type").and_then(Value::as_str) == Some("task_started") =>
+        {
+            let Some(at) = timestamp(&value) else { return };
+            state.calls.push(Call {
+                at,
+                provider: Provider::Codex,
+                model: state.codex_model.clone(),
+                conversation: state.codex_conversation.clone(),
+                cwd: state.codex_cwd.clone(),
+                home_session: source.home_session.clone(),
+                dedupe: None,
+                user: true,
+                tokens: Tokens::default(),
+            });
         }
         Some("event_msg") if payload.get("type").and_then(Value::as_str) == Some("token_count") => {
             let Some(info) = payload.get("info").filter(|info| !info.is_null()) else {
@@ -308,6 +379,7 @@ fn parse_codex(line: &str, source: &Source, state: &mut FileState) {
                 cwd: state.codex_cwd.clone(),
                 home_session: source.home_session.clone(),
                 dedupe: None,
+                user: false,
                 tokens: Tokens {
                     // OpenAI counts cached input inside input; split it out.
                     input: number(last, "input_tokens").saturating_sub(cached),
@@ -453,9 +525,17 @@ pub struct Bucket {
     /// Tokens from models without a published price, left out of `cost`.
     pub unpriced: u64,
     pub calls: u64,
+    /// Messages the person sent.
+    pub user_messages: u64,
+    /// Five-minute slots with anything happening, in minutes.
+    pub active_minutes: u64,
 }
 impl Bucket {
     fn add(&mut self, call: &Call, prices: &Prices) {
+        if call.user {
+            self.user_messages += 1;
+            return;
+        }
         self.tokens.add(&call.tokens);
         self.total += call.tokens.total();
         match prices.cost(&call.model, &call.tokens) {
@@ -506,11 +586,44 @@ pub struct Report {
     pub days: Vec<DayRow>,
     pub models: Vec<ModelRow>,
     pub providers: Vec<ModelRow>,
-    /// Calls by local weekday (0 = Monday) and hour: 7 x 24.
+    /// Tokens by local weekday (0 = Monday) and hour: 7 x 24.
     pub heatmap: Vec<Vec<u64>>,
+    pub heatmap_cost: Vec<Vec<f64>>,
+    /// Active minutes by weekday and hour.
+    pub heatmap_active: Vec<Vec<u64>>,
+    /// Summed span of every conversation, first event to last, in seconds.
+    pub duration_seconds: i64,
+    pub previous_duration_seconds: i64,
+    /// What there is to filter by in this range, before any filter.
+    pub options: Options,
     pub conversations: Vec<ConversationRow>,
     pub conversation_count: usize,
     pub directories: Vec<(String, u64)>,
+}
+
+#[derive(Serialize, Default)]
+pub struct Options {
+    pub providers: Vec<Provider>,
+    pub models: Vec<String>,
+    pub projects: Vec<String>,
+}
+
+/// Narrow the report to one client, one model or one project directory.
+#[derive(Default, Clone)]
+pub struct Filter {
+    pub provider: Option<Provider>,
+    pub model: Option<String>,
+    pub project: Option<String>,
+}
+impl Filter {
+    fn keeps(&self, call: &Call) -> bool {
+        self.provider.is_none_or(|provider| provider == call.provider)
+            // A message belongs to a conversation, not a model: keep it under a model filter.
+            && self.model.as_deref().is_none_or(|model| call.user || &*call.model == model)
+            && self.project.as_deref().is_none_or(|project| {
+                &*call.cwd == project || call.cwd.starts_with(&format!("{}/", project.trim_end_matches('/')))
+            })
+    }
 }
 
 #[derive(Deserialize)]
@@ -520,6 +633,9 @@ pub struct UsageQuery {
     to: Option<i64>,
     /// Minutes east of UTC, for local days and hours.
     tz: Option<i32>,
+    provider: Option<String>,
+    model: Option<String>,
+    project: Option<String>,
 }
 
 /// A client home, and the AgentDock session it belongs to when it is one's own.
@@ -540,6 +656,7 @@ fn report(
     tz_minutes: i32,
     links: &HashMap<String, SessionLink>,
     prices: &Prices,
+    filter: &Filter,
 ) -> Report {
     let offset = FixedOffset::east_opt(tz_minutes.clamp(-14 * 60, 14 * 60) * 60)
         .unwrap_or(FixedOffset::east_opt(0).unwrap());
@@ -555,6 +672,15 @@ fn report(
     let mut models: HashMap<(String, Provider), Bucket> = HashMap::new();
     let mut providers: HashMap<Provider, Bucket> = HashMap::new();
     let mut heatmap = vec![vec![0u64; 24]; 7];
+    let mut heatmap_cost = vec![vec![0f64; 24]; 7];
+    // Activity is counted in five-minute slots, so a burst of calls is one slot.
+    let slot = |at: i64| at.div_euclid(300);
+    let mut active: HashSet<i64> = HashSet::new();
+    let mut previous_active: HashSet<i64> = HashSet::new();
+    let mut previous_spans: HashMap<(Provider, Arc<str>), (i64, i64)> = HashMap::new();
+    let mut options_providers: HashSet<Provider> = HashSet::new();
+    let mut options_models: HashMap<String, u64> = HashMap::new();
+    let mut options_projects: HashMap<Arc<str>, u64> = HashMap::new();
     let mut conversations: Conversations = HashMap::new();
     let mut directories: HashMap<Arc<str>, u64> = HashMap::new();
     // Every day of the range has a row, so a quiet day shows as zero, not a gap.
@@ -565,29 +691,55 @@ fn report(
         day += ChronoDuration::days(1);
     }
     for call in calls {
-        if call.at >= from - span && call.at < from {
-            previous.add(call, prices);
+        let in_range = call.at >= from && call.at < to;
+        if in_range {
+            options_providers.insert(call.provider);
+            if !call.user && !call.model.is_empty() {
+                *options_models.entry(call.model.to_string()).or_default() += call.tokens.total();
+            }
+            if !call.cwd.is_empty() {
+                *options_projects.entry(call.cwd.clone()).or_default() += call.tokens.total();
+            }
+        }
+        if !filter.keeps(call) {
             continue;
         }
-        if call.at < from || call.at >= to {
+        if call.at >= from - span && call.at < from {
+            previous.add(call, prices);
+            previous_active.insert(slot(call.at));
+            let span = previous_spans
+                .entry((call.provider, call.conversation.clone()))
+                .or_insert((call.at, call.at));
+            span.0 = span.0.min(call.at);
+            span.1 = span.1.max(call.at);
+            continue;
+        }
+        if !in_range {
             continue;
         }
         totals.add(call, prices);
+        active.insert(slot(call.at));
         let at = local(call.at);
         days.entry(at.format("%Y-%m-%d").to_string())
             .or_default()
             .add(call, prices);
-        models
-            .entry((call.model.to_string(), call.provider))
-            .or_default()
-            .add(call, prices);
+        if !call.user {
+            models
+                .entry((call.model.to_string(), call.provider))
+                .or_default()
+                .add(call, prices);
+            let (weekday, hour) = (
+                at.weekday().num_days_from_monday() as usize,
+                at.hour() as usize,
+            );
+            heatmap[weekday][hour] += call.tokens.total();
+            heatmap_cost[weekday][hour] += prices.cost(&call.model, &call.tokens).unwrap_or(0.0);
+            *directories.entry(call.cwd.clone()).or_default() += call.tokens.total();
+        }
         providers
             .entry(call.provider)
             .or_default()
             .add(call, prices);
-        heatmap[at.weekday().num_days_from_monday() as usize][at.hour() as usize] +=
-            call.tokens.total();
-        *directories.entry(call.cwd.clone()).or_default() += call.tokens.total();
         let link = call
             .home_session
             .as_deref()
@@ -622,10 +774,48 @@ fn report(
         row.first_at = row.first_at.min(call.at);
         row.last_at = row.last_at.max(call.at);
         row.bucket.add(call, prices);
-        if !call.model.is_empty() && model_set.insert(call.model.clone()) {
+        if !call.user && !call.model.is_empty() && model_set.insert(call.model.clone()) {
             row.models.push(call.model.to_string());
         }
     }
+    totals.active_minutes = active.len() as u64 * 5;
+    previous.active_minutes = previous_active.len() as u64 * 5;
+    let mut heatmap_active = vec![vec![0u64; 24]; 7];
+    for slot in &active {
+        let at = local(slot * 300);
+        heatmap_active[at.weekday().num_days_from_monday() as usize][at.hour() as usize] += 5;
+        if let Some(day) = days.get_mut(&at.format("%Y-%m-%d").to_string()) {
+            day.active_minutes += 5;
+        }
+    }
+    let duration_seconds = conversations
+        .values()
+        .map(|(row, _)| row.last_at - row.first_at)
+        .sum();
+    let previous_duration_seconds = previous_spans
+        .values()
+        .map(|(first, last)| last - first)
+        .sum();
+    let mut options_models: Vec<(String, u64)> = options_models.into_iter().collect();
+    options_models.sort_by_key(|entry| std::cmp::Reverse(entry.1));
+    let mut options_projects: Vec<(Arc<str>, u64)> = options_projects.into_iter().collect();
+    options_projects.sort_by_key(|entry| std::cmp::Reverse(entry.1));
+    let options = Options {
+        providers: [Provider::ClaudeCode, Provider::Codex]
+            .into_iter()
+            .filter(|provider| options_providers.contains(provider))
+            .collect(),
+        models: options_models
+            .into_iter()
+            .map(|(model, _)| model)
+            .take(40)
+            .collect(),
+        projects: options_projects
+            .into_iter()
+            .map(|(cwd, _)| cwd.to_string())
+            .take(40)
+            .collect(),
+    };
     let mut models: Vec<ModelRow> = models
         .into_iter()
         .map(|((model, provider), bucket)| {
@@ -674,6 +864,11 @@ fn report(
         models,
         providers,
         heatmap,
+        heatmap_cost,
+        heatmap_active,
+        duration_seconds,
+        previous_duration_seconds,
+        options,
         conversations,
         conversation_count,
         directories,
@@ -736,11 +931,20 @@ async fn usage(
     let to = query.to.unwrap_or(now).min(now + 86_400);
     let from = query.from.unwrap_or(to - 30 * 86_400).min(to);
     let tz = query.tz.unwrap_or(0);
+    let filter = Filter {
+        provider: match query.provider.as_deref() {
+            Some("claude_code") => Some(Provider::ClaudeCode),
+            Some("codex") => Some(Provider::Codex),
+            _ => None,
+        },
+        model: query.model.filter(|model| !model.is_empty()),
+        project: query.project.filter(|project| !project.is_empty()),
+    };
     let (homes, links) = homes(&state)?;
     let prices = load_prices(&state.state_dir);
     let report = tokio::task::spawn_blocking(move || {
         let calls = collect(&homes);
-        report(&calls, from, to, tz, &links, &prices)
+        report(&calls, from, to, tz, &links, &prices, &filter)
     })
     .await
     .map_err(crate::ApiError::internal)?;
@@ -791,6 +995,8 @@ pub struct Allowance {
     pub account_id: String,
     pub account: String,
     pub provider: Provider,
+    /// The subscription, as the provider names it (Max, Pro, Plus…).
+    pub plan: Option<String>,
     pub window: &'static str,
     pub window_minutes: f64,
     pub used_percent: f64,
@@ -893,6 +1099,7 @@ async fn allowance(State(state): State<AppState>) -> Result<Json<Vec<Allowance>>
                     account_id: account.id.to_string(),
                     account: account.name.clone(),
                     provider,
+                    plan: account.plan.clone(),
                     window,
                     window_minutes: minutes,
                     used_percent: limit.used_percent,
@@ -977,7 +1184,15 @@ mod tests {
                 title: "Fixture".into(),
             },
         );
-        let result = report(&calls, from, from + 86_400, 480, &links, &Prices::default());
+        let result = report(
+            &calls,
+            from,
+            from + 86_400,
+            480,
+            &links,
+            &Prices::default(),
+            &Filter::default(),
+        );
         assert_eq!(result.totals.calls, 2);
         assert_eq!(result.totals.tokens.cache_read, 1060);
         assert_eq!(
@@ -1008,6 +1223,99 @@ mod tests {
         // An appended line is all a second read costs, and it is counted.
         write(&codex, &[count(300, 150)]);
         assert_eq!(collect(&homes).len(), 3);
+        std::fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn messages_activity_and_filters() {
+        let home = std::env::temp_dir().join(format!("agentdock-usage-{}", uuid::Uuid::new_v4()));
+        let claude = home.join("projects/-repo/c2.jsonl");
+        let user = |uuid: &str, at: &str, content: Value| serde_json::json!({"type":"user","uuid":uuid,"timestamp":at,"sessionId":"c2","cwd":"/repo/app","message":{"role":"user","content":content}});
+        let reply = |id: &str, at: &str| {
+            serde_json::json!({"type":"assistant","timestamp":at,"sessionId":"c2","cwd":"/repo/app","requestId":id,
+            "message":{"id":id,"model":"claude-sonnet-5-5","usage":{"input_tokens":100,"output_tokens":10}}})
+        };
+        write(
+            &claude,
+            &[
+                user(
+                    "u1",
+                    "2026-10-01T10:00:00Z",
+                    Value::String("Build it".into()),
+                ),
+                reply("m1", "2026-10-01T10:01:00Z"),
+                // A tool result comes back as a user line; the person did not type it.
+                user(
+                    "u2",
+                    "2026-10-01T10:02:00Z",
+                    serde_json::json!([{"type":"tool_result","content":"ok"}]),
+                ),
+                user(
+                    "u3",
+                    "2026-10-01T10:20:00Z",
+                    serde_json::json!([{"type":"text","text":"Now test it"}]),
+                ),
+                reply("m2", "2026-10-01T10:21:00Z"),
+            ],
+        );
+        let calls = collect(&[(home.clone(), None)]);
+        let from = DateTime::parse_from_rfc3339("2026-10-01T00:00:00Z")
+            .unwrap()
+            .timestamp();
+        let all = report(
+            &calls,
+            from,
+            from + 86_400,
+            0,
+            &HashMap::new(),
+            &Prices::default(),
+            &Filter::default(),
+        );
+        assert_eq!(all.totals.user_messages, 2);
+        assert_eq!(all.totals.calls, 2);
+        assert_eq!(
+            all.totals.active_minutes, 10,
+            "two separate five-minute slots"
+        );
+        assert_eq!(all.duration_seconds, 21 * 60);
+        assert_eq!(all.options.projects, vec!["/repo/app".to_string()]);
+        let elsewhere = Filter {
+            project: Some("/other".into()),
+            ..Filter::default()
+        };
+        assert_eq!(
+            report(
+                &calls,
+                from,
+                from + 86_400,
+                0,
+                &HashMap::new(),
+                &Prices::default(),
+                &elsewhere
+            )
+            .totals
+            .total,
+            0
+        );
+        let parent = Filter {
+            project: Some("/repo".into()),
+            model: Some("claude-sonnet-5-5".into()),
+            ..Filter::default()
+        };
+        let narrowed = report(
+            &calls,
+            from,
+            from + 86_400,
+            0,
+            &HashMap::new(),
+            &Prices::default(),
+            &parent,
+        );
+        assert_eq!(
+            (narrowed.totals.calls, narrowed.totals.user_messages),
+            (2, 2),
+            "a project includes its subdirectories"
+        );
         std::fs::remove_dir_all(home).ok();
     }
 
