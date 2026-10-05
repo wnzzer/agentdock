@@ -116,8 +116,8 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); });
 .client-card strong em{font-style:normal;font-weight:450;font-size:var(--text-xs);color:var(--muted);margin-left:4px}
 .client-card small{display:block;margin-top:3px;font-size:var(--text-xs);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .client-card small code{font-size:var(--text-xs);color:var(--ink-soft)}
-.client-mark{display:grid;place-items:center;width:34px;height:34px;border-radius:var(--radius-md);background:#F0E9FF;color:#7552B8;flex-shrink:0}
-.client-mark.claude_code{background:#FFF0E5;color:#B75B27}
+.client-mark{display:grid;place-items:center;width:34px;height:34px;border-radius:var(--radius-md);background:var(--codex-soft);color:var(--codex);flex-shrink:0}
+.client-mark.claude_code{background:var(--claude-soft);color:var(--claude)}
 .client-state{border-radius:var(--radius-xl);padding:4px 9px;font-size:var(--text-xs);background:var(--fill);color:var(--ink-soft);flex-shrink:0}
 .client-state.installed{background:var(--ok-soft);color:var(--accent-ink)}
 .client-state.missing{background:var(--warn-soft);color:#9c844c}

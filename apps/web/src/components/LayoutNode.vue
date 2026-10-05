@@ -334,7 +334,7 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
 .dock-tab:focus-visible { box-shadow:inset 0 0 0 2px #53b9b0; }
 .dock-tab-title { min-width:48px;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600; }
 .dock-tab-branch { display:inline-flex;align-items:center;gap:3px;max-width:96px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;font-size:var(--text-xs);border-radius:var(--radius-xs);padding:1px 4px;background:var(--fill);color:var(--ink-soft); }
-.dock-tab-workspace { max-width:80px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;font-size:var(--text-xs);border-radius:var(--radius-xs);padding:1px 4px;background:var(--ok-soft);color:#789b88; }
+.dock-tab-workspace { max-width:80px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;font-size:var(--text-xs);border-radius:var(--radius-xs);padding:1px 4px;background:var(--ok-soft);color:var(--muted); }
 .dock-tab.is-ephemeral { border-bottom-style:dashed; }.dock-tab.is-ephemeral.is-active { border-bottom-color:var(--violet); }
 .dock-tab-ephemeral { flex-shrink:0;width:5px;height:5px;margin-left:-3px;border-radius:50%;background:var(--violet);box-shadow:0 0 0 2px #efeaf8; }
 .dock-tab-session-actions{position:relative;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:none}

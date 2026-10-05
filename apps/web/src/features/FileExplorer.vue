@@ -472,7 +472,7 @@ defineExpose({ reveal });
 .tree-compose{margin:0 7px 4px;padding:4px 7px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--sunken)}
 .tree-rename{padding-left:calc(7px + var(--tree-depth) * 13px)}
 .tree-compose input,.tree-rename input{flex:1;min-width:0;border:1px solid var(--line-strong);border-radius:var(--radius-sm);padding:4px 6px;font:inherit;font-size:var(--text-xs);background:var(--surface)}
-.tree-compose input:focus,.tree-rename input:focus{outline:2px solid #9ccdc2;outline-offset:-1px}
+.tree-compose input:focus,.tree-rename input:focus{outline:2px solid var(--faint);outline-offset:-1px}
 .tree-compose-base{flex-shrink:1;min-width:0;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;font-size:var(--text-xs);color:var(--muted)}
 .tree-compose .text-button,.tree-rename .text-button{flex:none;font-size:var(--text-xs)}
 
@@ -496,7 +496,7 @@ defineExpose({ reveal });
 .file-tree { padding-top: 2px; scroll-padding: 6px; }
 .tree-row { padding: 7px 7px 7px calc(3px + var(--tree-depth) * 15px); gap: 5px; position: relative; }
 .tree-row > svg { flex-shrink: 0; color: var(--faint); }
-.tree-row.is-directory > svg { color: #82a79d; }
+.tree-row.is-directory > svg { color: var(--faint); }
 .tree-row > span { min-width: 38px; }
 .tree-row.is-selected { background: var(--accent-soft); box-shadow: inset 2px 0 #45a18c; }
 .tree-row.is-selected > span { color: var(--accent-hover); }
@@ -507,9 +507,9 @@ defineExpose({ reveal });
 .tree-folder-state { padding-left: calc(25px + var(--tree-depth) * 15px); }
 .tree-folder-state:empty { display: none; }
 .tree-folder-state p { color: var(--faint); font-size: var(--text-xs); line-height: 17px; padding: 3px 0 7px; }
-.tree-error { display: flex; gap: 7px; align-items: baseline; font-size: var(--text-xs); line-height: 16px; padding: 4px 0 8px; color: #af6876; }
+.tree-error { display: flex; gap: 7px; align-items: baseline; font-size: var(--text-xs); line-height: 16px; padding: 4px 0 8px; color: var(--danger-ink); }
 .tree-error > span { min-width: 0; overflow-wrap: anywhere; }
-.tree-error > button { flex-shrink: 0; color: #728e86; font-size: var(--text-xs); }
+.tree-error > button { flex-shrink: 0; color: var(--muted); font-size: var(--text-xs); }
 .inline-error.tree-error { margin: 0 12px 8px; }
 @media (prefers-reduced-motion: reduce) { .tree-disclosure > svg { transition: none; } }
 </style>

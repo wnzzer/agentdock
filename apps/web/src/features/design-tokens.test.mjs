@@ -6,7 +6,7 @@ import { join } from 'node:path';
 // Colours, type sizes and radii come from the tokens in styles.css. These
 // counts are a ratchet: they may go down as the last literals move over, and
 // a new hard-coded value has to be a deliberate change here, not a drift.
-const LIMITS = { hex: 163, fontPx: 3, radiusPx: 0 };
+const LIMITS = { hex: 89, fontPx: 3, radiusPx: 0 };
 
 const src = new URL('..', import.meta.url).pathname;
 const files = [];
@@ -21,8 +21,9 @@ const files = [];
 function styles(path) {
   const source = readFileSync(path, 'utf8');
   if (path.endsWith('.vue')) return [...source.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map(match => match[1]).join('\n');
-  // The token definitions themselves are the one place literals belong.
-  return path.endsWith('styles.css') ? source.slice(source.indexOf('--teal-line: var(--accent-line);')) : source;
+  // The token definitions themselves (the light :root block and the dark
+  // overrides) are the one place literals belong.
+  return path.endsWith('styles.css') ? source.replace(/:root[^{]*\{[^}]*\}/g, '') : source;
 }
 
 test('component styles read design tokens instead of literal colours, sizes and radii', () => {

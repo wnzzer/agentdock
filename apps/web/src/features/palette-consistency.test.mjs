@@ -21,12 +21,16 @@ test('the existing workspace palette remains the source for new conversation and
 });
 
 test('provider orange and purple stay consistent with the existing colored tabs', () => {
+  // The provider colours are tokens, so a theme can retint them; the light
+  // values must stay the ones the coloured tabs use.
+  const shell = readFileSync(new URL('../styles.css', import.meta.url), 'utf8').toLowerCase();
+  for (const [provider, token] of [['claude_code', '--claude'], ['codex', '--codex']]) {
+    assert.ok(shell.includes(`${token}: ${TAB_ICON_PALETTE[provider].color.toLowerCase()};`), `${token} matches the ${provider} tab`);
+    assert.ok(shell.includes(`${token}-soft: ${TAB_ICON_PALETTE[provider].background.toLowerCase()};`), `${token}-soft matches the ${provider} tab`);
+  }
   for (const file of ['./ChatSessionPane.vue', './AccountsDialog.vue', './ChatPreview.vue']) {
-    const style = css(file).toLowerCase();
-    for (const provider of ['claude_code', 'codex']) {
-      assert.ok(style.includes(TAB_ICON_PALETTE[provider].color.toLowerCase()), `${file} preserves ${provider} color`);
-      assert.ok(style.includes(TAB_ICON_PALETTE[provider].background.toLowerCase()), `${file} preserves ${provider} background`);
-    }
+    const style = css(file);
+    for (const token of ['var(--claude)', 'var(--claude-soft)', 'var(--codex)', 'var(--codex-soft)']) assert.ok(style.includes(token), `${file} uses ${token}`);
   }
 });
 

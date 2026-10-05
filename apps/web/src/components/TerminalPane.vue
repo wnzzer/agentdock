@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import Icon from "../features/Icon.vue";
@@ -9,6 +9,7 @@ import { onPageReturn } from "../features/page-return";
 import type { SessionStreamState } from "../features/session-stream";
 import { arrowSequence, ctrlSequence, ENTER_SEQUENCE, ESCAPE_SEQUENCE, isTap, repeatArrow, selectionPresses, shiftSequence, tabSequence, type ArrowKey } from "../features/terminal-keys";
 import { swipeAxis } from "../features/pane-swipe";
+import { darkScheme } from "../features/theme";
 const { t } = useI18n();
 
 const props = withDefaults(defineProps<{ sessionId: string; dark?: boolean }>(), { dark: false });
@@ -251,6 +252,18 @@ function connect() {
 }
 defineExpose({ reconnect: connect });
 
+/** A shell is always dark; an agent's terminal follows the interface. */
+const dark = computed(() => props.dark || darkScheme.value);
+function terminalTheme() {
+  return dark.value ? { background: "#17232d", foreground: "#dde6eb", cursor: "#63dac8", selectionBackground: "#2b4a46" } : {
+    background: "#ffffff", foreground: "#243343", cursor: "#0a8278", selectionBackground: "#ccebe6",
+    black: "#243343", brightBlack: "#657380", red: "#b4374c", brightRed: "#c73f55", green: "#187953", brightGreen: "#098462",
+    yellow: "#916100", brightYellow: "#9b6800", blue: "#3467af", brightBlue: "#3375c5", magenta: "#7856aa", brightMagenta: "#8965bc",
+    cyan: "#087e80", brightCyan: "#058587", white: "#607080", brightWhite: "#384658",
+  };
+}
+watch(dark, () => { if (terminal) terminal.options.theme = terminalTheme(); });
+
 function initializeTerminal() {
   if (terminal) return;
   if (!host.value) throw new Error("Terminal host is unavailable");
@@ -259,12 +272,7 @@ function initializeTerminal() {
     // A Nerd Font the viewer already has wins; the bundled symbols fill in the
     // prompt icons for everyone else, phones included.
     fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", "Symbols Nerd Font Mono", "AgentDock Symbols", monospace',
-    theme: props.dark ? { background: "#17232d", foreground: "#dde6eb", cursor: "#63dac8" } : {
-      background: "#ffffff", foreground: "#243343", cursor: "#0a8278", selectionBackground: "#ccebe6",
-      black: "#243343", brightBlack: "#657380", red: "#b4374c", brightRed: "#c73f55", green: "#187953", brightGreen: "#098462",
-      yellow: "#916100", brightYellow: "#9b6800", blue: "#3467af", brightBlue: "#3375c5", magenta: "#7856aa", brightMagenta: "#8965bc",
-      cyan: "#087e80", brightCyan: "#058587", white: "#607080", brightWhite: "#384658",
-    },
+    theme: terminalTheme(),
   });
   fit = new FitAddon(); terminal.loadAddon(fit); terminal.open(host.value);
   subscriptions.push(terminal.onData(data => {
@@ -310,7 +318,7 @@ onUnmounted(() => { stopPageReturn(); disposed = true; stream.dispose(); cleanup
 </script>
 
 <template>
-  <div :class="['native-terminal', { dark }]">
+  <div :class="['native-terminal', { dark: dark }]">
     <div class="terminal-connection"><span :class="['state-dot', state]" /><span>{{ t(state === 'connected' ? 'Live · native client' : state) }}</span><button v-if="state === 'disconnected' || state === 'error'" class="text-button" :aria-label="t('Reconnect session stream')" @click="connect"><Icon name="refresh" :size="13" />{{ t('Reconnect') }}</button></div>
     <div v-if="notice" :class="state === 'error' ? 'inline-error' : 'inline-notice'" :role="state === 'error' ? 'alert' : 'status'">{{ nativeNotice ? notice : t(notice) }}</div>
     <div ref="host" class="terminal-host" :aria-label="t('Native session {id}', { id: sessionId })" @pointerdown="gestureStart" @pointerup="gestureEnd" @pointercancel="gesture = undefined" @touchstart="touchScrollStart" @touchmove="touchScrollMove" />

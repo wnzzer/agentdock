@@ -139,7 +139,7 @@ async function undo(notice: Notice) {
 .agent-key small{font-weight:400;color:var(--muted);font-size:var(--text-xs)}
 .agent-error{margin:0;color:var(--danger);font-size:var(--text-sm)}
 .agent-request footer{display:flex;justify-content:flex-end;gap:8px;margin-top:2px}
-.agent-notice{display:flex;align-items:center;gap:8px;padding:9px 10px 9px 12px;border:1px solid var(--accent-line);border-radius:var(--radius-md);background:var(--ok-soft);color:#335b50;font-size:var(--text-sm);box-shadow:var(--shadow-lg);animation:agent-in .22s ease-out}
+.agent-notice{display:flex;align-items:center;gap:8px;padding:9px 10px 9px 12px;border:1px solid var(--accent-line);border-radius:var(--radius-md);background:var(--ok-soft);color:var(--accent-ink);font-size:var(--text-sm);box-shadow:var(--shadow-lg);animation:agent-in .22s ease-out}
 .agent-notice>svg{flex:none;color:var(--teal)}
 .agent-notice>span{flex:1;min-width:0;line-height:1.45}
 .agent-notice .text-button{font-size:var(--text-sm)}

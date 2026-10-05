@@ -26,7 +26,7 @@ function assertColor(html, type) {
   const marker = html.match(new RegExp(`<span\\b[^>]*data-tab-icon="${type}"[^>]*>`))?.[0];
   assert.ok(marker, `${type} icon is rendered`);
   assert.ok(marker.toLowerCase().includes(`color:${TAB_ICON_PALETTE[type].color.toLowerCase()}`), `${type} has its own foreground`);
-  assert.ok(marker.toLowerCase().includes(`background-color:${TAB_ICON_PALETTE[type].background.toLowerCase()}`), `${type} has its own light background`);
+  assert.ok(marker.toLowerCase().includes(`--tab-tint:${TAB_ICON_PALETTE[type].background.toLowerCase()}`), `${type} has its own light tint`);
 }
 
 test('TabIcon renders the existing official provider vectors with an explicit colored container', async () => {

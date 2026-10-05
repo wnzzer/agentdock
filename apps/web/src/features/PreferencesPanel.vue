@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { setThemePreference, themePreference, type ThemePreference } from './theme';
 import type { EndpointProfile } from '@agentdock/protocol';
 import ProviderIcon from './ProviderIcon.vue';
 import { errorMessage, providerLabel } from './api';
@@ -58,6 +59,10 @@ const pick = (provider: PreferenceProvider, field: 'endpoint_profile_id' | 'effo
         <span><strong>{{ t('Language') }}</strong><small>{{ t('For this browser.') }}</small></span>
         <select :value="locale" :aria-label="t('Language')" @change="setLocale(($event.target as HTMLSelectElement).value === 'en' ? 'en' : 'zh-CN')"><option value="zh-CN" lang="zh-CN">中文</option><option value="en" lang="en">English</option></select>
       </label>
+      <label class="preference-row">
+        <span><strong>{{ t('Appearance') }}</strong><small>{{ t('For this browser.') }}</small></span>
+        <select :value="themePreference" :aria-label="t('Appearance')" @change="setThemePreference(($event.target as HTMLSelectElement).value as ThemePreference)"><option value="system">{{ t('Match system') }}</option><option value="light">{{ t('Light') }}</option><option value="dark">{{ t('Dark') }}</option></select>
+      </label>
     </article>
     <p v-if="!loaded" class="preferences-quiet">{{ t('Loading…') }}</p>
     <template v-else>
@@ -106,8 +111,8 @@ const pick = (provider: PreferenceProvider, field: 'endpoint_profile_id' | 'effo
 .preference-card{border:1px solid var(--border);border-radius:var(--radius-lg);padding:13px 14px 6px;margin-bottom:10px;background:var(--surface)}
 .preference-card header{display:flex;align-items:center;gap:10px;margin-bottom:6px}
 .preference-card header strong{font-size:var(--text-md);font-weight:600;color:var(--ink)}
-.preference-mark{display:grid;place-items:center;width:30px;height:30px;border-radius:var(--radius-md);background:#F0E9FF;color:#7552B8;flex-shrink:0}
-.preference-mark.claude_code{background:#FFF0E5;color:#B75B27}
+.preference-mark{display:grid;place-items:center;width:30px;height:30px;border-radius:var(--radius-md);background:var(--codex-soft);color:var(--codex);flex-shrink:0}
+.preference-mark.claude_code{background:var(--claude-soft);color:var(--claude)}
 .preference-row{display:flex;align-items:center;gap:14px;padding:9px 0;border-top:1px solid var(--border)}
 .preference-row.first{border-top:0;padding-top:0}
 .preference-switch{appearance:none;flex:none;position:relative;width:38px;height:22px;margin:0;border-radius:var(--radius-md);background:var(--line-strong);cursor:pointer;transition:background .15s}

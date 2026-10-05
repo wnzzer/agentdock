@@ -22,7 +22,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
 </template>
 
 <style scoped>
-.lightbox{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:48px 24px;background:#10181ecc;backdrop-filter:blur(4px);cursor:zoom-out}
+.lightbox{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:48px 24px;background:color-mix(in srgb, var(--shade) 80%, transparent);backdrop-filter:blur(4px);cursor:zoom-out}
 .lightbox figure{margin:0;max-width:100%;max-height:100%;display:flex;flex-direction:column;align-items:center;gap:10px;cursor:default}
 .lightbox img{max-width:min(1600px,100%);max-height:calc(100dvh - 140px);object-fit:contain;border-radius:var(--radius-md);background:repeating-conic-gradient(var(--fill) 0 25%,var(--surface) 0 50%) 0 0/16px 16px;box-shadow:0 20px 60px #0008}
 .lightbox figcaption{color:var(--fill-hover);font-size:var(--text-sm)}
