@@ -253,21 +253,23 @@ svg { flex-shrink: 0; vertical-align: middle; }
 .welcome-screen>p { color: var(--muted); font-size: var(--text-md); max-width: 355px; line-height: 23px; margin-bottom: 27px; }
 .welcome-screen>small { color: var(--faint); font-size: var(--text-xs); margin-top: 25px; }
 .pane-empty { flex: 1; min-width: 0; min-height: 0; overflow: auto; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 26px 22px; gap: 13px; color: var(--muted); }
-.pane-empty h3 { font-size: var(--text-base); color: var(--ink-soft); font-weight: 550; line-height: 21px; }
-.pane-empty p { max-width: 290px; font-size: var(--text-xs); line-height: 19px; color: var(--faint); }
-.pane-empty>small { font-size: var(--text-xs); line-height: 16px; color: var(--faint); max-width: 260px; }
-.empty-icon { width: 57px; height: 57px; background: var(--violet-soft); border: 1px solid var(--violet-soft); border-radius: var(--radius-xl); display: grid; place-items: center; color: #b1a0cd; flex-shrink: 0; margin-bottom: 2px; }
-.empty-icon.teal { background: var(--ok-soft); border-color: var(--accent-line); color: #8cbaaa; }
+.pane-empty h3 { font-size: var(--text-base); color: var(--ink); font-weight: 600; line-height: 1.4; }
+.pane-empty p { max-width: 300px; font-size: var(--text-sm); line-height: 1.6; color: var(--muted); }
+.pane-empty>small { font-size: var(--text-xs); line-height: 1.5; color: var(--muted); max-width: 260px; }
+.empty-icon { width: 48px; height: 48px; background: var(--fill); border-radius: var(--radius-lg); display: grid; place-items: center; color: var(--muted); flex-shrink: 0; margin-bottom: 2px; }
+.empty-icon.teal { background: var(--accent-soft); color: var(--accent); }
 .small-empty { color: var(--faint); padding: 20px 12px; font-size: var(--text-xs); text-align: center; line-height: 19px; }
 .content-toolbar { display: flex; align-items: center; gap: 8px; justify-content: space-between; min-height: 39px; padding: 6px 10px; flex-shrink: 0; border-bottom: 1px solid var(--fill); font-size: var(--text-xs); color: var(--muted); }
 .content-toolbar>span { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .content-toolbar strong { font-weight: 550; }
 .toolbar-buttons { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .content-footer { min-height: 23px; font-size: var(--text-xs); color: var(--faint); padding: 5px 9px; border-top: 1px solid var(--fill); display: flex; justify-content: space-between; flex-shrink: 0; gap: 8px; }
-.inline-error, .inline-notice, .inline-success, .confirmation-bar { margin: 8px; padding: 8px 10px; border-radius: var(--radius-sm); font-size: var(--text-xs); line-height: 17px; overflow-wrap: anywhere; flex-shrink: 0; }
-.inline-error { background: var(--danger-soft); border: 1px solid var(--danger-line); color: var(--danger-ink); }
-.inline-notice, .confirmation-bar { background: #fffaee; border: 1px solid var(--warn-line); color: #9c844c; }
-.inline-success { background: var(--ok-soft); border: 1px solid var(--accent-line); color: var(--ok); }
+/* Notices are quiet: a soft tint and a thin edge in the status colour, so a
+   pane can carry one without turning into a banner. */
+.inline-error, .inline-notice, .inline-success, .confirmation-bar { margin: 8px; padding: 9px 12px; border-radius: var(--radius-sm); font-size: var(--text-sm); line-height: 1.55; overflow-wrap: anywhere; flex-shrink: 0; border: 0; }
+.inline-error { background: var(--danger-soft); box-shadow: inset 3px 0 0 var(--danger); color: var(--danger-ink); }
+.inline-notice, .confirmation-bar { background: var(--warn-soft); box-shadow: inset 3px 0 0 var(--warn); color: var(--warn-ink); }
+.inline-success { background: var(--ok-soft); box-shadow: inset 3px 0 0 var(--ok); color: var(--ok-ink); }
 .confirmation-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .status-pill { display: inline-block; border-radius: var(--radius-sm); font-size: var(--text-xs); line-height: 15px; padding: 1px 5px; background: var(--fill); color: var(--faint); }
 .status-pill.running { background: var(--ok-soft); color: var(--ok); }

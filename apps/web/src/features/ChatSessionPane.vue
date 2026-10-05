@@ -1286,6 +1286,28 @@ function keydown(event: KeyboardEvent) {
 .chat-pane.is-phone .chat-tool-run>.chat-tool>summary{padding-left:22px}
 .chat-pane.is-phone .chat-tool pre{font-size:var(--text-sm);max-height:50vh}
 .chat-pane.is-phone .chat-tool+.chat-message,.chat-pane.is-phone .chat-tool-solo+.chat-message,.chat-pane.is-phone .chat-tool-run+.chat-message{margin-top:10px}
+/* Desktop conversation, lightened to match the phone: a compact user bubble
+   with no label, tool calls as quiet rows that open into a recessed panel,
+   and a composer that sits on the same column as the messages. */
+.chat-pane:not(.is-phone) .chat-message.user{width:fit-content;max-width:min(82%,640px);padding:10px 16px;border:0;border-radius:var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl);background:var(--accent-soft)}
+.chat-pane:not(.is-phone) .chat-message.user>.chat-message-label{margin-bottom:4px}
+.chat-pane:not(.is-phone) .chat-message.user{margin-right:max(0px,calc((100% - 820px) / 2))}
+@media (hover:hover){.chat-pane:not(.is-phone) .chat-message-actions{opacity:0}.chat-pane:not(.is-phone) .chat-message:hover .chat-message-actions,.chat-pane:not(.is-phone) .chat-message-actions:focus-within{opacity:1}.chat-pane:not(.is-phone) .chat-message.user .chat-message-actions{position:absolute;right:4px;bottom:-26px;margin:0}.chat-pane:not(.is-phone) .chat-message.user{position:relative}}
+.chat-pane:not(.is-phone) .chat-message.user>.chat-message-label>span{display:none}
+.chat-pane:not(.is-phone) .chat-message.user>.chat-message-label:not(:has(.chat-steered)){display:none}
+.chat-pane:not(.is-phone) .chat-tool,.chat-pane:not(.is-phone) .chat-tool-run{margin-bottom:6px;border:0;border-radius:var(--radius-md);background:none}
+.chat-pane:not(.is-phone) .chat-tool>summary,.chat-pane:not(.is-phone) .chat-tool-run>summary{min-height:34px;padding:6px 8px;border-radius:var(--radius-md);transition:background var(--duration-fast)}
+@media (hover:hover){.chat-pane:not(.is-phone) .chat-tool>summary:hover,.chat-pane:not(.is-phone) .chat-tool-run>summary:hover{background:var(--fill)}}
+.chat-pane:not(.is-phone) .chat-tool>summary strong{font:var(--text-sm) var(--mono);color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-pane:not(.is-phone) .chat-tool-run>summary strong{font-size:var(--text-sm);font-weight:500;color:var(--ink-soft)}
+.chat-pane:not(.is-phone) .chat-tool[open],.chat-pane:not(.is-phone) .chat-tool-run[open]{margin:4px auto 12px;background:var(--sunken);box-shadow:inset 0 0 0 1px var(--border)}
+.chat-pane:not(.is-phone) .chat-tool-run[open]>summary{border-bottom:1px solid var(--border);border-radius:var(--radius-md) var(--radius-md) 0 0}
+.chat-pane:not(.is-phone) .chat-tool-run>.chat-tool{margin:0;box-shadow:none;border-radius:0}
+.chat-pane:not(.is-phone) .chat-tool-run>.chat-tool>summary{padding-left:22px}
+.chat-pane:not(.is-phone) .chat-tool+.chat-message,.chat-pane:not(.is-phone) .chat-tool-run+.chat-message{margin-top:12px}
+.chat-composer:not(.is-phone){margin-inline:max(16px,calc((100% - 860px) / 2))}
+.chat-composer:not(.is-phone) footer>span:first-child{opacity:0;transition:opacity var(--duration-normal)}
+.chat-composer:not(.is-phone):focus-within footer>span:first-child{opacity:1}
 /* Approval and question cards: a calm surface with one coloured voice (amber
    for a permission, teal for a question) on the icon and the left edge, so the
    request reads as part of the conversation rather than a warning banner. */
