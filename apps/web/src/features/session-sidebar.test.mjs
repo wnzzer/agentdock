@@ -6,7 +6,7 @@ import vue from '@vitejs/plugin-vue';
 import { createSSRApp } from 'vue';
 import { renderToString } from 'vue/server-renderer';
 
-let server, Sidebar, SessionRow, i18n;
+let server, Sidebar, SessionRow, SessionsPage, i18n;
 const workspace = { id: 'sidebar-workspace', name: 'Fixture workspace', root_path: '/fixture/sidebar', created_at: '2026-09-01T00:00:00Z' };
 const session = (id, changes = {}) => ({
   id, workspace_id: workspace.id, title: `Fixture ${id}`, provider: 'codex', status: 'stopped',
@@ -21,6 +21,7 @@ before(async () => {
   server = await createServer({ configFile: false, root: fileURLToPath(new URL('../../', import.meta.url)), plugins: [vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: 'custom', optimizeDeps: { noDiscovery: true } });
   Sidebar = (await server.ssrLoadModule('/src/features/WorkspaceSidebar.vue')).default;
   SessionRow = (await server.ssrLoadModule('/src/features/SidebarSessionRow.vue')).default;
+  SessionsPage = (await server.ssrLoadModule('/src/features/SessionsPage.vue')).default;
   i18n = (await server.ssrLoadModule('/src/i18n/index.ts')).useI18n();
   i18n.setLocale('en');
 });
@@ -41,33 +42,23 @@ async function render(component, props, configure) {
 }
 const sidebarProps = changes => ({ workspaces: [workspace], sessions: [current, archived], selectedWorkspaceId: workspace.id, archiveSupported: true, storageKey: `session-sidebar-test-${++renderId}`, ...changes });
 
-test('All sessions expands an actual inline list without emitting the old modal event or fetching', async t => {
-  let requests = 0, modalEvents = 0;
+test('All sessions is a page now: the sidebar links to it and lists no library of its own', async t => {
+  let requests = 0, opened = 0;
   t.mock.method(globalThis, 'fetch', async () => { requests++; throw Error('unexpected request'); });
-  const { html, state } = await render(Sidebar, sidebarProps({ onAllSessions: () => modalEvents++ }), bindings => { bindings.toggleAllSessions(); });
-  assert.equal(state.allSessionsExpanded.value, true);
-  assert.match(html, /id="sidebar-session-library"/);
-  assert.match(html, /class="all-sessions-list"/);
-  assert.match(html, /aria-expanded="true"[^>]*aria-controls="sidebar-session-library"/);
-  assert.doesNotMatch(html, /role="dialog"|data-sidebar-session-id="archived"/);
-  assert.equal(modalEvents, 0);
+  const { html } = await render(Sidebar, sidebarProps({ currentPage: 'sessions', onAllSessions: () => opened++ }));
+  assert.match(html, /aria-current="page"[^>]*>.*All sessions/s);
+  assert.doesNotMatch(html, /sidebar-session-library|all-sessions-list|role="dialog"|data-sidebar-session-id="archived"/);
   assert.equal(requests, 0);
-  state.toggleAllSessions();
-  assert.equal(state.allSessionsExpanded.value, false);
 });
 
-test('the rendered list supports archive filters and fuzzy query without duplicating archived workspace rows', async () => {
-  const { html } = await render(Sidebar, sidebarProps(), state => {
-    state.allSessionsExpanded.value = true;
-    state.sessionFiltersExpanded.value = true;
-    state.sessionArchive.value = 'archived';
-    state.sessionQuery.value = 'fxtr arcvd';
+test('the session library page filters by archive state and fuzzy query without duplicating rows', async () => {
+  const { html, state } = await render(SessionsPage, { workspaces: [workspace], sessions: [current, archived], archiveSupported: true }, state => {
+    state.archive.value = 'archived';
+    state.query.value = 'fxtr arcvd';
   });
-  assert.equal((html.match(/data-sidebar-session-id="archived"/g) ?? []).length, 1);
-  assert.equal((html.match(/class="session-library-filters"/g) ?? []).length, 1);
+  assert.deepEqual(state.filtered.value.map(entry => entry.session.id), [archived.id]);
+  assert.equal((html.match(/<strong[^>]*>Fixture archived<\/strong>/g) ?? []).length, 1);
   for (const label of ['workspace', 'provider', 'status', 'archive state']) assert.ok(html.includes(`Filter sessions by ${label}`));
-  const ordinary = html.slice(html.indexOf('class="workspace-groups"'));
-  assert.doesNotMatch(ordinary, /data-sidebar-session-id="archived"/);
 });
 
 test('archive and restore actions emit only reversible metadata intent and reject unsupported or busy attempts', async t => {
@@ -152,13 +143,11 @@ test('revealSession expands and scrolls the matching row while preserving canvas
   assert.equal(await exposed.revealSession('missing'), false);
 });
 
-test('revealSession finds an archived row by opening archived inline results and clearing all blockers', async () => {
-  const { state, exposed } = await render(Sidebar, sidebarProps());
-  state.sessionQuery.value = 'absent'; state.sessionProvider.value = 'terminal'; state.sessionWorkspace.value = 'absent'; state.sessionStatus.value = 'failed';
+test('revealSession sends an archived session to the library page, filtered to archived', async () => {
+  const shown = [];
+  const { exposed } = await render(Sidebar, sidebarProps({ onShowInSessions: (...args) => shown.push(args) }));
   assert.equal(await exposed.revealSession(archived.id), true);
-  assert.equal(state.allSessionsExpanded.value, true);
-  assert.equal(state.sessionArchive.value, 'archived');
-  assert.deepEqual(state.filteredSessions.value.map(entry => entry.session.id), [archived.id]);
+  assert.deepEqual(shown, [[archived.id, true]]);
 });
 
 test('bilingual row actions translate application text but preserve session titles', async () => {
@@ -184,18 +173,17 @@ test('delete is offered only for archived or temporary sessions and asks before 
 
 test('select mode archives, restores and deletes only the ticked rows that allow it', async () => {
   const events = [];
-  const { state } = await render(Sidebar, sidebarProps({ onArchiveSessions: (...args) => events.push(['archive', ...args]), onDeleteSessions: list => events.push(['delete', list]) }), state => {
-    state.allSessionsExpanded.value = true; state.sessionArchive.value = 'all';
+  const { state } = await render(SessionsPage, { workspaces: [workspace], sessions: [current, archived], archiveSupported: true, onArchiveSessions: (...args) => events.push(['archive', ...args]), onDeleteSessions: list => events.push(['delete', list]) }, state => {
+    state.archive.value = 'all';
   });
-  state.setSelecting(true);
   state.checkAll();
   assert.deepEqual(state.checkedIds.value.sort(), [archived.id, current.id].sort());
-  state.invertChecked();
+  state.invert();
   assert.deepEqual(state.checkedIds.value, []);
   state.checkAll();
-  state.archiveChecked(true);
+  state.bulkArchive(true);
   assert.deepEqual(events.shift(), ['archive', [current], true]);
   state.checkAll();
-  state.deleteChecked();
+  state.bulkDelete();
   assert.deepEqual(events.shift(), ['delete', [archived]]);
 });

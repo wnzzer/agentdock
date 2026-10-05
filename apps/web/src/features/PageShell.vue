@@ -1,0 +1,56 @@
+<script setup lang="ts">
+import { onBeforeUnmount, onMounted, ref } from "vue";
+import Icon from "./Icon.vue";
+import { useI18n } from "../i18n";
+
+/**
+ * A page over the canvas: a title, a way back, and a body that scrolls on its
+ * own. Esc goes back, unless something inside (a menu, a dialog, a field's own
+ * Esc) has already used it.
+ */
+defineProps<{ title: string; subtitle?: string }>();
+const emit = defineEmits<{ back: [] }>();
+const { t } = useI18n();
+const page = ref<HTMLElement>();
+function onKey(event: KeyboardEvent) {
+  if (event.key !== "Escape" || event.defaultPrevented) return;
+  if (document.querySelector(".modal-backdrop, .bottom-sheet-backdrop, details[open]")) return;
+  event.preventDefault(); emit("back");
+}
+onMounted(() => { document.addEventListener("keydown", onKey); page.value?.focus({ preventScroll: true }); });
+onBeforeUnmount(() => document.removeEventListener("keydown", onKey));
+</script>
+
+<template>
+  <section ref="page" class="page-shell" tabindex="-1" :aria-label="title">
+    <header class="page-header">
+      <button type="button" class="page-back" :title="t('Back to workspace') + ' · Esc'" @click="emit('back')"><Icon name="back" :size="16" /><span>{{ t('Back to workspace') }}</span></button>
+      <div class="page-heading"><h1>{{ title }}</h1><p v-if="subtitle">{{ subtitle }}</p></div>
+      <div class="page-actions"><slot name="actions" /></div>
+    </header>
+    <div class="page-body"><slot /></div>
+  </section>
+</template>
+
+<style scoped>
+.page-shell:focus,.page-shell:focus-visible{outline:none}
+.page-shell{position:absolute;inset:0;z-index:20;display:flex;flex-direction:column;min-height:0;background:var(--bg);outline:0;animation:page-in var(--duration-normal) var(--ease-out)}
+.page-header{display:flex;align-items:center;gap:var(--space-4);flex-wrap:wrap;padding:var(--space-4) var(--space-6) var(--space-3);max-width:1180px;width:100%;margin:0 auto}
+.page-back{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 10px 0 6px;border:0;border-radius:var(--radius-md);background:none;color:var(--ink-soft);font-size:var(--text-sm);cursor:pointer}
+.page-back:hover{background:var(--fill);color:var(--ink)}
+.page-heading{flex:1;min-width:0}
+.page-heading h1{font-size:var(--text-2xl);font-weight:650;letter-spacing:-.3px;color:var(--ink)}
+.page-heading p{margin-top:2px;font-size:var(--text-sm);color:var(--muted)}
+.page-actions{display:flex;align-items:center;gap:var(--space-2)}
+.page-body{flex:1;min-height:0;overflow:auto;padding:var(--space-2) var(--space-6) var(--space-6)}
+.page-body>:deep(*){max-width:1180px;margin-inline:auto}
+@keyframes page-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@media (max-width:760px){
+  .page-header{padding:var(--space-3) var(--space-3) var(--space-2);gap:var(--space-2)}
+  .page-back span{display:none}
+  .page-heading{flex-basis:calc(100% - 48px)}
+  .page-heading h1{font-size:var(--text-xl)}
+  .page-body{padding:var(--space-2) var(--space-3) var(--space-4)}
+}
+@media (prefers-reduced-motion:reduce){.page-shell{animation:none}}
+</style>

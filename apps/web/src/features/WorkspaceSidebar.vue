@@ -6,15 +6,12 @@ import type { ProviderKind, Session, Workspace } from "@agentdock/protocol";
 import { providerLabel } from "./api";
 import { emptyWorkspaceGroupPreferences, groupWorkspaces, loadWorkspaceGroupPreferences, saveWorkspaceGroupPreferences, workspaceGroupStorageKey } from "./workspace-groups";
 import type { WorkspaceGroup } from "./workspace-groups";
-import { filterSessionList, isEphemeralSession, isSessionArchived } from "./session-list";
-import type { SessionArchiveFilter, SessionEphemeralFilter } from "./session-list";
+import { isEphemeralSession, isSessionArchived } from "./session-list";
 import { useI18n } from "../i18n";
 import Icon from "./Icon.vue";
 import ProviderIcon from "./ProviderIcon.vue";
 import { lastQuickProvider } from "./quick-session";
 import SidebarSessionRow from "./SidebarSessionRow.vue";
-import ContextMenu from "./ContextMenu.vue";
-import { invertSelection, selectRange } from "./session-selection";
 
 const props = withDefaults(defineProps<{
   workspaces: Workspace[];
@@ -31,6 +28,8 @@ const props = withDefaults(defineProps<{
   storageKey?: string;
   /** Branch of each workspace directory, where known. */
   workspaceBranches?: Record<string, string>;
+  /** The page shown over the canvas, if any, for the navigation's current item. */
+  currentPage?: string;
 }>(), { historySupported: false, archiveSupported: false, ephemeralSupported: false, archiveBusyIds: () => [], keepBusyIds: () => [], deleteBusyIds: () => [], sessionsLoading: false });
 const emit = defineEmits<{
   branchSwitched: [id: string];
@@ -45,6 +44,9 @@ const emit = defineEmits<{
   loadHistory: [id: string];
   addWorkspace: [];
   allSessions: [];
+  system: [];
+  /** A session the workspace groups do not list (archived, temporary): find it in the library page. */
+  showInSessions: [id: string, archived: boolean];
   canvas: [];
   archiveSession: [session: Session, archived: boolean];
   archiveSessions: [sessions: Session[], archived: boolean];
@@ -60,70 +62,10 @@ const searchExpanded = ref<Record<string, boolean>>({});
 const openMenuId = ref<string>();
 const menuButtons = new Map<string, HTMLElement>();
 const sidebarElement = ref<HTMLElement>();
-const allSessionsExpanded = ref(false);
-const sessionFiltersExpanded = ref(false);
-const sessionQuery = ref("");
-const sessionWorkspace = ref("");
-const sessionProvider = ref<ProviderKind | "">("");
-const sessionStatus = ref<Session["status"] | "">("");
-const sessionArchive = ref<SessionArchiveFilter>("current");
-const sessionEphemeral = ref<SessionEphemeralFilter>("all");
-const sessionStatuses: Session["status"][] = ["starting", "running", "waiting", "stopped", "failed"];
 const archiveBusySet = computed(() => new Set(props.archiveBusyIds));
 const keepBusySet = computed(() => new Set(props.keepBusyIds));
 const deleteBusySet = computed(() => new Set(props.deleteBusyIds));
 const sessionCount = computed(() => new Set(props.sessions.map(session => session.id)).size);
-const filteredSessions = computed(() => filterSessionList(props.sessions, props.workspaces, {
-  query: sessionQuery.value, workspaceId: sessionWorkspace.value, provider: sessionProvider.value,
-  status: sessionStatus.value, archive: sessionArchive.value, ephemeral: sessionEphemeral.value,
-  statusLabels: Object.fromEntries(sessionStatuses.map(status => [status, t(status)])),
-}));
-/**
- * Select mode in the library: tick rows (Shift extends a range), then archive,
- * restore or delete them together. Only rows the filters show can be ticked,
- * so a bulk action never reaches a session the user cannot see.
- */
-const selecting = ref(false);
-const checkedIds = ref<string[]>([]);
-const confirmBulkDelete = ref(false);
-/** Right-click on the library's empty space. */
-const libraryMenu = ref<{ x: number; y: number }>();
-let lastCheckedId: string | undefined;
-const visibleIds = computed(() => filteredSessions.value.map(entry => entry.session.id));
-const checkedSet = computed(() => new Set(checkedIds.value));
-const checkedSessions = computed(() => filteredSessions.value.map(entry => entry.session).filter(session => checkedSet.value.has(session.id)));
-const checkedToArchive = computed(() => checkedSessions.value.filter(session => !isSessionArchived(session)));
-const checkedToRestore = computed(() => checkedSessions.value.filter(isSessionArchived));
-const checkedToDelete = computed(() => checkedSessions.value.filter(session => isSessionArchived(session) || isEphemeralSession(session)));
-const allVisibleChecked = computed(() => visibleIds.value.length > 0 && visibleIds.value.every(id => checkedSet.value.has(id)));
-watch(visibleIds, ids => { const visible = new Set(ids); checkedIds.value = checkedIds.value.filter(id => visible.has(id)); confirmBulkDelete.value = false; });
-watch(checkedIds, () => { confirmBulkDelete.value = false; });
-function setSelecting(value: boolean) { selecting.value = value; checkedIds.value = []; lastCheckedId = undefined; libraryMenu.value = undefined; }
-function checkSession(session: Session, range: boolean) {
-  checkedIds.value = selectRange(visibleIds.value, checkedIds.value, session.id, range ? lastCheckedId : undefined);
-  lastCheckedId = session.id;
-}
-function checkAll() { selecting.value = true; checkedIds.value = allVisibleChecked.value ? [] : [...visibleIds.value]; libraryMenu.value = undefined; }
-function invertChecked() { selecting.value = true; checkedIds.value = invertSelection(visibleIds.value, checkedIds.value); libraryMenu.value = undefined; }
-function archiveChecked(archived: boolean) {
-  const list = archived ? checkedToArchive.value : checkedToRestore.value;
-  if (!props.archiveSupported || !list.length) return;
-  emit("archiveSessions", list, archived); checkedIds.value = [];
-}
-function deleteChecked() {
-  const list = checkedToDelete.value;
-  if (!list.length) return;
-  emit("deleteSessions", list); checkedIds.value = []; confirmBulkDelete.value = false;
-}
-function openLibraryMenu(event: MouseEvent) {
-  // A row's own right-click opens that row's menu instead, and fields keep
-  // the browser's menu for paste.
-  if ((event.target as Element | null)?.closest?.("[data-sidebar-session-id], input, select, textarea")) return;
-  event.preventDefault();
-  libraryMenu.value = { x: event.clientX, y: event.clientY };
-}
-function libraryAction(run: () => void) { libraryMenu.value = undefined; run(); }
-const hasSessionFilters = computed(() => Boolean(sessionWorkspace.value || sessionProvider.value || sessionStatus.value || sessionArchive.value !== "current" || sessionEphemeral.value !== "all"));
 const persistenceKey = computed(() => workspaceGroupStorageKey(props.storageKey ?? (typeof window === "undefined" ? "default" : window.location.origin)));
 const groups = computed(() => groupWorkspaces(props.workspaces, props.sessions, { query: query.value, selectedWorkspaceId: props.selectedWorkspaceId, preferences: preferences.value, searchExpanded: searchExpanded.value }));
 const canvasWorkspaceId = computed(() => props.workspaces.some(workspace => workspace.id === props.selectedWorkspaceId) ? props.selectedWorkspaceId : props.workspaces[0]?.id);
@@ -132,7 +74,7 @@ function storage(): Storage | undefined {
   try { return typeof localStorage === "undefined" ? undefined : localStorage; } catch { return undefined; }
 }
 function persist() { saveWorkspaceGroupPreferences(persistenceKey.value, preferences.value, storage()); }
-watch(persistenceKey, key => { setSelecting(false); preferences.value = loadWorkspaceGroupPreferences(key, storage()); query.value = ""; searchExpanded.value = {}; openMenuId.value = undefined; allSessionsExpanded.value = false; clearSessionFilters(); }, { immediate: true });
+watch(persistenceKey, key => { preferences.value = loadWorkspaceGroupPreferences(key, storage()); query.value = ""; searchExpanded.value = {}; openMenuId.value = undefined; }, { immediate: true });
 watch(query, () => { searchExpanded.value = {}; openMenuId.value = undefined; });
 watch(() => props.workspaces, workspaces => { if (openMenuId.value && !workspaces.some(workspace => workspace.id === openMenuId.value)) openMenuId.value = undefined; });
 
@@ -176,10 +118,6 @@ function navigateWorkspace(event: KeyboardEvent, group: WorkspaceGroup) {
   if (event.altKey || event.ctrlKey || event.metaKey) return;
   if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); event.stopPropagation(); setExpanded(group.workspace.id, event.key === "ArrowRight"); }
 }
-function toggleAllSessions() { allSessionsExpanded.value = !allSessionsExpanded.value; openMenuId.value = undefined; }
-function clearSessionFilters() {
-  sessionQuery.value = ""; sessionWorkspace.value = ""; sessionProvider.value = ""; sessionStatus.value = ""; sessionArchive.value = "current"; sessionEphemeral.value = "all";
-}
 function archiveSession(session: Session, archived: boolean) {
   if (props.archiveSupported && !archiveBusySet.value.has(session.id)) emit("archiveSession", session, archived);
 }
@@ -196,11 +134,9 @@ async function revealSession(id: string): Promise<boolean> {
   // Temporary windows are deliberately absent from the workspace groups, so the
   // library is where revealing one has to land.
   const needsLibrary = isSessionArchived(session) || isEphemeralSession(session) || !props.workspaces.some(workspace => workspace.id === session.workspace_id);
-  if (needsLibrary) {
-    clearSessionFilters(); sessionArchive.value = isSessionArchived(session) ? "archived" : "current"; allSessionsExpanded.value = true;
-  }
+  if (needsLibrary) { emit("showInSessions", id, isSessionArchived(session)); return true; }
   await nextTick();
-  const container = sidebarElement.value?.querySelector(needsLibrary ? ".all-sessions-list" : ".workspace-groups");
+  const container = sidebarElement.value?.querySelector(".workspace-groups");
   const row = Array.from(container?.querySelectorAll<HTMLElement>("[data-sidebar-session-id]") ?? []).find(element => element.dataset.sidebarSessionId === id);
   row?.scrollIntoView?.({ block: "nearest", inline: "nearest", behavior: "auto" });
   row?.querySelector<HTMLButtonElement>(".workspace-session")?.focus({ preventScroll: true });
@@ -212,55 +148,10 @@ defineExpose({ revealSession });
 <template>
   <div ref="sidebarElement" class="workspace-sidebar" @keydown="escapeMenu">
     <nav class="workspace-global-nav" :aria-label="t('Workspace navigation')">
-      <button class="nav-item current" :disabled="!canvasWorkspaceId" @click="emit('canvas')"><Icon name="grid" :size="16" /><span>{{ t('Workspace canvas') }}</span></button>
-      <button class="nav-item all-sessions-toggle" :class="{ expanded: allSessionsExpanded }" :aria-expanded="allSessionsExpanded" aria-controls="sidebar-session-library" @click="toggleAllSessions"><Icon name="clock" :size="16" /><span>{{ t('All sessions') }}</span><span v-if="sessionCount" class="count-badge">{{ sessionCount }}</span><Icon class="all-sessions-chevron" name="chevron" :size="11" /></button>
+      <button :class="['nav-item', { current: currentPage === 'canvas' }]" :aria-current="currentPage === 'canvas' ? 'page' : undefined" @click="emit('canvas')"><Icon name="grid" :size="16" /><span>{{ t('Workspace canvas') }}</span></button>
+      <button :class="['nav-item', { current: currentPage === 'sessions' }]" :aria-current="currentPage === 'sessions' ? 'page' : undefined" @click="emit('allSessions')"><Icon name="clock" :size="16" /><span>{{ t('All sessions') }}</span><small class="count-badge">{{ sessionCount }}</small></button>
+      <button :class="['nav-item', { current: currentPage === 'system' }]" :aria-current="currentPage === 'system' ? 'page' : undefined" @click="emit('system')"><Icon name="gauge" :size="16" /><span>{{ t('System') }}</span></button>
     </nav>
-    <section v-if="allSessionsExpanded" id="sidebar-session-library" class="all-sessions-panel" :aria-label="t('Session library')" @contextmenu="openLibraryMenu">
-      <div class="session-library-toolbar">
-        <div class="session-library-search"><Icon name="search" :size="13" /><input v-model="sessionQuery" :aria-label="t('Search all sessions')" :placeholder="t('Find a session…')" /><button v-if="sessionQuery" class="icon-button" :aria-label="t('Clear navigation search')" @click="sessionQuery = ''"><Icon name="close" :size="12" /></button></div>
-        <button class="icon-button session-filter-button" :class="{ selected: sessionFiltersExpanded || hasSessionFilters }" :aria-label="t('Session filters')" :title="t('Session filters')" :aria-expanded="sessionFiltersExpanded" aria-controls="sidebar-session-filters" @click="sessionFiltersExpanded = !sessionFiltersExpanded"><Icon name="settings" :size="14" /></button>
-        <button class="icon-button session-select-button" :class="{ selected: selecting }" :aria-pressed="selecting" :aria-label="t('Select sessions')" :title="t('Select sessions')" @click="setSelecting(!selecting)"><Icon name="check" :size="13" /></button>
-        <button class="icon-button session-refresh-button" :disabled="sessionsLoading" :aria-label="t('Refresh sessions')" :title="t('Refresh sessions')" @click="emit('refreshSessions')"><Icon name="refresh" :size="13" /></button>
-      </div>
-      <div v-if="sessionFiltersExpanded" id="sidebar-session-filters" class="session-library-filters">
-        <select v-model="sessionWorkspace" :aria-label="t('Filter sessions by workspace')"><option value="">{{ t('All workspaces') }}</option><option v-for="workspace in workspaces" :key="workspace.id" :value="workspace.id">{{ workspace.name }}</option></select>
-        <select v-model="sessionProvider" :aria-label="t('Filter sessions by provider')"><option value="">{{ t('All providers') }}</option><option v-for="provider in (['claude_code', 'codex', 'terminal'] as const)" :key="provider" :value="provider">{{ provider === 'terminal' ? t('Terminal') : providerLabel(provider) }}</option></select>
-        <select v-model="sessionStatus" :aria-label="t('Filter sessions by status')"><option value="">{{ t('All statuses') }}</option><option v-for="status in sessionStatuses" :key="status" :value="status">{{ t(status) }}</option></select>
-        <select v-model="sessionArchive" :aria-label="t('Filter sessions by archive state')"><option value="current">{{ t('Current sessions') }}</option><option value="archived">{{ t('Archived sessions') }}</option><option value="all">{{ t('All sessions') }}</option></select>
-        <select v-model="sessionEphemeral" :aria-label="t('Filter temporary windows')"><option value="all">{{ t('Permanent and temporary') }}</option><option value="only">{{ t('Only temporary windows') }}</option><option value="hidden">{{ t('Hide temporary windows') }}</option></select>
-      </div>
-      <div class="session-library-summary"><span>{{ t(sessionArchive === 'archived' ? 'Archived sessions' : sessionArchive === 'all' ? 'All sessions' : 'Current sessions') }} <small>{{ filteredSessions.length }}</small></span><button v-if="hasSessionFilters || sessionQuery" class="text-button" @click="clearSessionFilters">{{ t('Clear session filters') }}</button></div>
-      <div v-if="selecting" class="session-bulk-bar" role="toolbar" :aria-label="t('Selected sessions')">
-        <div class="session-bulk-select">
-          <span>{{ t('{count} selected', { count: checkedSessions.length }) }}</span>
-          <button class="text-button" :disabled="!visibleIds.length" @click="checkAll">{{ t(allVisibleChecked ? 'Select none' : 'Select all') }}</button>
-          <button class="text-button" :disabled="!visibleIds.length" @click="invertChecked">{{ t('Invert selection') }}</button>
-          <button class="icon-button" :aria-label="t('Done selecting')" :title="t('Done selecting')" @click="setSelecting(false)"><Icon name="close" :size="11" /></button>
-        </div>
-        <div v-if="confirmBulkDelete" class="session-bulk-confirm" role="alertdialog">
-          <p>{{ t('Delete {count} sessions? Their records and conversations are removed and cannot be restored.', { count: checkedToDelete.length }) }}<template v-if="checkedToDelete.length < checkedSessions.length"> {{ t('{count} not archived are skipped.', { count: checkedSessions.length - checkedToDelete.length }) }}</template></p>
-          <div><button class="small-button danger" @click="deleteChecked">{{ t('Delete permanently') }}</button><button class="small-button" @click="confirmBulkDelete = false">{{ t('Cancel') }}</button></div>
-        </div>
-        <div v-else class="session-bulk-actions">
-          <button :disabled="!archiveSupported || !checkedToArchive.length" :title="t('Archive hides sessions from workspace lists without stopping them.')" @click="archiveChecked(true)"><Icon name="archive" :size="12" />{{ t('Archive') }}<small v-if="checkedToArchive.length">{{ checkedToArchive.length }}</small></button>
-          <button :disabled="!archiveSupported || !checkedToRestore.length" @click="archiveChecked(false)"><Icon name="restore" :size="12" />{{ t('Restore') }}<small v-if="checkedToRestore.length">{{ checkedToRestore.length }}</small></button>
-          <button class="danger" :disabled="!checkedToDelete.length" :title="t('Only archived or temporary sessions can be deleted.')" @click="confirmBulkDelete = true"><Icon name="close" :size="12" />{{ t('Delete') }}<small v-if="checkedToDelete.length">{{ checkedToDelete.length }}</small></button>
-        </div>
-      </div>
-      <ul class="all-sessions-list" :aria-label="t('All sessions')" :aria-busy="sessionsLoading">
-        <SidebarSessionRow v-for="entry in filteredSessions" :key="entry.session.id" :session="entry.session" :workspace-name="entry.workspace?.name ?? entry.session.workspace_id" :selected="selectedSessionId === entry.session.id" :archive-supported="archiveSupported" :archive-busy="archiveBusySet.has(entry.session.id)" :keep-busy="keepBusySet.has(entry.session.id)" :delete-busy="deleteBusySet.has(entry.session.id)" :selectable="selecting" :checked="checkedSet.has(entry.session.id)" @open="emit('openSession', $event)" @check="checkSession" @delete="deleteSession" @rename="renameSession" @environment="emit('sessionEnvironment', $event)" @archive="archiveSession" @keep="keepSession" />
-        <li v-if="!filteredSessions.length" class="session-library-empty" role="status">{{ t(sessionsLoading ? 'Loading sessions…' : sessionArchive === 'archived' && !sessionQuery && !sessionWorkspace && !sessionProvider && !sessionStatus ? 'No archived sessions.' : 'No matching sessions.') }}</li>
-      </ul>
-      <ContextMenu v-if="libraryMenu" :x="libraryMenu.x" :y="libraryMenu.y" :label="t('Session library actions')" @close="libraryMenu = undefined">
-        <button role="menuitem" @click="libraryAction(() => setSelecting(!selecting))"><Icon name="check" :size="13" />{{ t(selecting ? 'Done selecting' : 'Select sessions') }}</button>
-        <button role="menuitem" :disabled="!visibleIds.length" @click="checkAll">{{ t(selecting && allVisibleChecked ? 'Select none' : 'Select all') }}</button>
-        <button role="menuitem" :disabled="!visibleIds.length" @click="invertChecked">{{ t('Invert selection') }}</button>
-        <hr />
-        <button role="menuitem" @click="libraryAction(() => { sessionFiltersExpanded = !sessionFiltersExpanded; })"><Icon name="settings" :size="13" />{{ t(sessionFiltersExpanded ? 'Hide session filters' : 'Session filters') }}</button>
-        <button role="menuitem" :disabled="!hasSessionFilters && !sessionQuery" @click="libraryAction(clearSessionFilters)">{{ t('Clear session filters') }}</button>
-        <button role="menuitem" :disabled="sessionsLoading" @click="libraryAction(() => emit('refreshSessions'))"><Icon name="refresh" :size="13" />{{ t('Refresh sessions') }}</button>
-      </ContextMenu>
-    </section>
     <header class="workspace-group-label"><span>{{ t('Workspaces') }}</span><small>{{ workspaces.length }}</small><!-- Finding the open session in the list belongs to the list, like an
          explorer's "select opened file": it acts on whichever view has focus. --><button class="icon-button workspace-locate-button" :disabled="!selectedSessionId" :aria-label="t('Locate the focused session in the list')" :title="t('Locate the focused session in the list')" @click="selectedSessionId && emit('revealSession', selectedSessionId)"><Icon name="locate" :size="14" /></button><button class="icon-button" :aria-label="t('Add workspace')" :title="t('Add workspace')" @click="emit('addWorkspace')"><Icon name="plus" :size="15" /></button></header>
     <div v-if="workspaces.length" class="workspace-group-search"><Icon name="search" :size="13" /><input v-model="query" :aria-label="t('Search workspaces and sessions')" :placeholder="t('Find a workspace or session…')" /><button v-if="query" class="icon-button" :aria-label="t('Clear navigation search')" @click="query = ''"><Icon name="close" :size="12" /></button></div>
@@ -306,8 +197,8 @@ defineExpose({ revealSession });
 
 <style scoped>
 .workspace-sidebar{display:flex;flex-direction:column;min-width:0;min-height:0;flex:1;overflow:hidden}.workspace-global-nav{padding-bottom:10px;border-bottom:1px solid var(--fill-hover)}.workspace-global-nav .nav-item{min-height:36px;padding:8px 10px;font-size:var(--text-md);gap:10px;color:var(--ink)}.workspace-global-nav .count-badge{font-size:var(--text-xs);min-width:20px;padding:1px 6px;background:none;color:var(--faint);font-weight:500}.workspace-group-label{display:flex;align-items:center;gap:7px;padding:16px 8px 6px 10px;font-size:var(--text-xs);letter-spacing:.4px;color:var(--muted);flex-shrink:0}.workspace-group-label>span{font-weight:600}.workspace-group-label>small{font-size:var(--text-xs);color:var(--faint)}.workspace-group-label>.icon-button{width:24px;height:24px}.workspace-group-label>.icon-button:first-of-type{margin-left:auto}.workspace-group-label>.workspace-locate-button>svg{color:var(--muted)}.workspace-group-label>.workspace-locate-button:disabled{opacity:.4}.workspace-group-search{display:flex;align-items:center;gap:7px;padding:6px 10px;margin:2px 0 10px;border:1px solid transparent;border-radius:var(--radius-sm);background:var(--fill);color:var(--faint);flex-shrink:0}.workspace-group-search:focus-within{background:var(--surface);border-color:var(--teal-line)}.workspace-group-search>input{width:100%;min-width:0;padding:0;border:0;background:none;font-size:var(--text-sm);line-height:18px;color:var(--ink);outline:0}.workspace-group-search>input::placeholder{color:var(--faint)}.workspace-group-search>.icon-button{width:17px;height:17px;padding:2px}.workspace-groups{flex:1;min-height:0;overflow:auto;padding:0 1px 10px}.workspace-group{margin:0 0 10px;min-width:0}.workspace-group-header{display:flex;align-items:center;gap:4px;min-width:0;min-height:32px;padding-right:2px;border-radius:var(--radius-sm)}.workspace-group-header:hover{background:var(--fill)}.workspace-disclosure{width:17px;height:24px;padding:2px;color:var(--faint)}.workspace-disclosure>svg{transition:transform 120ms ease}.workspace-disclosure.expanded>svg{transform:rotate(90deg)}.workspace-group-name{display:flex;align-items:center;gap:6px;flex:1;min-width:0;padding:6px 0;border:0;background:none;text-align:left;color:var(--ink)}.workspace-group-name>strong{font-size:var(--text-base);font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.workspace-group-name>svg{flex-shrink:0;color:var(--faint)}.workspace-group.selected .workspace-group-name{color:var(--teal)}.workspace-group-name:hover{color:var(--accent)}.workspace-active-count{display:flex;align-items:center;gap:4px;font-size:var(--text-xs);padding:1px 6px;border-radius:var(--radius-sm);background:var(--ok-soft);color:var(--accent-ink)}.workspace-active-count>.state-dot{width:6px;height:6px}.workspace-more-button{width:21px;height:23px;padding:2px;font-size:var(--text-xl);line-height:18px}.workspace-more-panel{margin:2px 4px 8px 19px;padding:5px;border:1px solid var(--accent-soft);border-radius:var(--radius-sm);background:var(--surface);box-shadow:var(--shadow-md)}.workspace-more-panel button{display:flex;align-items:center;gap:6px;width:100%;border:0;background:none;border-radius:var(--radius-xs);padding:6px 5px;text-align:left;font-size:var(--text-xs);line-height:15px;color:var(--ink-soft)}.workspace-more-panel button:hover:not(:disabled){background:var(--ok-soft);color:var(--ok-ink)}.workspace-menu-label{padding:5px 5px 2px;font-size:var(--text-xs);font-weight:600;letter-spacing:.3px;color:var(--faint)}.workspace-menu-label:not(:first-child){margin-top:3px;border-top:1px solid var(--fill);padding-top:6px}.workspace-more-panel p{font-size:var(--text-xs);line-height:14px;color:#a18e67;padding:1px 6px 6px}.workspace-session-list{list-style:none;margin:2px 0 0 12px;padding:0}.workspace-group-empty{padding:6px 8px 8px;font-size:var(--text-sm);color:var(--faint);line-height:18px}.workspace-group-empty>.text-button{font-size:var(--text-sm);margin-top:2px}.workspace-nav-empty{padding:25px 8px;text-align:center;color:var(--faint)}.workspace-nav-empty p{font-size:var(--text-xs);line-height:18px;margin:10px 0}.workspace-nav-empty .secondary-button{font-size:var(--text-xs);padding:5px 8px}
-.workspace-global-nav{flex-shrink:0}.workspace-global-nav .all-sessions-toggle>.count-badge{margin-left:auto}.all-sessions-chevron{margin-left:auto;color:var(--violet);transition:transform 120ms ease}.all-sessions-toggle>.count-badge+.all-sessions-chevron{margin-left:0}.all-sessions-toggle.expanded>.all-sessions-chevron{transform:rotate(90deg)}.all-sessions-toggle.expanded{background:var(--violet-soft);color:#7c659f}.workspace-global-nav .nav-item>svg:first-child{color:var(--violet)}.workspace-global-nav .nav-item.current>svg:first-child{color:var(--ok-ink)}
-.all-sessions-panel{display:flex;flex-direction:column;flex-shrink:1;min-height:100px;max-height:44vh;padding:8px 2px 7px;border-bottom:1px solid var(--fill-hover)}.session-library-toolbar{display:flex;align-items:center;gap:3px;flex-shrink:0}.session-library-search{display:flex;align-items:center;flex:1;min-width:0;gap:5px;padding:5px 6px;border:1px solid var(--fill-hover);border-radius:var(--radius-sm);background:var(--surface);color:var(--muted)}.session-library-search>input{width:100%;min-width:0;border:0;background:none;padding:0;font-size:var(--text-xs);line-height:18px;color:var(--ink-soft)}.session-library-search>input::placeholder{color:var(--faint)}.session-library-search:focus-within{border-color:var(--muted);box-shadow:0 0 0 2px #eee8f8}.session-library-search>input:focus{outline:0}.session-library-search>.icon-button{width:17px;height:17px;padding:2px}.session-library-toolbar>.icon-button{flex:none;width:25px;height:28px;padding:5px}.session-filter-button{color:var(--violet)}.session-filter-button.selected{background:var(--violet-soft)}.session-refresh-button{color:var(--accent-ink)}.session-select-button{color:var(--violet)}.session-select-button.selected{background:var(--violet-soft)}.session-bulk-bar{flex-shrink:0;margin:6px 0 0;padding:5px;border:1px solid var(--violet-soft);border-radius:var(--radius-sm);background:var(--bg)}.session-bulk-select{display:flex;align-items:center;gap:7px;font-size:var(--text-xs);color:#7c659f}.session-bulk-select>span{flex:1;min-width:0;font-weight:600}.session-bulk-select>.text-button{font-size:var(--text-xs);line-height:16px}.session-bulk-select>.icon-button{width:18px;height:18px;padding:3px}.session-bulk-actions{display:flex;gap:4px;margin-top:5px}.session-bulk-actions>button{display:inline-flex;align-items:center;justify-content:center;gap:4px;flex:1;min-width:0;padding:4px;border:1px solid var(--fill-hover);border-radius:var(--radius-sm);background:var(--surface);font-size:var(--text-xs);line-height:14px;color:var(--ink-soft);cursor:pointer}.session-bulk-actions>button>svg{color:#ad8d60}.session-bulk-actions>button small{font-size:var(--text-xs);color:var(--faint)}.session-bulk-actions>button:hover:not(:disabled){background:var(--ok-soft)}.session-bulk-actions>button:disabled{opacity:.45;cursor:not-allowed}.session-bulk-actions>button.danger{color:var(--danger)}.session-bulk-actions>button.danger>svg{color:var(--danger)}.session-bulk-actions>button.danger:hover:not(:disabled){background:var(--danger-soft)}.session-bulk-confirm{margin-top:5px}.session-bulk-confirm>p{margin:0 0 5px;font-size:var(--text-xs);line-height:13px;color:var(--danger-ink)}.session-bulk-confirm>div{display:flex;gap:5px}.session-library-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;margin:7px 0 0;flex-shrink:0}.session-library-filters>select{min-width:0;width:100%;height:27px;padding:3px 4px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface);color:var(--ink-soft);font-size:var(--text-xs)}.session-library-summary{display:flex;align-items:center;justify-content:space-between;gap:5px;padding:6px 2px 3px;flex-shrink:0;min-width:0;font-size:var(--text-xs);line-height:16px;color:var(--muted)}.session-library-summary>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.session-library-summary small{margin-left:3px;font-size:var(--text-xs);color:var(--faint)}.session-library-summary>.text-button{flex:none;font-size:var(--text-xs);line-height:16px}.all-sessions-list{margin:0;padding:0;list-style:none;min-height:24px;overflow:auto;overscroll-behavior:contain}.session-library-empty{padding:12px 4px;text-align:center;color:var(--faint);font-size:var(--text-xs);line-height:17px}.workspace-hover-actions{display:none;align-items:center;gap:1px}.workspace-group-header:hover .workspace-hover-actions,.workspace-group-header:focus-within .workspace-hover-actions{display:flex}.workspace-group-header:hover .workspace-active-count,.workspace-group-header:focus-within .workspace-active-count{display:none}.workspace-hover-actions>.icon-button{width:26px;height:26px;padding:5px;color:var(--muted)}.workspace-hover-actions>.icon-button:hover{color:var(--ink);background:var(--border)}.workspace-hover-actions>.workspace-new-action{color:var(--teal)}.workspace-more-panel button>svg{color:var(--violet)}.workspace-group-label>.icon-button>svg{color:var(--ok-ink)}.workspace-group-search>svg{color:var(--muted)}
-@media(pointer:coarse){.workspace-global-nav .nav-item{min-height:44px}.session-library-toolbar>.icon-button{width:36px;height:44px}.session-library-search{min-height:44px}.session-library-search>input{font-size:var(--input-text)}.session-library-filters>select{height:44px;font-size:var(--input-text)}.session-library-summary{font-size:var(--text-xs)}.session-library-summary>.text-button{min-height:32px;font-size:var(--text-xs)}.workspace-group-search>input{font-size:var(--input-text)}.workspace-group-header{min-height:44px}.workspace-hover-actions{display:flex}.workspace-hover-actions>.icon-button:not(.workspace-new-action){display:none}.workspace-hover-actions>.icon-button{width:36px;height:44px}.workspace-disclosure,.workspace-more-button{width:32px;height:44px}.workspace-more-panel button{min-height:44px;font-size:var(--text-sm)}}
-@media(prefers-reduced-motion:reduce){.workspace-disclosure>svg,.all-sessions-chevron{transition:none}}
+.workspace-global-nav{flex-shrink:0}.workspace-global-nav .nav-item>.count-badge{margin-left:auto}.workspace-global-nav .nav-item>svg:first-child{color:var(--violet)}.workspace-global-nav .nav-item.current>svg:first-child{color:var(--ok-ink)}
+.workspace-hover-actions{display:none;align-items:center;gap:1px}.workspace-group-header:hover .workspace-hover-actions,.workspace-group-header:focus-within .workspace-hover-actions{display:flex}.workspace-group-header:hover .workspace-active-count,.workspace-group-header:focus-within .workspace-active-count{display:none}.workspace-hover-actions>.icon-button{width:26px;height:26px;padding:5px;color:var(--muted)}.workspace-hover-actions>.icon-button:hover{color:var(--ink);background:var(--border)}.workspace-hover-actions>.workspace-new-action{color:var(--teal)}.workspace-more-panel button>svg{color:var(--violet)}.workspace-group-label>.icon-button>svg{color:var(--ok-ink)}.workspace-group-search>svg{color:var(--muted)}
+@media(pointer:coarse){.workspace-global-nav .nav-item{min-height:44px}.workspace-group-search>input{font-size:var(--input-text)}.workspace-group-header{min-height:44px}.workspace-hover-actions{display:flex}.workspace-hover-actions>.icon-button:not(.workspace-new-action){display:none}.workspace-hover-actions>.icon-button{width:36px;height:44px}.workspace-disclosure,.workspace-more-button{width:32px;height:44px}.workspace-more-panel button{min-height:44px;font-size:var(--text-sm)}}
+@media(prefers-reduced-motion:reduce){.workspace-disclosure>svg{transition:none}}
 </style>

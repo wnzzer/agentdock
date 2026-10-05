@@ -355,7 +355,7 @@ svg { flex-shrink: 0; vertical-align: middle; }
 .host-card>div { flex: 1; }
 .host-card strong { font-size: var(--text-sm); color: var(--ink); font-weight: 500; }
 .host-card small { display: block; margin-top: 2px; font-size: var(--text-xs); color: var(--faint); }
-.main-workspace { padding: 20px 21px 0; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.main-workspace { position: relative; padding: 20px 21px 0; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .workspace-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; gap: 10px; flex-shrink: 0; min-width: 0; }
 .workspace-heading>div:first-child { min-width: 0; }
 .eyebrow { font-size: var(--text-xs); letter-spacing: 1.8px; font-weight: 600; color: var(--faint); margin-bottom: 7px; }
@@ -559,3 +559,5 @@ svg { flex-shrink: 0; vertical-align: middle; }
   .context-menu>button { min-height: 52px; padding: 0 12px; border-radius: var(--radius-lg); font-size: var(--text-lg); color: var(--ink); }
 }
 .app-shell.is-mobile .mobile-back>svg { transform: rotate(180deg); }
+/* A page is open over the canvas: the session menus teleported out of its tabs stay with the canvas. */
+body[data-page] .chat-tab-menu, body[data-page] .session-tab-menu { visibility: hidden; }

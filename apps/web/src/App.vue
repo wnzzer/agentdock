@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { shellHeight } from "./features/viewport-height";
 import type { EndpointProfile, FileEntry, GitStatus, LayoutDocument, LayoutNode, PaneNode, ProviderKind, Session, Workspace } from "@agentdock/protocol";
 import Canvas from "./components/Canvas.vue";
@@ -9,7 +9,11 @@ import WorkspacePane from "./features/WorkspacePane.vue";
 import FileExplorer from "./features/FileExplorer.vue";
 import LoadHistoryDialog from "./features/LoadHistoryDialog.vue";
 import WorkspaceDialog from "./features/WorkspaceDialog.vue";
-import SettingsDialog, { type SettingsSection } from "./features/SettingsDialog.vue";
+import SettingsPage from "./features/SettingsPage.vue";
+import SessionsPage from "./features/SessionsPage.vue";
+import SystemPage from "./features/SystemPage.vue";
+import { useRoute, useRouter } from "vue-router";
+import type { SettingsSection } from "./router";
 import HostFilePreview from "./features/HostFilePreview.vue";
 import HostUsage from "./features/HostUsage.vue";
 import { requestJump } from "./features/file-jumps";
@@ -69,7 +73,25 @@ const platform = ref<string>(), instanceLabel = ref<string>(), serverVersion = r
 const showWorkspace = ref(false), showAuth = ref(false), workspaceInitialPath = ref<string>();
 /** A file an agent named outside every workspace, shown read-only. */
 const hostPreview = ref<{ path: string; line?: number }>();
-const settingsSection = ref<SettingsSection>();
+/**
+ * App also renders without a router (the read-only UI preview, and tests that
+ * mount it alone); it is then always on the canvas and navigation is a no-op.
+ */
+const route = useRoute() ?? reactive({ name: "canvas", params: {}, query: {}, fullPath: "/" });
+const router = useRouter() ?? ({ push: async () => undefined, replace: async () => undefined, back: () => undefined } as unknown as ReturnType<typeof useRouter>);
+/** Which page, if any, is drawn over the canvas. The canvas itself never unmounts. */
+const page = computed(() => route.name === "settings" || route.name === "sessions" || route.name === "system" ? route.name : undefined);
+const settingsRouteSection = computed(() => String(route.params.section ?? "preferences") as SettingsSection);
+// Session menus are teleported out of their tabs to the body, so a page over
+// the canvas cannot cover them; the body says a page is open and they step aside.
+watch(page, value => { const body = typeof document === "undefined" ? undefined : document.body; if (!body) return; if (value) body.dataset.page = value; else delete body.dataset.page; }, { immediate: true });
+function openSettings(section: SettingsSection = "preferences") { sidebarOpen.value = false; void router.push({ name: "settings", params: { section } }); }
+function openPage(name: "sessions" | "system", query?: Record<string, string>) { sidebarOpen.value = false; void router.push({ name, query }); }
+/** Back from a page: to wherever you came from inside the app, else the canvas. */
+function leavePage() {
+  if (window.history.state?.back) router.back();
+  else void router.push({ name: "canvas" });
+}
 const archiveBusyIds = ref<string[]>([]), keepBusyIds = ref<string[]>([]), deleteBusyIds = ref<string[]>([]), quickBusy = ref(false);
 const ephemeralIds = computed(() => ephemeralSessionIds(sessions.value));
 const discardPrompt = ref<{ paneId: string; session: Session }>();
@@ -320,6 +342,8 @@ function openSession(session: Session) {
     return;
   }
   sessions.value = [session, ...sessions.value.filter(item => item.id !== session.id)];
+  // Opening a session from a page lands on the canvas, where it opens.
+  if (route.name !== "canvas") void router.push({ name: "canvas" });
   // Opening a session selects its bound view. A legacy PTY shown in the
   // conversation shell must not start just because a pane was mounted;
   // structured sessions and an explicit native-terminal view retain the
@@ -651,6 +675,17 @@ async function refreshResources() {
   } catch (cause) { report(cause); }
   finally { refreshingResources.value = false; }
 }
+/**
+ * A link to one session (/session/:id) opens it on the canvas once sessions
+ * have loaded, and the address goes back to the canvas's.
+ */
+watch([() => route.name, () => route.params.id, () => sessions.value.length, canvasReady], () => {
+  if (route.name !== "session" || !canvasReady.value) return;
+  const session = sessions.value.find(item => item.id === route.params.id);
+  if (!session) return;
+  void router.replace({ name: "canvas" });
+  openSession(session);
+}, { immediate: true });
 async function bootstrap() {
   const own = ++bootstrapRevision;
   loading.value = true; error.value = ""; connectionError.value = "";
@@ -734,17 +769,18 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
   <div :class="['app-shell', { 'explorer-hidden': !explorerOpen || !explorerWorkspace, 'sidebar-collapsed': sidebarCollapsed, 'is-mobile': mobile }]">
     <header class="topbar">
       <div class="brand"><button v-if="mobile && backTarget" class="icon-button mobile-menu mobile-back" :aria-label="t('Back')" @click="goBack"><Icon name="chevron" :size="22" /></button><button v-else class="icon-button mobile-menu" :aria-label="t('Toggle workspace navigation')" @click="sidebarOpen = !sidebarOpen"><Icon name="menu" /></button><button class="icon-button sidebar-toggle" :class="{selected:!sidebarCollapsed}" :aria-pressed="!sidebarCollapsed" :aria-label="t(sidebarCollapsed?'Expand workspace panel':'Collapse workspace panel')" :title="t(sidebarCollapsed?'Expand workspace panel':'Collapse workspace panel')" @click="toggleSidebar"><Icon name="panelLeft"/></button><span class="brand-mark"><span /></span><strong :title="serverVersion?t('AgentDock {version}',{version:serverVersion}):undefined">AgentDock<span v-if="instanceLabel" class="brand-version">{{ instanceLabel }}</span></strong></div>
-      <button v-if="mobile && canvasReady" class="mobile-title" type="button" :aria-label="t('Switch view')" @click="switcherOpen = true">
+      <span v-if="mobile && page" class="mobile-title mobile-page-title"><strong>{{ t(page === "settings" ? "Settings" : page === "sessions" ? "All sessions" : "System") }}</strong></span>
+      <button v-else-if="mobile && canvasReady" class="mobile-title" type="button" :aria-label="t('Switch view')" @click="switcherOpen = true">
         <TabIcon v-if="focusedPane" :kind="focusedPane.kind" :metadata="focusedPane.metadata" :session-providers="sessionProviders" :size="16" />
         <span class="mobile-title-copy"><strong>{{ focusedPane ? paneTitle(focusedPane) : (contextWorkspace?.name || 'AgentDock') }}</strong><small v-if="focusedPane && paneDetail(focusedPane)">{{ paneDetail(focusedPane) }}</small></span>
         <span v-if="openPanes.length > 1" class="mobile-title-count">{{ openPanes.length }}</span><Icon name="chevron" :size="14" class="mobile-title-chevron" />
       </button>
-      <span v-if="mobile && focusedPane?.metadata?.session_id" class="mobile-session-actions" :id="`session-actions-${focusedPane.id}`" />
+      <span v-if="mobile && focusedPane?.metadata?.session_id" v-show="!page" class="mobile-session-actions" :id="`session-actions-${focusedPane.id}`" />
       <div class="top-crumb"><span>{{ t('Shared workspace canvas') }}</span><Icon name="chevron" :size="13"/><strong>{{ contextWorkspace?.name || t('Your next workspace') }}</strong></div>
       <div class="top-actions">
         <span v-if="loading||!apiOnline" class="connection-badge"><i :class="['state-dot', apiOnline ? 'running' : 'stopped']"/>{{ t(loading ? 'Connecting' : apiOnline ? 'Host connected' : 'Offline') }}</span>
         <button v-if="workspaces.length" class="primary-button new-session-top" :disabled="!selectedWorkspace" :aria-label="t('New session')" :title="selectedWorkspace?t('New session in {workspace}',{workspace:selectedWorkspace.name}):t('New session')" @click="mobile ? quickSession(contextWorkspace?.id) : newSession()"><Icon :name="mobile ? 'edit' : 'plus'" :size="mobile ? 19 : 14"/><span>{{ t('New session') }}</span></button>
-        <button class="icon-button" :aria-label="t('Settings')" :title="t('Settings')" @click="settingsSection='preferences'"><Icon name="settings"/></button>
+        <button class="icon-button" :aria-label="t('Settings')" :title="t('Settings')" @click="openSettings()"><Icon name="settings"/></button>
         <button v-if="workspaces.length" :class="['icon-button',{selected:explorerOpen}]" :aria-pressed="explorerOpen" :aria-label="t(explorerOpen?'Collapse file panel':'Expand file panel')" :title="t(explorerOpen?'Collapse file panel':'Expand file panel')" @click="explorerOpen = !explorerOpen"><Icon name="panelRight"/></button>
       </div>
     </header>
@@ -752,12 +788,12 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
       <button v-if="sidebarOpen" class="drawer-overlay sidebar-overlay" :aria-label="t('Close workspace navigation')" @click="sidebarOpen = false"/>
       <aside :class="['sidebar',{'drawer-open':sidebarOpen}]">
         <div v-if="sidebarRail&&!sidebarCollapsed" class="sidebar-resizer" role="separator" aria-orientation="vertical" :aria-label="t('Resize workspace panel')" :title="t('Drag to resize · double-click to reset')" @pointerdown.prevent="resizeSidebar" @dblclick="resetSidebarWidth"/>
-        <WorkspaceSidebar ref="workspaceSidebar" @reveal-session="revealSession" :workspace-branches="Object.fromEntries(Object.entries(gitStatuses).flatMap(([id,status])=>status.branch?[[id,status.branch]]:[]))" @branch-switched="branchSwitched" :workspaces="workspaces" :sessions="sessions" :selected-workspace-id="selectedWorkspaceId" :selected-session-id="selectedSessionId" :history-supported="backendCapabilities.nativeHistory" :storage-key="storageKey" :archive-supported="backendCapabilities.sessionArchive" :ephemeral-supported="backendCapabilities.ephemeralSessions" :archive-busy-ids="archiveBusyIds" :keep-busy-ids="keepBusyIds" :delete-busy-ids="deleteBusyIds" :sessions-loading="sessionsLoading" @select-workspace="selectWorkspace" @open-session="openSession" @rename-session="renameSession" @archive-session="archiveSession" @archive-sessions="archiveSessions" @delete-sessions="deleteSessions" @keep-session="keepSession" @refresh-sessions="refreshSessions" @session-environment="environmentSessionId=$event;sidebarOpen=false" @open-files="openFiles" @open-changes="openChanges" @new-session="newSession" @quick-session="quickSession" @load-history="loadHistory" @add-workspace="showWorkspace=true" @canvas="sidebarOpen=false"/>
+        <WorkspaceSidebar ref="workspaceSidebar" @reveal-session="revealSession" :workspace-branches="Object.fromEntries(Object.entries(gitStatuses).flatMap(([id,status])=>status.branch?[[id,status.branch]]:[]))" @branch-switched="branchSwitched" :workspaces="workspaces" :sessions="sessions" :selected-workspace-id="selectedWorkspaceId" :selected-session-id="selectedSessionId" :history-supported="backendCapabilities.nativeHistory" :storage-key="storageKey" :archive-supported="backendCapabilities.sessionArchive" :ephemeral-supported="backendCapabilities.ephemeralSessions" :archive-busy-ids="archiveBusyIds" :keep-busy-ids="keepBusyIds" :delete-busy-ids="deleteBusyIds" :sessions-loading="sessionsLoading" @select-workspace="selectWorkspace" @open-session="openSession" @rename-session="renameSession" @archive-session="archiveSession" @archive-sessions="archiveSessions" @delete-sessions="deleteSessions" @keep-session="keepSession" @refresh-sessions="refreshSessions" @session-environment="environmentSessionId=$event;sidebarOpen=false" @open-files="openFiles" @open-changes="openChanges" @new-session="newSession" @quick-session="quickSession" @load-history="loadHistory" @add-workspace="showWorkspace=true" @canvas="sidebarOpen=false;router.push({ name: 'canvas' })" @all-sessions="openPage('sessions')" @system="openPage('system')" @show-in-sessions="(id, archived) => openPage('sessions', { highlight: id, archive: archived ? 'archived' : 'current' })" :current-page="page ?? 'canvas'"/>
         <div v-if="!mobile" class="host-card"><span class="host-symbol"><Icon name="terminal"/></span><div><strong>{{ t('Host native') }}</strong><small>{{ platform || 'macOS / Linux' }} · {{ t('no containers') }}</small></div><span :class="['state-dot',apiOnline?'running':'stopped']"/></div>
       
         <div v-else class="drawer-footer">
           <div v-if="contextWorkspace" class="drawer-git"><span :title="contextWorkspace.root_path"><Icon name="git" :size="15"/><WorkspaceBranchMenu v-if="currentGitAvailable" :workspace-id="contextWorkspace.id" :branch="currentGit.branch" @switched="branchSwitched(contextWorkspace.id)" @changed="branchSwitched(contextWorkspace.id)" /><template v-else>{{ t('Git unavailable') }}</template></span><button v-if="currentGitAvailable" type="button" @click="openChanges(contextWorkspace.id)">{{ t(currentGit.files.length===1?'{count} change':'{count} changes',{count:currentGit.files.length}) }}</button></div>
-          <div class="drawer-host"><HostUsage :sessions="sessions" /><span v-if="['Save failed','Save conflict','Memory only'].includes(layoutStatus)" class="danger-text">{{ t('Layout {status}',{status:t(layoutStatus)}) }}</span><button class="icon-button" type="button" :aria-label="t('Settings')" :title="t('Settings')" @click="sidebarOpen=false;settingsSection='preferences'"><Icon name="settings" :size="19"/></button></div>
+          <div class="drawer-host"><HostUsage :sessions="sessions" @open="openPage('system')" /><span v-if="['Save failed','Save conflict','Memory only'].includes(layoutStatus)" class="danger-text">{{ t('Layout {status}',{status:t(layoutStatus)}) }}</span><button class="icon-button" type="button" :aria-label="t('Settings')" :title="t('Settings')" @click="openSettings()"><Icon name="settings" :size="19"/></button></div>
         </div>
       </aside>
       <main class="main-workspace">
@@ -769,11 +805,14 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
         <div v-if="localRecovery" class="canvas-compat-notice"><span>{{ t('A local recovery layout is available.') }}</span><button class="text-button" @click="restoreLocalRecovery">{{ t('Restore local layout') }}</button><button class="icon-button" :aria-label="t('Dismiss error')" @click="localRecovery=undefined"><Icon name="close" :size="13"/></button></div>
         <template v-if="workspaces.length">
           <Canvas v-if="canvasReady" ref="canvas" v-model="layout" :compact="mobile" :selected-pane-id="selectedPaneId" :default-workspace-id="contextWorkspace?.id" :accept-pane="acceptDroppedPane" :confirm-close-pane="confirmClosePane" :ephemeral-session-ids="ephemeralIds" :ephemeral-supported="backendCapabilities.ephemeralSessions" @create-session="createSessionInPane" :workspace-labels="Object.fromEntries(workspaces.map(workspace=>[workspace.id,workspace.name]))" :mixed-workspaces="new Set(flattenPanes(layout.root).map(pane=>paneString(pane,'workspace_id')).filter(Boolean)).size>1" :session-branches="Object.fromEntries(sessions.flatMap(session=>session.checkout_path&&session.checkout_branch?[[session.id,session.checkout_branch]]:[]))" :workspace-branches="Object.fromEntries(Object.entries(gitStatuses).flatMap(([id,status])=>status.branch?[[id,status.branch]]:[]))" :session-providers="sessionProviders" @select-pane="selectPane" @open-pane="sessionPaneDropped">
-            <template #pane="{ pane }"><WorkspacePane :key="pane.id" :pane="pane" :workspaces="workspaces" :sessions="sessions" :profiles="profiles" :git-refresh="gitRefresh" @session-changed="refreshSessions" @new-session="(id,provider)=>newSession(id??selectedWorkspaceId,provider)" @open-session="openSession" @reveal-session="revealSession" @keep-session="keepSessionById" @rename-request="requestRenameSession" @session-environment="environmentSessionId=$event" @structured-session="enableChat" @profiles="settingsSection='endpoints'" @git-changed="gitChanged" @open-file="openFile" @open-reference="openReference" @files-saved="filesSaved" @browse="id=>openFiles(id??selectedWorkspaceId)"/></template>
+            <template #pane="{ pane }"><WorkspacePane :key="pane.id" :pane="pane" :workspaces="workspaces" :sessions="sessions" :profiles="profiles" :git-refresh="gitRefresh" @session-changed="refreshSessions" @new-session="(id,provider)=>newSession(id??selectedWorkspaceId,provider)" @open-session="openSession" @reveal-session="revealSession" @keep-session="keepSessionById" @rename-request="requestRenameSession" @session-environment="environmentSessionId=$event" @structured-session="enableChat" @profiles="openSettings('endpoints')" @git-changed="gitChanged" @open-file="openFile" @open-reference="openReference" @files-saved="filesSaved" @browse="id=>openFiles(id??selectedWorkspaceId)"/></template>
           </Canvas>
           <div v-else class="pane-empty"><p>{{ t('Opening workspace…') }}</p></div>
         </template>
         <section v-else class="welcome-screen"><div class="welcome-composition" aria-hidden="true"><span class="welcome-tile"><Icon name="spark" :size="35"/></span><span class="welcome-tile"><Icon name="git" :size="26"/><Icon name="file" :size="26"/></span></div><div class="eyebrow">{{ t('A LITTLE SPACE. ENDLESS POSSIBILITIES.') }}</div><h1>{{ t('Your agents.') }}<br/>{{ t('Your workspace.') }}</h1><p>{{ t('Claude Code, Codex, files and Git — together on your own machine. Arrange everything the way you think.') }}</p><button class="primary-button" :disabled="loading" @click="showWorkspace=true"><Icon name="plus" :size="17"/>{{ t(loading?'Connecting to host…':'Add a workspace') }}</button><small>{{ t('Rust + Vue · host native · browser first') }}</small></section>
+        <SettingsPage v-if="page==='settings'" :profiles="profiles" :section="settingsRouteSection" @back="leavePage" @navigate="section => router.push({ name: 'settings', params: { section } })" @changed="refreshProfiles"/>
+        <SessionsPage v-else-if="page==='sessions'" :workspaces="workspaces" :sessions="sessions" :selected-session-id="selectedSessionId" :archive-supported="backendCapabilities.sessionArchive" :archive-busy-ids="archiveBusyIds" :keep-busy-ids="keepBusyIds" :delete-busy-ids="deleteBusyIds" :sessions-loading="sessionsLoading" :initial-archive="route.query.archive === 'archived' ? 'archived' : 'current'" :highlight-id="typeof route.query.highlight === 'string' ? route.query.highlight : undefined" @back="leavePage" @open-session="openSession" @rename-request="requestRenameSession" @session-environment="environmentSessionId=$event" @archive-session="archiveSession" @archive-sessions="archiveSessions" @delete-sessions="deleteSessions" @keep-session="keepSession" @refresh-sessions="refreshSessions"/>
+        <SystemPage v-else-if="page==='system'" :sessions="sessions" @back="leavePage" @open-session="openSession"/>
       </main>
       <button v-if="explorerOpen && explorerWorkspace" class="drawer-overlay explorer-overlay" :aria-label="t('Close file explorer')" @click="explorerOpen=false"/>
       <aside v-if="explorerOpen && explorerWorkspace" class="explorer-panel">
@@ -781,7 +820,7 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
         <FileExplorer ref="explorer" :workspace-id="explorerWorkspace.id" :refresh-token="fileRefresh[explorerWorkspace.id]??0" :selected-path="activeFilePath" @open="openFile(explorerWorkspace.id,$event)" @close="explorerOpen=false"/>
       </aside>
     </div>
-    <footer v-if="!mobile" class="statusbar"><span :title="contextWorkspace?.root_path"><Icon name="git" :size="13"/>{{ contextWorkspace?.name || t('No workspace') }} · <WorkspaceBranchMenu v-if="contextWorkspace&&currentGitAvailable" :workspace-id="contextWorkspace.id" :branch="currentGit.branch" @switched="branchSwitched(contextWorkspace.id)" @changed="branchSwitched(contextWorkspace.id)" /><template v-else>{{ t('Git unavailable') }}</template></span><button v-if="contextWorkspace" @click="openChanges(contextWorkspace.id)">{{ currentGitAvailable?t(currentGit.files.length===1?'{count} change':'{count} changes',{count:currentGit.files.length}):t('Changes') }}</button><span v-if="currentGit.ahead!==undefined">↑ {{ currentGit.ahead }}</span><span v-if="currentGit.behind!==undefined">↓ {{ currentGit.behind }}</span><span class="flex-spacer"/><span v-if="canvasReady" :class="{'danger-text':['Save failed','Save conflict','Memory only'].includes(layoutStatus)}">{{ t('Layout {status}',{status:t(layoutStatus)}) }}</span><HostUsage :sessions="sessions" /><span class="status-agent-count"><i :class="['state-dot',activeSessions.length?'running':'stopped']"/>{{ t('{count} active sessions',{count:activeSessions.length}) }}</span></footer>
+    <footer v-if="!mobile" class="statusbar"><span :title="contextWorkspace?.root_path"><Icon name="git" :size="13"/>{{ contextWorkspace?.name || t('No workspace') }} · <WorkspaceBranchMenu v-if="contextWorkspace&&currentGitAvailable" :workspace-id="contextWorkspace.id" :branch="currentGit.branch" @switched="branchSwitched(contextWorkspace.id)" @changed="branchSwitched(contextWorkspace.id)" /><template v-else>{{ t('Git unavailable') }}</template></span><button v-if="contextWorkspace" @click="openChanges(contextWorkspace.id)">{{ currentGitAvailable?t(currentGit.files.length===1?'{count} change':'{count} changes',{count:currentGit.files.length}):t('Changes') }}</button><span v-if="currentGit.ahead!==undefined">↑ {{ currentGit.ahead }}</span><span v-if="currentGit.behind!==undefined">↓ {{ currentGit.behind }}</span><span class="flex-spacer"/><span v-if="canvasReady" :class="{'danger-text':['Save failed','Save conflict','Memory only'].includes(layoutStatus)}">{{ t('Layout {status}',{status:t(layoutStatus)}) }}</span><HostUsage :sessions="sessions" @open="openPage('system')" /><span class="status-agent-count"><i :class="['state-dot',activeSessions.length?'running':'stopped']"/>{{ t('{count} active sessions',{count:activeSessions.length}) }}</span></footer>
   </div>
   <WorkspaceDialog v-if="showWorkspace" :initial-path="workspaceInitialPath" @close="showWorkspace=false;workspaceInitialPath=undefined" @created="workspaceCreated"/>
   <HostFilePreview v-if="hostPreview" :key="hostPreview.path" :path="hostPreview.path" :line="hostPreview.line" @close="hostPreview=undefined" @add-workspace="folder=>{hostPreview=undefined;workspaceInitialPath=folder;showWorkspace=true}"/>
@@ -809,8 +848,7 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
       <button type="button" class="sheet-row" @click="sheetAction(() => openChanges(contextWorkspace!.id))"><Icon name="git" :size="20" /><span class="sheet-row-copy"><strong>{{ t('Git Changes') }}</strong><small v-if="currentGitAvailable">{{ t(currentGit.files.length===1?'{count} change':'{count} changes',{count:currentGit.files.length}) }}</small></span></button>
     </template>
   </BottomSheet>
-  <SettingsDialog v-if="settingsSection" :profiles="profiles" :initial-section="settingsSection" @close="settingsSection=undefined" @changed="refreshProfiles"/>
-  <CreateSessionDialog v-if="sessionWorkspace" :workspace="sessionWorkspace" :profiles="profiles" :initial-provider="sessionProvider" @close="sessionWorkspaceId=undefined" @created="sessionCreated" @profiles="sessionWorkspaceId=undefined;settingsSection='endpoints'"/>
+  <CreateSessionDialog v-if="sessionWorkspace" :workspace="sessionWorkspace" :profiles="profiles" :initial-provider="sessionProvider" @close="sessionWorkspaceId=undefined" @created="sessionCreated" @profiles="sessionWorkspaceId=undefined;openSettings('endpoints')"/>
   <SessionEnvironmentDialog v-if="environmentSession" :key="environmentSession.id" :session="environmentSession" @close="environmentSessionId=undefined" @saved="sessionEnvironmentSaved"/>
   <SessionRenameDialog v-if="renameSessionTarget" :key="renameSessionTarget.id" :session="renameSessionTarget" @close="renameSessionId=undefined" @save="saveRenameSession"/>
   <LoadHistoryDialog v-if="historyWorkspace && backendCapabilities.nativeHistory" :workspace="historyWorkspace" @close="historyWorkspaceId=undefined" @loaded="historyLoaded"/>
