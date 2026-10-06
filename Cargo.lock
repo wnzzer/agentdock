@@ -10,7 +10,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agentdock-domain"
-version = "0.1.42"
+version = "0.1.43"
 dependencies = [
  "chrono",
  "serde",
@@ -21,7 +21,7 @@ dependencies = [
 
 [[package]]
 name = "agentdock-persistence"
-version = "0.1.42"
+version = "0.1.43"
 dependencies = [
  "agentdock-domain",
  "chrono",
@@ -33,7 +33,7 @@ dependencies = [
 
 [[package]]
 name = "agentdock-runtime"
-version = "0.1.42"
+version = "0.1.43"
 dependencies = [
  "libc",
  "portable-pty",
@@ -44,7 +44,7 @@ dependencies = [
 
 [[package]]
 name = "agentdock-server"
-version = "0.1.42"
+version = "0.1.43"
 dependencies = [
  "agentdock-domain",
  "agentdock-persistence",
