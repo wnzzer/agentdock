@@ -1,11 +1,12 @@
 use super::*;
+pub(super) use tower::ServiceExt;
 #[path = "archive_api_tests.rs"]
 mod archive_tests;
 #[path = "conversation_api_tests.rs"]
 mod conversation_tests;
 use axum::{
     body::{Body, to_bytes},
-    http::Request,
+    http::{Request, header},
 };
 use std::{collections::BTreeMap, fs, process::Command};
 use tokio_tungstenite::{
@@ -4038,8 +4039,15 @@ async fn a_granted_file_outside_the_roots_can_be_previewed_until_revoked() {
     fs::write(outside.join("notes.log"), "outside the roots").unwrap();
     let file = dunce::canonicalize(outside.join("notes.log")).unwrap();
     let preview = format!("/api/host/file?path={}", url_escape(file.to_str().unwrap()));
+    let raw = format!("/api/host/raw?path={}", url_escape(file.to_str().unwrap()));
     let (status, _) = call(f.app(), "GET", &preview, Value::Null).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "outside the browsing roots");
+    let (status, _) = call(f.app(), "GET", &raw, Value::Null).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "the raw bytes have the same reach"
+    );
 
     let (status, grants) = call(
         f.app(),
@@ -4053,11 +4061,23 @@ async fn a_granted_file_outside_the_roots_can_be_previewed_until_revoked() {
     let (status, body) = call(f.app(), "GET", &preview, Value::Null).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["content"], "outside the roots");
+    let (status, _) = call(f.app(), "GET", &raw, Value::Null).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "an image or video there can be shown too"
+    );
 
     let (status, _) = call(f.app(), "DELETE", "/api/host/grants/all", Value::Null).await;
     assert_eq!(status, StatusCode::OK);
     let (status, _) = call(f.app(), "GET", &preview, Value::Null).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "revoked");
+    let (status, _) = call(f.app(), "GET", &raw, Value::Null).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "revoked for the raw bytes too"
+    );
 }
 
 fn url_escape(value: &str) -> String {

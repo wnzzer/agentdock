@@ -1,6 +1,7 @@
 import type { ProviderKind } from "@agentdock/protocol";
 import type { LeafPaneKind } from "@agentdock/protocol/layout";
 import { ICON_PALETTE } from "./icon-palette";
+import { mediaKind } from "./media-kind";
 
 export const TAB_ICON_PALETTE = {
   claude_code: { color: ICON_PALETTE.orange, background: "#FFF0E5" },
@@ -44,10 +45,10 @@ export function resolveTabIcon(kind: LeafPaneKind, metadata?: Record<string, unk
   }
   if (kind === "git_diff") return appearance("git", "git");
   const path = typeof metadata?.path === "string" ? metadata.path : "";
-  const extension = path.split(/[\\/]/).at(-1)?.split(".").at(-1)?.toLowerCase() ?? "";
-  if (/^(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/.test(extension)) return appearance("image", "image");
-  if (/^(mp4|webm|mov|m4v|ogv)$/.test(extension)) return appearance("video", "play");
-  if (/^(mp3|wav|ogg|m4a|flac)$/.test(extension)) return appearance("audio", "play");
-  if (extension === "pdf") return appearance("pdf", "file");
+  const media = mediaKind(path);
+  if (media === "image" || media === "converted") return appearance("image", "image");
+  if (media === "video") return appearance("video", "play");
+  if (media === "audio") return appearance("audio", "play");
+  if (media === "pdf") return appearance("pdf", "file");
   return kind === "file_preview" && !path ? appearance("image", "image") : appearance("text", "file");
 }

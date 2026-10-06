@@ -20,6 +20,7 @@ mod file_watch;
 mod host_grants;
 mod installation;
 mod mcp;
+mod media;
 mod model_catalog;
 mod native_config;
 mod native_history;
@@ -46,7 +47,7 @@ use axum::{
         DefaultBodyLimit, Path, Query, Request, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
-    http::{StatusCode, header},
+    http::StatusCode,
     middleware,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -57,7 +58,6 @@ use serde_json::{Value, json};
 use std::{collections::HashSet, env, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 #[cfg(test)]
 use tokio::net::TcpListener;
-use tower::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
 use uuid::Uuid;
 
@@ -168,6 +168,9 @@ struct SessionQuery {
 #[derive(Deserialize, Default)]
 struct PathQuery {
     path: Option<String>,
+    /// `png`: a preview of an image the browser cannot decode itself.
+    #[serde(rename = "as")]
+    format: Option<String>,
     #[serde(default)]
     staged: bool,
 }
@@ -673,6 +676,7 @@ fn router(state: AppState) -> Router {
         )
         .route("/api/host/directories", get(browse_directories))
         .route("/api/host/file", get(read_host_file))
+        .route("/api/host/raw", get(read_host_raw))
         .route(
             "/api/host/native-configurations",
             get(native_configuration_sources),
@@ -1848,18 +1852,25 @@ async fn read_asset(
             .as_deref()
             .ok_or_else(|| ApiError::bad("Path required"))?,
     )?;
-    let mut response = ServeFile::new(target)
-        .oneshot(request)
-        .await
-        .map_err(ApiError::internal)?
-        .into_response();
-    response.headers_mut().insert(
-        header::CONTENT_SECURITY_POLICY,
-        "sandbox; default-src 'none'; style-src 'unsafe-inline'"
-            .parse()
-            .unwrap(),
-    );
-    Ok(response)
+    media::serve(target, q.format.as_deref() == Some("png"), request).await
+}
+/// The bytes of a file outside every workspace, for previewing an image,
+/// video, audio or PDF an agent mentioned. Same reach as `/api/host/file`.
+async fn read_host_raw(
+    State(state): State<AppState>,
+    Query(q): Query<PathQuery>,
+    request: Request,
+) -> Result<Response> {
+    let path = q
+        .path
+        .clone()
+        .ok_or_else(|| ApiError::bad("Path required"))?;
+    let roots = [state.browse_roots.clone(), state.host_grants.roots()].concat();
+    let (target, _) =
+        tokio::task::spawn_blocking(move || workspace_io::resolve_host_file(&roots, &path))
+            .await
+            .map_err(ApiError::internal)??;
+    media::serve(target, q.format.as_deref() == Some("png"), request).await
 }
 async fn git_status(
     State(state): State<AppState>,

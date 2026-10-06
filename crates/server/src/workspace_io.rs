@@ -358,27 +358,37 @@ pub async fn read_file(root: &Path, path: &str) -> Result<TextFile, IoError> {
 /// mentioned. Held to the same boundary as the folder picker -- inside a
 /// browsing root -- and the same refusals as workspace reads: protected
 /// names, non-text, and anything over the size limit.
+/// A file outside every workspace that may be read: under one of `roots`,
+/// not a credential or configuration path, and a regular file.
+pub fn resolve_host_file(
+    roots: &[PathBuf],
+    path: &str,
+) -> Result<(PathBuf, fs::Metadata), IoError> {
+    let requested = Path::new(path);
+    if !requested.is_absolute() {
+        return Err(IoError::new(400, "an absolute path is required"));
+    }
+    let target = dunce::canonicalize(requested).map_err(IoError::from)?;
+    let root = roots
+        .iter()
+        .find(|root| target.starts_with(root))
+        .ok_or_else(|| IoError::new(403, "path is outside the folders AgentDock may browse"))?;
+    let rel = target.strip_prefix(root).unwrap_or(&target);
+    if is_protected_path(rel) {
+        return Err(IoError::new(403, "protected path"));
+    }
+    let metadata = fs::metadata(&target).map_err(IoError::from)?;
+    if !metadata.is_file() {
+        return Err(IoError::new(400, "path is not a file"));
+    }
+    Ok((target, metadata))
+}
+
 pub async fn read_host_file(roots: &[PathBuf], path: &str) -> Result<TextFile, IoError> {
     let roots = roots.to_vec();
     let path = path.to_owned();
     tokio::task::spawn_blocking(move || {
-        let requested = Path::new(&path);
-        if !requested.is_absolute() {
-            return Err(IoError::new(400, "an absolute path is required"));
-        }
-        let target = dunce::canonicalize(requested).map_err(IoError::from)?;
-        let root = roots
-            .iter()
-            .find(|root| target.starts_with(root))
-            .ok_or_else(|| IoError::new(403, "path is outside the folders AgentDock may browse"))?;
-        let rel = target.strip_prefix(root).unwrap_or(&target);
-        if is_protected_path(rel) {
-            return Err(IoError::new(403, "protected path"));
-        }
-        let metadata = fs::metadata(&target).map_err(IoError::from)?;
-        if !metadata.is_file() {
-            return Err(IoError::new(400, "path is not a file"));
-        }
+        let (target, metadata) = resolve_host_file(&roots, &path)?;
         if metadata.len() > MAX_TEXT_BYTES {
             return Err(IoError::new(413, "text file exceeds 2 MiB limit"));
         }

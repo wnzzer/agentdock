@@ -1,6 +1,7 @@
-import { cloneVNode, defineComponent, h } from 'vue';
+import { cloneVNode, defineComponent, h, reactive } from 'vue';
 import { markdownBlocksWithLines, markdownInline, workspaceImagePath, type MarkdownInline } from './chat-model';
 import { openLightbox } from './image-lightbox';
+import { mediaKind } from './media-kind';
 import CopyButton from './CopyButton.vue';
 
 /**
@@ -17,6 +18,11 @@ export const MarkdownContent = defineComponent({
     /** Turns a workspace path into a URL to load it from. Without one, an
      * image stays as its alt text: nothing is loaded that was not asked for. */
     imageUrl: { type: Function as unknown as () => (path: string) => string, required: false },
+    /** Turns an absolute host path into a URL to load it from. Without one, a
+     * leading slash means the workspace root, as it does in a repository's docs;
+     * with one -- in a conversation, where agents write real paths -- it means
+     * the host's file system. */
+    hostImageUrl: { type: Function as unknown as () => (path: string) => string, required: false },
     /** Directory of the file being rendered, for relative image paths. */
     base: { type: String, default: '' },
     /** Opens a file a message points at. Without one, references render as
@@ -27,6 +33,21 @@ export const MarkdownContent = defineComponent({
     sourceLines: { type: Boolean, default: false },
   },
   setup(props) {
+    /** Images that would not load: shown as a link to the file instead, which
+     * can explain why -- outside the folders AgentDock may browse, say. */
+    const failed = reactive(new Set<string>());
+    const hostPath = (src: string) => {
+      let value = src.trim().replace(/^file:\/\//i, '');
+      try { value = decodeURIComponent(value); } catch { return undefined; }
+      value = value.split(/[?#]/)[0];
+      return /^(\/(?!\/)|[A-Za-z]:[\\/])/.test(value) && ['image', 'converted'].includes(mediaKind(value)) ? value : undefined;
+    };
+    const imageSource = (src: string): { url: string; path: string } | undefined => {
+      const absolute = props.hostImageUrl && hostPath(src);
+      if (absolute) return { url: props.hostImageUrl!(absolute), path: absolute };
+      const path = props.imageUrl && workspaceImagePath(src, props.base);
+      return path ? { url: props.imageUrl!(path), path } : undefined;
+    };
     const inline = (text: string) =>
       markdownInline(text).map((part: MarkdownInline) =>
         part.type === 'file'
@@ -46,10 +67,16 @@ export const MarkdownContent = defineComponent({
               : part.code ? h('code', part.text) : part.text)
           : part.type === 'image'
           ? (() => {
-              const path = props.imageUrl && workspaceImagePath(part.src, props.base);
-              if (!path) return part.alt || part.src;
-              const src = props.imageUrl!(path);
-              return h('img', { class: 'chat-inline-image', src, alt: part.alt, title: part.alt || path, loading: 'lazy', onClick: () => openLightbox(src, part.alt || path) });
+              const found = imageSource(part.src);
+              if (!found) return part.alt || part.src;
+              const { path } = found;
+              const src = mediaKind(path) === 'converted' ? `${found.url}${found.url.includes('?') ? '&' : '?'}as=png` : found.url;
+              if (failed.has(src)) {
+                return props.openFile
+                  ? h('button', { type: 'button', class: 'chat-file-ref', title: path, onClick: () => props.openFile!({ path }) }, [h('span', { class: 'chat-file-name' }, part.alt || path.split('/').pop())])
+                  : part.alt || part.src;
+              }
+              return h('img', { class: 'chat-inline-image', src, alt: part.alt, title: part.alt || path, loading: 'lazy', onClick: () => openLightbox(src, part.alt || path), onError: () => failed.add(src) });
             })()
           : part.type === 'link'
           // Untrusted destinations: opening in a new tab without these lets the

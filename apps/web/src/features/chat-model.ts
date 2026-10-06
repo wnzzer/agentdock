@@ -342,7 +342,7 @@ export function markdownBlocks(text: string): MarkdownBlock[] {
   return markdownBlocksWithLines(text).map(entry => entry.block);
 }
 
-const IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i;
+const IMAGE_EXTENSION = /\.(png|apng|jpe?g|jpe|jfif|gif|webp|svg|avif|bmp|ico|tiff?|tga|qoi)$/i;
 /**
  * A workspace-relative path for an image reference, or undefined when it is
  * not one: a URL with a scheme, an absolute path, or one that climbs out of

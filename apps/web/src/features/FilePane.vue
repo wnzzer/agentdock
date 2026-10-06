@@ -10,16 +10,19 @@ import { MarkdownContent } from "./MarkdownContent";
 import { framedAnchors, lineAtOffset, lineForPreviewTop, offsetAtLine, previewTopForLine, type Anchor } from "./markdown-sync";
 import { continueList, indentLines, type TextEdit } from "./markdown-editing";
 import Icon from "./Icon.vue";
+import MediaPreview from "./MediaPreview.vue";
+import { mediaKind, type MediaKind } from "./media-kind";
 import { useI18n } from "../i18n";
 const { t } = useI18n();
 const props = defineProps<{ workspaceId: string; path?: string }>();
 const emit = defineEmits<{ saved: []; browse: [] }>();
 const loading = ref(false), saving = ref(false), error = ref(""), success = ref("");
 const conflict = ref(false), confirmReload = ref(false), mediaFailed = ref(false);
+/** The host said this "text" file is not text: shown as a download instead. */
+const binary = ref(false);
 const draft = computed(() => fileDraft(props.workspaceId, props.path ?? ""));
 const dirty = computed(() => draft.value.loaded && draft.value.content !== draft.value.original);
-const extension = computed(() => props.path?.split(".").pop()?.toLowerCase() ?? "");
-const kind = computed(() => /^(png|jpg|jpeg|gif|webp|svg|bmp|ico|avif)$/.test(extension.value) ? "image" : /^(mp4|webm|mov|m4v|ogv)$/.test(extension.value) ? "video" : /^(mp3|wav|ogg|m4a|flac)$/.test(extension.value) ? "audio" : extension.value === "pdf" ? "pdf" : "text");
+const kind = computed<MediaKind>(() => binary.value ? "binary" : mediaKind(props.path ?? ""));
 const mediaVersion = ref(0);
 const url = computed(() => props.path ? assetUrl(props.workspaceId, props.path) + (mediaVersion.value ? `&v=${mediaVersion.value}` : "") : "");
 /**
@@ -283,7 +286,11 @@ async function read() {
     if (requestId !== revision) return;
     Object.assign(target, { content: file.content, original: file.content, version: file.version, loaded: true });
     conflict.value = false;
-  } catch (cause) { if (requestId === revision) error.value = errorMessage(cause); }
+  } catch (cause) {
+    if (requestId !== revision) return;
+    if (cause instanceof ApiError && cause.status === 415) binary.value = true;
+    else error.value = errorMessage(cause);
+  }
   finally { if (requestId === revision) loading.value = false; }
 }
 async function save() {
@@ -327,7 +334,7 @@ const stopWatching = onFilesChanged((workspaceId, paths) => {
   if (kind.value === "text") void hostChanged();
   else { mediaVersion.value++; mediaFailed.value = false; }
 });
-watch([() => props.workspaceId, () => props.path], () => { revision++; saving.value = false; error.value = ""; success.value = ""; mediaFailed.value = false; loading.value = false; conflict.value = false; confirmReload.value = false; if (!draft.value.loaded) void read(); else if (kind.value === "text") void hostChanged(); else mediaVersion.value++; }, { immediate: true, flush: "sync" });
+watch([() => props.workspaceId, () => props.path], () => { revision++; saving.value = false; error.value = ""; success.value = ""; mediaFailed.value = false; binary.value = false; loading.value = false; conflict.value = false; confirmReload.value = false; if (!draft.value.loaded) void read(); else if (kind.value === "text") void hostChanged(); else mediaVersion.value++; }, { immediate: true, flush: "sync" });
 onBeforeUnmount(() => { revision++; watcher?.disconnect(); paneWatcher?.disconnect(); clearTimeout(driverTimer); stopWatching(); });
 </script>
 <template>
@@ -346,11 +353,7 @@ onBeforeUnmount(() => { revision++; watcher?.disconnect(); paneWatcher?.disconne
       </div>
       <div v-if="showPreview" ref="preview" class="markdown-preview" :title="view === 'preview' ? t('Double-click a passage to edit it') : undefined" @scroll="previewScrolled" @dblclick="editAt"><MarkdownContent :text="draft.content" :image-url="(p: string) => assetUrl(workspaceId, p)" :base="path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''" source-lines /></div>
     </div>
-    <div v-else-if="kind === 'image'" class="media-preview image-preview"><img v-if="!mediaFailed" :src="url" :alt="path" @error="mediaFailed = true" /><p v-else>{{ t('Unable to preview this image. It may be unavailable or unsupported.') }}</p></div>
-    <div v-else-if="kind === 'video'" class="media-preview"><video :src="url" controls preload="metadata" @error="mediaFailed = true" /><p v-if="mediaFailed">{{ t('This browser cannot play this file. Use Download to open it locally.') }}</p></div>
-    <div v-else-if="kind === 'audio'" class="media-preview"><audio :src="url" controls preload="metadata" @error="mediaFailed = true" /><p v-if="mediaFailed">{{ t('This browser cannot play this file.') }}</p></div>
-    <iframe v-else-if="kind === 'pdf'" :src="url" class="pdf-preview" :title="t('PDF preview: {path}', { path })" />
-    <div v-else class="pane-empty"><Icon name="file" :size="28" /><p>{{ t('Text preview is unavailable for this file.') }}</p><a class="secondary-button" :href="url" download>{{ t('Download file') }}</a></div>
-    <div class="content-footer"><span>{{ kind !== 'text' ? t(`${kind} preview`) : isMarkdown && view === 'preview' ? t('Rendered markdown') : oversize ? t('Plain text · too large to highlight') : language ? language : t('Plain text editor') }}</span><span v-if="kind === 'text' && draft.loaded">{{ t('{count} lines · {status}', { count: draft.content.split('\n').length, status: t(dirty ? 'Unsaved draft' : 'In sync at last read') }) }}</span></div>
+    <MediaPreview v-else-if="kind !== 'text'" :url="url" :kind="kind" :name="path?.split('/').pop() ?? ''" />
+    <div class="content-footer"><span>{{ kind === 'converted' ? t('image preview') : kind === 'binary' ? t('No preview') : kind !== 'text' ? t(`${kind} preview`) : isMarkdown && view === 'preview' ? t('Rendered markdown') : oversize ? t('Plain text · too large to highlight') : language ? language : t('Plain text editor') }}</span><span v-if="kind === 'text' && draft.loaded">{{ t('{count} lines · {status}', { count: draft.content.split('\n').length, status: t(dirty ? 'Unsaved draft' : 'In sync at last read') }) }}</span></div>
   </div>
 </template>

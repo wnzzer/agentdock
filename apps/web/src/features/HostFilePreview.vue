@@ -3,6 +3,8 @@ import { computed, nextTick, onMounted, ref } from 'vue';
 import ModalDialog from './ModalDialog.vue';
 import { ApiError, errorMessage, json, request } from './api';
 import Icon from './Icon.vue';
+import MediaPreview from './MediaPreview.vue';
+import { mediaKind, type MediaKind } from './media-kind';
 import { MAX_HIGHLIGHT_BYTES, escapeHtml, languageFor, loadHighlighter } from './highlighting';
 import { useI18n } from '../i18n';
 
@@ -21,10 +23,22 @@ const body = ref<HTMLElement>();
 const name = computed(() => props.path.split('/').pop() || props.path);
 const folder = computed(() => props.path.slice(0, props.path.lastIndexOf('/')) || '/');
 const lines = computed(() => (content.value ?? '').split('\n'));
+/** Images, video, audio and PDFs are shown as themselves; so is a file the host says is not text. */
+const kind = ref<MediaKind>(mediaKind(props.path));
+const rawUrl = computed(() => `/api/host/raw?${new URLSearchParams({ path: props.path })}`);
+const media = ref(false);
 
 async function load() {
-  error.value = ''; grantable.value = false;
+  error.value = ''; grantable.value = false; media.value = false;
   try {
+    if (kind.value !== 'text') {
+      // One byte is enough to learn whether it may be read, before an <img>
+      // or <video> fails with nothing to say why.
+      const probe = await fetch(rawUrl.value, { headers: { Range: 'bytes=0-0' } });
+      if (!probe.ok) { const body = await probe.json().catch(() => ({})); throw new ApiError(body.error ?? probe.statusText, probe.status); }
+      media.value = true;
+      return;
+    }
     const file = await request<{ content: string }>(`/host/file?${new URLSearchParams({ path: props.path })}`);
     content.value = file.content;
     const language = languageFor(props.path);
@@ -36,6 +50,7 @@ async function load() {
     await nextTick();
     if (props.line) body.value?.querySelector(`[data-line="${props.line}"]`)?.scrollIntoView({ block: 'center' });
   } catch (cause) {
+    if (cause instanceof ApiError && cause.status === 415) { kind.value = 'binary'; media.value = true; return; }
     grantable.value = cause instanceof ApiError && cause.status === 403 && /outside the folders/.test(cause.message);
     error.value = errorMessage(cause);
   }
@@ -74,6 +89,7 @@ async function copyPath() {
         </div>
       </div>
       <p v-else-if="error" class="account-error" role="alert">{{ error }}</p>
+      <div v-else-if="media && kind !== 'text'" class="host-file-media"><MediaPreview :url="rawUrl" :kind="kind" :name="name" /></div>
       <p v-else-if="content === undefined" class="host-file-quiet">{{ t('Loading…') }}</p>
       <div v-else ref="body" class="host-file-body">
         <div v-for="(text, index) in lines" :key="index" :data-line="index + 1" :class="['host-file-line', { target: index + 1 === line }]"><span>{{ index + 1 }}</span><code v-if="html" v-html="html[index]" /><code v-else>{{ text }}</code></div>
@@ -87,6 +103,7 @@ async function copyPath() {
 .host-file header{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .host-file header code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--text-sm);color:var(--ink-soft)}
 .host-file-badge{flex-shrink:0;font-size:var(--text-xs);padding:2px 8px;border-radius:var(--radius-sm);background:var(--fill);color:var(--muted)}
+.host-file-media{display:flex;flex:1;min-height:0;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius-md)}
 .host-file-quiet{font-size:var(--text-sm);color:var(--muted)}
 .host-file-body{flex:1;min-height:0;overflow:auto;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface);padding:8px 0;font:var(--text-sm)/1.65 var(--mono)}
 .host-file-line{display:flex;min-width:max-content}
