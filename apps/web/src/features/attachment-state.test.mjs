@@ -29,7 +29,7 @@ test('a message needs text or an attachment, and never both empty', () => {
 test('oversized, empty and excess picks are refused before anything uploads', () => {
   assert.equal(attachmentError({ name: 'ok.png', size: 1024 }, 0), undefined);
   assert.equal(attachmentError({ name: 'ok.png', size: MAX_ATTACHMENT_BYTES }, 0), undefined);
-  assert.match(attachmentError({ name: 'big.mov', size: MAX_ATTACHMENT_BYTES + 1 }, 0), /10 MiB/);
+  assert.match(attachmentError({ name: 'big.mov', size: MAX_ATTACHMENT_BYTES + 1 }, 0), /50 MiB/);
   assert.match(attachmentError({ name: 'empty', size: 0 }, 0), /empty/);
   assert.match(attachmentError({ name: 'ok.png', size: 10 }, MAX_ATTACHMENTS_PER_MESSAGE), /at most/);
   // The count check comes first, so a full list reports the real reason.

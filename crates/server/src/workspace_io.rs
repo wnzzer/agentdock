@@ -1168,7 +1168,13 @@ pub async fn git_commit(root: &Path, message: &str) -> Result<String, IoError> {
 /// not `.agentdock`: that name is reserved for AgentDock's own server state, and
 /// a workspace may be the AgentDock checkout itself.
 pub const ATTACHMENT_DIR: &str = ".agentdock-files";
-pub const MAX_ATTACHMENT_BYTES: u64 = 10 * 1024 * 1024;
+pub const MAX_ATTACHMENT_BYTES: u64 = 50 * 1024 * 1024;
+/// Files pasted or dropped into a terminal, under the attachment directory.
+/// They are handed over as a path and serve that one prompt, so they are
+/// cleared after `PASTE_DAYS`; chat attachments stay, since a conversation
+/// shows them again.
+pub const PASTE_DIR: &str = "pastes";
+const PASTE_DAYS: i64 = 7;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Attachment {
@@ -1176,6 +1182,8 @@ pub struct Attachment {
     pub path: String,
     pub name: String,
     pub bytes: u64,
+    /// The full host path, for a terminal, whose program may be anywhere.
+    pub absolute: String,
 }
 
 /// Reduce a client-supplied filename to a single safe path component.
@@ -1244,16 +1252,61 @@ pub async fn write_attachment(
     name: &str,
     bytes: &[u8],
 ) -> Result<Attachment, IoError> {
+    store_attachment(root, "", name, bytes).await
+}
+
+/// Store a file pasted into a terminal, and clear pastes older than a week.
+pub async fn write_paste(root: &Path, name: &str, bytes: &[u8]) -> Result<Attachment, IoError> {
+    let stored = store_attachment(root, PASTE_DIR, name, bytes).await?;
+    let pastes = root.join(ATTACHMENT_DIR).join(PASTE_DIR);
+    let _ =
+        tokio::task::spawn_blocking(move || prune_pastes(&pastes, chrono::Utc::now().date_naive()))
+            .await;
+    Ok(stored)
+}
+
+/// Remove the dated paste folders more than `PASTE_DAYS` old. Only folders
+/// named as dates are touched.
+fn prune_pastes(pastes: &Path, today: chrono::NaiveDate) {
+    let Ok(entries) = fs::read_dir(pastes) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(date) = name
+            .to_str()
+            .and_then(|n| chrono::NaiveDate::parse_from_str(n, "%Y-%m-%d").ok())
+        else {
+            continue;
+        };
+        let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+        if is_dir && (today - date).num_days() > PASTE_DAYS {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+async fn store_attachment(
+    root: &Path,
+    subdir: &str,
+    name: &str,
+    bytes: &[u8],
+) -> Result<Attachment, IoError> {
     if bytes.is_empty() {
         return Err(IoError::new(400, "attachment is empty"));
     }
     if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
-        return Err(IoError::new(413, "attachment exceeds 10 MiB limit"));
+        return Err(IoError::new(413, "attachment exceeds 50 MiB limit"));
     }
     let (display, extension, stem) = attachment_name(name);
     let unique = Uuid::new_v4().simple().to_string();
+    let folder = if subdir.is_empty() {
+        ATTACHMENT_DIR.to_owned()
+    } else {
+        format!("{ATTACHMENT_DIR}/{subdir}")
+    };
     let relative = format!(
-        "{ATTACHMENT_DIR}/{}/{}-{}{extension}",
+        "{folder}/{}/{}-{}{extension}",
         chrono::Utc::now().format("%Y-%m-%d"),
         if stem.is_empty() { "attachment" } else { &stem },
         &unique[..8]
@@ -1289,6 +1342,7 @@ pub async fn write_attachment(
             path: relative_string(&canonical_root, &target),
             name: display,
             bytes: size,
+            absolute: target.to_string_lossy().into_owned(),
         })
     })
     .await
@@ -1496,6 +1550,45 @@ pub async fn delete_entry(root: &Path, relative: &str) -> Result<(), IoError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_terminal_paste_lands_with_a_full_path_and_old_pastes_are_cleared() {
+        let root = std::env::temp_dir().join(format!("agentdock-paste-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let old = root.join(ATTACHMENT_DIR).join(PASTE_DIR).join("2000-01-01");
+        fs::create_dir_all(&old).unwrap();
+        fs::write(old.join("stale.png"), b"x").unwrap();
+        let keep = root.join(ATTACHMENT_DIR).join(PASTE_DIR).join("notes");
+        fs::create_dir_all(&keep).unwrap();
+        let saved = write_paste(&root, "Screen Shot (1).png", b"png bytes")
+            .await
+            .unwrap();
+        assert!(
+            saved.path.starts_with(".agentdock-files/pastes/"),
+            "{}",
+            saved.path
+        );
+        assert!(std::path::Path::new(&saved.absolute).is_absolute());
+        assert_eq!(fs::read(&saved.absolute).unwrap(), b"png bytes");
+        assert!(saved.absolute.ends_with(".png"));
+        assert!(!old.exists(), "a week-old paste folder is cleared");
+        assert!(keep.exists(), "only dated folders are touched");
+        let chat = write_attachment(&root, "a.txt", b"t").await.unwrap();
+        assert!(
+            !chat.path.contains("/pastes/"),
+            "chat attachments are not pastes"
+        );
+        assert!(
+            write_paste(
+                &root,
+                "big.bin",
+                &vec![0; (MAX_ATTACHMENT_BYTES + 1) as usize]
+            )
+            .await
+            .is_err()
+        );
+        fs::remove_dir_all(root).ok();
+    }
     use std::process::Command as StdCommand;
 
     #[tokio::test]

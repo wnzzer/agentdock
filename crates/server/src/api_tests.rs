@@ -4091,3 +4091,50 @@ fn url_escape(value: &str) -> String {
         })
         .collect()
 }
+
+#[tokio::test]
+async fn a_file_pasted_into_a_terminal_lands_in_that_sessions_directory() {
+    let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
+    let id = register(&f).await;
+    let (status, session) = call(
+        f.app(),
+        "POST",
+        &format!("/api/workspaces/{id}/sessions"),
+        json!({"title":"Shell","provider":"terminal"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let session = session["id"].as_str().unwrap();
+    let (status, saved) = call(
+        f.app(),
+        "POST",
+        &format!("/api/sessions/{session}/uploads?name=image.png"),
+        json!("pixels"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let absolute = saved["absolute"].as_str().unwrap();
+    let repo = dunce::canonicalize(f.path.join("repo")).unwrap();
+    assert!(
+        std::path::Path::new(absolute).starts_with(&repo),
+        "{absolute}"
+    );
+    assert!(
+        saved["path"]
+            .as_str()
+            .unwrap()
+            .starts_with(".agentdock-files/pastes/")
+    );
+    let (status, _) = call(
+        f.app(),
+        "POST",
+        &format!("/api/sessions/{}/uploads?name=a.png", uuid::Uuid::new_v4()),
+        json!("x"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "an unknown session has nowhere to put it"
+    );
+}

@@ -200,3 +200,17 @@
 /* A field under 16px makes iOS zoom the page on focus; under a finger every
    dialog field is 16px and a full touch target. */
 @media (pointer: coarse) { .form-stack input, .form-stack select, .form-stack textarea { font-size: var(--input-text); min-height: 44px; } }
+/* Files on their way into a terminal: chips above the key bar, and a drop target over the whole view. */
+.terminal-attach { margin-left: auto; }
+.terminal-uploads { position: absolute; right: 10px; bottom: 60px; z-index: 5; display: flex; flex-direction: column; gap: 6px; max-width: min(320px, calc(100% - 20px)); }
+.terminal-upload { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-md); font-size: var(--text-xs); color: var(--ink-soft); }
+.terminal-upload img { width: 32px; height: 32px; flex: none; object-fit: cover; border-radius: var(--radius-sm); }
+.terminal-upload-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.terminal-upload-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; color: var(--ink); }
+.terminal-upload.failed { border-color: var(--danger-line); }
+.terminal-upload.failed small { color: var(--danger-ink); white-space: normal; }
+.terminal-drop { position: absolute; inset: 0; z-index: 6; display: grid; place-items: center; border: 2px dashed var(--focus); border-radius: var(--radius-md); background: color-mix(in srgb, var(--shade) 35%, transparent); pointer-events: none; }
+.terminal-drop span { padding: 8px 14px; border-radius: var(--radius-full); background: var(--surface); color: var(--ink); font-size: var(--text-sm); box-shadow: var(--shadow-md); }
+.native-terminal.dark .terminal-upload { border-color: var(--term-line); background: var(--term-raised); color: var(--term-muted); }
+.native-terminal.dark .terminal-upload-text strong { color: var(--term-ink); }
+@media (any-pointer: fine) { .terminal-uploads { bottom: 12px; } }

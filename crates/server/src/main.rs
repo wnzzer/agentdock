@@ -729,6 +729,12 @@ fn router(state: AppState) -> Router {
                 workspace_io::MAX_ATTACHMENT_BYTES as usize + 4096,
             )),
         )
+        .route(
+            "/api/sessions/{id}/uploads",
+            post(upload_paste).layer(DefaultBodyLimit::max(
+                workspace_io::MAX_ATTACHMENT_BYTES as usize + 4096,
+            )),
+        )
         .route("/api/workspaces/{id}/asset", get(read_asset))
         .route("/api/workspaces/{id}/git/status", get(git_status))
         .route("/api/workspaces/{id}/git/diff", get(git_diff))
@@ -990,6 +996,24 @@ async fn upload_attachment(
             &body,
         )
         .await?,
+    ))
+}
+/// A file pasted or dropped into a session's terminal: stored in the directory
+/// that session works in -- its worktree, if it has one -- so the path handed
+/// to the program is one it can read.
+async fn upload_paste(
+    State(state): State<AppState>,
+    Path(id): Path<SessionId>,
+    Query(query): Query<AttachmentQuery>,
+    body: axum::body::Bytes,
+) -> Result<Json<workspace_io::Attachment>> {
+    if query.name.trim().is_empty() || query.name.len() > 400 {
+        return Err(ApiError::bad("Attachment needs a file name"));
+    }
+    let session = session_record(&state, id).await?;
+    let cwd = checkouts::session_cwd(&state, &session).await?;
+    Ok(Json(
+        workspace_io::write_paste(&cwd, &query.name, &body).await?,
     ))
 }
 async fn list_workspaces(State(state): State<AppState>) -> Result<Json<Vec<Workspace>>> {

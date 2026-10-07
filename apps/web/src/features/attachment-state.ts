@@ -10,15 +10,17 @@ export interface Attachment {
   path: string;
   name: string;
   bytes: number;
+  /** The full host path. */
+  absolute?: string;
 }
 /** Matches the server's own cap, so an oversized pick fails before uploading. */
-export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+export const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 export const MAX_ATTACHMENTS_PER_MESSAGE = 10;
 
 export function attachmentError(file: { name: string; size: number }, existing: number): string | undefined {
   if (existing >= MAX_ATTACHMENTS_PER_MESSAGE) return 'Attach at most {count} files to one message.';
   if (file.size <= 0) return 'This file is empty, so nothing was attached.';
-  if (file.size > MAX_ATTACHMENT_BYTES) return 'This file is larger than the 10 MiB attachment limit.';
+  if (file.size > MAX_ATTACHMENT_BYTES) return 'This file is larger than the 50 MiB attachment limit.';
   return undefined;
 }
 

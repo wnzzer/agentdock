@@ -10,6 +10,8 @@ import type { SessionStreamState } from "../features/session-stream";
 import { arrowSequence, ctrlSequence, ENTER_SEQUENCE, ESCAPE_SEQUENCE, isTap, repeatArrow, selectionPresses, shiftSequence, tabSequence, type ArrowKey } from "../features/terminal-keys";
 import { swipeAxis } from "../features/pane-swipe";
 import { darkScheme } from "../features/theme";
+import { filesFrom, imageCaveat, isImage, pasteText, uploadName, uploadProblem, uploadToSession } from "../features/terminal-uploads";
+import { showToast } from "../features/toasts";
 const { t } = useI18n();
 
 const props = withDefaults(defineProps<{ sessionId: string; dark?: boolean }>(), { dark: false });
@@ -147,11 +149,99 @@ function pressSlash() { sendKeys("/"); }
 async function pressPaste() {
   ctrlArmed.value = false; shiftArmed.value = false;
   try {
+    // An image on the clipboard first, where the browser lets it be read.
+    const items = await navigator.clipboard?.read?.().catch(() => undefined);
+    const images: File[] = [];
+    for (const item of items ?? []) {
+      const type = item.types.find(kind => kind.startsWith("image/"));
+      if (type) images.push(new File([await item.getType(type)], "image." + (type.split("/")[1] ?? "png"), { type }));
+    }
+    if (images.length) { void sendFiles(images); return; }
     const text = await navigator.clipboard?.readText?.();
     if (text) { terminal?.paste(text); return; }
   } catch { /* Not permitted here; fall back to the field. */ }
   pasteDraft.value = "";
   await nextTick(); pasteField.value?.focus();
+}
+/**
+ * Files on their way into the terminal. Each shows as a chip while it uploads;
+ * when a batch is in, the paths are pasted in the order the files came, and a
+ * failed one stays as a chip to retry or dismiss, pasting nothing half-made.
+ */
+interface Upload { id: number; file: File; name: string; progress: number; failed?: string; retryable?: boolean; preview?: string; abort?: () => void }
+const uploads = ref<Upload[]>([]);
+const dragging = ref(false);
+const fileInput = ref<HTMLInputElement>();
+let uploadSeq = 0;
+function dropUpload(id: number) {
+  const entry = uploads.value.find(item => item.id === id);
+  entry?.abort?.(); if (entry?.preview) URL.revokeObjectURL(entry.preview);
+  uploads.value = uploads.value.filter(item => item.id !== id);
+}
+async function uploadOne(entry: Upload): Promise<string | undefined> {
+  const problem = uploadProblem(entry.file);
+  if (problem) { entry.failed = t(problem); entry.retryable = false; return undefined; }
+  entry.failed = undefined; entry.progress = 0;
+  const job = uploadToSession(props.sessionId, entry.file, entry.name, fraction => { entry.progress = fraction; });
+  entry.abort = job.abort;
+  try {
+    const saved = await job.promise;
+    const caveat = imageCaveat(saved.name);
+    if (caveat) showToast(t(caveat), { tone: "warn" });
+    return saved.absolute;
+  } catch (cause) { entry.failed = cause instanceof Error ? t(cause.message) : t("Upload failed"); entry.retryable = true; return undefined; }
+  finally { entry.abort = undefined; }
+}
+/** Upload files and paste their paths, as dragging them into a local terminal would. */
+async function sendFiles(files: File[]) {
+  if (!files.length) return;
+  if (!terminal || state.value !== "connected") { showToast(t("Connect the terminal before adding files."), { tone: "warn" }); return; }
+  const batch = files.map(file => {
+    const name = uploadName(file);
+    const entry: Upload = { id: ++uploadSeq, file, name, progress: 0, preview: isImage(name, file.type) ? URL.createObjectURL(file) : undefined };
+    uploads.value = [...uploads.value, entry];
+    return uploads.value[uploads.value.length - 1];
+  });
+  const paths = await Promise.all(batch.map(uploadOne));
+  const done = paths.filter((path): path is string => !!path);
+  if (done.length) { terminal?.paste(pasteText(done)); terminal?.focus(); }
+  for (const [index, entry] of batch.entries()) if (paths[index]) dropUpload(entry.id);
+}
+async function retryUpload(entry: Upload) {
+  const path = await uploadOne(entry);
+  if (path) { terminal?.paste(pasteText([path])); terminal?.focus(); dropUpload(entry.id); }
+}
+/** A paste carrying files is theirs; plain text is left to the terminal untouched. */
+function onPaste(event: ClipboardEvent) {
+  const files = filesFrom(event.clipboardData);
+  if (!files.length) return;
+  event.preventDefault(); event.stopPropagation();
+  void sendFiles(files);
+}
+const carriesFiles = (event: DragEvent) => [...(event.dataTransfer?.types ?? [])].includes("Files");
+function onDragOver(event: DragEvent) { if (!carriesFiles(event)) return; event.preventDefault(); if (event.dataTransfer) event.dataTransfer.dropEffect = "copy"; dragging.value = true; }
+function onDragLeave(event: DragEvent) { if (!(event.currentTarget as Element).contains(event.relatedTarget as Node | null)) dragging.value = false; }
+function onDrop(event: DragEvent) {
+  dragging.value = false;
+  const files = filesFrom(event.dataTransfer);
+  if (!files.length) return;
+  event.preventDefault(); event.stopPropagation();
+  void sendFiles(files);
+}
+function pickFiles() { moreKeys.value = false; fileInput.value?.click(); }
+function filesPicked(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const files = [...(input.files ?? [])];
+  input.value = "";
+  void sendFiles(files);
+}
+/** The phone paste field takes images too: a long-press paste of a photo lands here. */
+function onFieldPaste(event: ClipboardEvent) {
+  const files = filesFrom(event.clipboardData);
+  if (!files.length) return;
+  event.preventDefault();
+  pasteDraft.value = undefined;
+  void sendFiles(files);
 }
 function sendPaste() {
   const text = pasteDraft.value;
@@ -316,17 +406,28 @@ watch(() => props.sessionId, async (_next, _previous, onCleanup) => {
   let current = true; onCleanup(() => { current = false; });
   stream.disconnect(); resume = undefined; terminal?.reset(); await nextTick(); if (current) connect();
 });
-onUnmounted(() => { stopPageReturn(); disposed = true; stream.dispose(); cleanupTerminal(); emit("status", false); });
+onUnmounted(() => { for (const entry of uploads.value) { entry.abort?.(); if (entry.preview) URL.revokeObjectURL(entry.preview); } stopPageReturn(); disposed = true; stream.dispose(); cleanupTerminal(); emit("status", false); });
 </script>
 
 <template>
-  <div :class="['native-terminal', { dark: dark }]">
-    <div class="terminal-connection"><span :class="['state-dot', state]" /><span>{{ t(state === 'connected' ? 'Live · native client' : state) }}</span><button v-if="state === 'disconnected' || state === 'error'" class="text-button" :aria-label="t('Reconnect session stream')" @click="connect"><Icon name="refresh" :size="13" />{{ t('Reconnect') }}</button></div>
+  <div :class="['native-terminal', { dark: dark, dragging }]" @paste.capture="onPaste" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
+    <div class="terminal-connection"><span :class="['state-dot', state]" /><span>{{ t(state === 'connected' ? 'Live · native client' : state) }}</span><button v-if="state === 'disconnected' || state === 'error'" class="text-button" :aria-label="t('Reconnect session stream')" @click="connect"><Icon name="refresh" :size="13" />{{ t('Reconnect') }}</button><button v-if="state === 'connected'" type="button" class="text-button terminal-attach" :title="t('Add files or images: paste, drop, or pick them; their paths are typed into the terminal')" @click="pickFiles"><Icon name="plus" :size="13" />{{ t('Add file') }}</button></div>
+    <input ref="fileInput" class="sr-only" type="file" multiple tabindex="-1" aria-hidden="true" @change="filesPicked" />
+    <div v-if="dragging" class="terminal-drop" aria-hidden="true"><span>{{ t('Drop to add the files and type their paths') }}</span></div>
+    <div v-if="uploads.length" class="terminal-uploads" role="status" aria-live="polite">
+      <div v-for="entry in uploads" :key="entry.id" :class="['terminal-upload', { failed: entry.failed }]">
+        <img v-if="entry.preview" :src="entry.preview" alt="" /><Icon v-else name="file" :size="16" />
+        <span class="terminal-upload-text"><strong :title="entry.name">{{ entry.name }}</strong><small>{{ entry.failed ?? t('Uploading {percent}%', { percent: Math.round(entry.progress * 100) }) }}</small></span>
+        <button v-if="entry.failed && entry.retryable" type="button" class="text-button" @click="retryUpload(entry)">{{ t('Retry') }}</button>
+        <button type="button" class="icon-button" :aria-label="t(entry.failed ? 'Dismiss' : 'Cancel upload')" @click="dropUpload(entry.id)"><Icon name="close" :size="13" /></button>
+      </div>
+    </div>
     <div v-if="notice" :class="state === 'error' ? 'inline-error' : 'inline-notice'" :role="state === 'error' ? 'alert' : 'status'">{{ nativeNotice ? notice : t(notice) }}</div>
     <div ref="host" class="terminal-host" :aria-label="t('Native session {id}', { id: sessionId })" @pointerdown="gestureStart" @pointerup="gestureEnd" @pointercancel="gesture = undefined" @touchstart="touchScrollStart" @touchmove="touchScrollMove" />
     <div v-if="touchDevice" class="terminal-keys" role="group" :aria-label="t('Terminal keys')">
       <div v-if="moreKeys" class="terminal-keys-row">
         <button type="button" :aria-label="t('Paste')" :title="t('Paste')" @click="moreKeys = false; pressPaste()"><Icon name="clipboard" :size="16" /></button>
+        <button type="button" class="key-text" :aria-label="t('Photo or file')" :title="t('Photo or file')" @click="pickFiles">{{ t('Photo / file') }}</button>
         <button type="button" :aria-label="t('Keyboard')" :title="t('Keyboard')" @click="moreKeys = false; showKeyboard()"><Icon name="edit" :size="16" /></button>
         <button type="button" :class="{ armed: tapSelect }" :aria-pressed="tapSelect" :aria-label="t('Tap a row to select it')" :title="t('Tap a row to select it')" @pointerdown="keepFocus" @click="tapSelect = !tapSelect"><Icon name="locate" :size="16" /></button>
       </div>
@@ -347,7 +448,7 @@ onUnmounted(() => { stopPageReturn(); disposed = true; stream.dispose(); cleanup
       </div>
     </div>
     <form v-if="pasteDraft !== undefined" class="terminal-paste" @submit.prevent="sendPaste" @keydown.esc.prevent="cancelPaste">
-      <textarea ref="pasteField" v-model="pasteDraft" :aria-label="t('Text to paste')" :placeholder="t('Long-press here to paste, then send it to the terminal')" />
+      <textarea ref="pasteField" v-model="pasteDraft" :aria-label="t('Text to paste')" @paste="onFieldPaste" :placeholder="t('Long-press here to paste text, a photo or a file, then send it to the terminal')" />
       <div><button type="button" class="secondary-button" @click="cancelPaste">{{ t('Cancel') }}</button><button type="submit" class="primary-button" :disabled="!pasteDraft">{{ t('Send') }}</button></div>
     </form>
   </div>
