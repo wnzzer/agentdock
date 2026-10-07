@@ -53,7 +53,8 @@ export interface Allowance {
   window_minutes: number;
   used_percent: number;
   window_start: number;
-  resets_at: number;
+  /** Null when the window has run out and the next has not begun. */
+  resets_at: number | null;
   used_tokens: number;
   used_cost: number;
   estimated_total_tokens: number | null;

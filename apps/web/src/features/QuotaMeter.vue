@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import type { AccountLimit } from './account-ui';
-import { accountLimitPercent, accountResetDate, quotaLevel, quotaWindowTitle, untilLabel } from './account-ui';
+import { accountLimitExpired, accountLimitPercent, accountResetDate, quotaLevel, quotaWindowTitle, untilLabel } from './account-ui';
 import { useI18n } from '../i18n';
 
 /**
@@ -20,13 +20,14 @@ let timer: ReturnType<typeof setInterval> | undefined;
 onMounted(() => { timer = setInterval(() => { now.value = Date.now(); }, 30_000); });
 onBeforeUnmount(() => { if (timer) clearInterval(timer); });
 
-const percent = computed(() => accountLimitPercent(props.limit));
+const expired = computed(() => accountLimitExpired(props.limit, now.value));
+const percent = computed(() => accountLimitPercent(props.limit, now.value));
 const level = computed(() => quotaLevel(percent.value));
 const title = computed(() => { const name = quotaWindowTitle(props.position, props.limit); return t(name.key, name.values); });
 const resetsAt = computed(() => accountResetDate(props.limit?.resets_at));
 const until = computed(() => resetsAt.value ? untilLabel(resetsAt.value.getTime() - now.value) : undefined);
-const resetLine = computed(() => !until.value ? t('Reset time unavailable') : until.value.soon ? t('Resetting now') : t('Resets in {time}', { time: t(until.value.key, until.value.values) }));
-const resetExact = computed(() => resetsAt.value ? new Intl.DateTimeFormat(locale.value, { month: 'short', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit' }).format(resetsAt.value) : '');
+const resetLine = computed(() => expired.value ? t('Reset · starts again with your next message') : !until.value ? t('Reset time unavailable') : until.value.soon ? t('Resetting now') : t('Resets in {time}', { time: t(until.value.key, until.value.values) }));
+const resetExact = computed(() => resetsAt.value && !expired.value ? new Intl.DateTimeFormat(locale.value, { month: 'short', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit' }).format(resetsAt.value) : '');
 // r = 26 on a 64 box: circumference ≈ 163.4.
 const CIRCUMFERENCE = 2 * Math.PI * 26;
 const left = computed(() => percent.value === undefined ? undefined : Math.max(0, Math.round(100 - percent.value)));

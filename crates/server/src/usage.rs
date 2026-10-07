@@ -1001,7 +1001,8 @@ pub struct Allowance {
     pub window_minutes: f64,
     pub used_percent: f64,
     pub window_start: i64,
-    pub resets_at: i64,
+    /// None when the window has run out and the next has not begun.
+    pub resets_at: Option<i64>,
     pub used_tokens: u64,
     pub used_cost: f64,
     pub estimated_total_tokens: Option<u64>,
@@ -1161,10 +1162,19 @@ async fn allowance(State(state): State<AppState>) -> Result<Json<Vec<Allowance>>
                 ) else {
                     continue;
                 };
-                let start = resets_at - (minutes * 60.0) as i64;
-                if resets_at < now {
-                    continue;
-                }
+                // A window past its reset is over: nothing of the next is used
+                // yet, and it starts with the next message, so it has no reset
+                // time until then.
+                let expired = resets_at <= now;
+                let (start, used_percent, resets_at) = if expired {
+                    (resets_at, 0.0, None)
+                } else {
+                    (
+                        resets_at - (minutes * 60.0) as i64,
+                        limit.used_percent,
+                        Some(resets_at),
+                    )
+                };
                 let (mut tokens, mut cost) = (0u64, 0f64);
                 for call in calls
                     .iter()
@@ -1174,7 +1184,7 @@ async fn allowance(State(state): State<AppState>) -> Result<Json<Vec<Allowance>>
                     cost += prices.cost(&call.model, &call.tokens).unwrap_or(0.0);
                 }
                 let (total, remaining, total_cost, remaining_cost, low) =
-                    estimate(limit.used_percent, tokens, cost);
+                    estimate(used_percent, tokens, cost);
                 rows.push(Allowance {
                     account_id: account.id.to_string(),
                     account: account.name.clone(),
@@ -1182,7 +1192,7 @@ async fn allowance(State(state): State<AppState>) -> Result<Json<Vec<Allowance>>
                     plan: account.plan.clone().or_else(|| logged_plan.clone()),
                     window,
                     window_minutes: minutes,
-                    used_percent: limit.used_percent,
+                    used_percent,
                     window_start: start,
                     resets_at,
                     used_tokens: tokens,

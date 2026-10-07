@@ -134,3 +134,14 @@ test('quota windows read as people say them, and colour as they run down', async
   assert.deepEqual(untilLabel((3 * 1440 + 5 * 60 + 9) * 60_000), { soon: false, key: '{d}d {h}h', values: { d: 3, h: 5 } });
   assert.deepEqual(untilLabel(45 * 60_000), { soon: false, key: '{m}m', values: { m: 45 } });
 });
+
+test('a quota window past its reset reads as unused, not as the full figure it last reported', async () => {
+  const { accountLimitExpired, accountLimitPercent } = await import('./account-ui.ts');
+  const now = Date.parse('2026-10-07T10:00:00Z');
+  const spent = { used_percent: 100, window_minutes: 300, resets_at: (now - 60_000) / 1000 };
+  assert.equal(accountLimitExpired(spent, now), true);
+  assert.equal(accountLimitPercent(spent, now), 0);
+  const live = { ...spent, resets_at: (now + 60_000) / 1000 };
+  assert.equal(accountLimitPercent(live, now), 100);
+  assert.equal(accountLimitPercent({ used_percent: 40 }, now), 40, 'no reset time: taken as reported');
+});

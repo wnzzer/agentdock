@@ -577,3 +577,6 @@ svg { flex-shrink: 0; vertical-align: middle; }
 .app-shell.is-mobile .mobile-back>svg { transform: rotate(180deg); }
 /* A page is open over the canvas: the session menus teleported out of its tabs stay with the canvas. !important because their positioning sets visibility inline. */
 body[data-page] .chat-tab-menu, body[data-page] .session-tab-menu { visibility: hidden !important; }
+
+/* Present for assistive tech and password managers, invisible on screen. */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }

@@ -56,7 +56,9 @@ const accounts = computed(() => {
 });
 const windowShort = (row: Allowance) => row.window_minutes >= 7 * 24 * 60 - 60 ? '7d' : row.window_minutes <= 5 * 60 + 30 ? '5h' : `${Math.round(row.window_minutes / 60)}h`;
 const level = (percent: number) => percent >= 90 ? 'danger' : percent >= 70 ? 'warn' : 'ok';
-const resetText = (row: Allowance) => t('Resets in {time}', { time: formatDuration(Math.max(0, row.resets_at - Date.now() / 1000)) });
+const resetText = (row: Allowance) => row.resets_at === null ? t('Reset · starts again with your next message') : t('Resets in {time}', { time: formatDuration(Math.max(0, row.resets_at - Date.now() / 1000)) });
+/** Why there is no estimate of what is left: nothing used yet gives nothing to scale from. */
+const noEstimate = (row: Allowance) => row.used_percent <= 0 ? t('Nothing used yet, so nothing to estimate from') : row.used_tokens === 0 ? t('No usage logged on this host in this window') : '';
 
 /** The ten figures: what it cost, what it was made of, and how much work it was. */
 const tiles = computed(() => {
@@ -188,7 +190,7 @@ const insights = computed(() => {
             <span class="quota-window">{{ windowShort(row) }}</span>
             <span :class="['quota-bar', level(row.used_percent)]"><i :style="{ width: Math.min(100, row.used_percent) + '%' }" /></span>
             <span class="quota-percent">{{ Math.round(row.used_percent) }}%</span>
-            <small class="quota-left"><template v-if="row.estimated_remaining_tokens !== null">{{ t('≈ {tokens} left', { tokens: formatTokens(row.estimated_remaining_tokens) }) }}<template v-if="row.estimated_remaining_cost !== null"> · {{ formatCost(row.estimated_remaining_cost) }}</template><template v-if="row.low_confidence"> ?</template> · </template>{{ resetText(row) }}<template v-if="row.observed_at"> · {{ t('from the session log, {time} ago', { time: formatDuration(Math.max(0, Date.now() / 1000 - row.observed_at)) }) }}</template></small>
+            <small class="quota-left"><template v-if="row.estimated_remaining_tokens !== null">{{ t('≈ {tokens} left', { tokens: formatTokens(row.estimated_remaining_tokens) }) }}<template v-if="row.estimated_remaining_cost !== null"> · {{ formatCost(row.estimated_remaining_cost) }}</template><template v-if="row.low_confidence"> ?</template> · </template><template v-else-if="noEstimate(row)">{{ noEstimate(row) }} · </template>{{ resetText(row) }}<template v-if="row.observed_at"> · {{ t('from the session log, {time} ago', { time: formatDuration(Math.max(0, Date.now() / 1000 - row.observed_at)) }) }}</template></small>
           </div>
         </article>
       </section>

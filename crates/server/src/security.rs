@@ -67,6 +67,29 @@ pub fn resolve_token(
     Ok(Some(token))
 }
 
+/// How long a browser stays signed in without entering the token again.
+const SESSION_SECONDS: u32 = 30 * 24 * 60 * 60;
+
+/// The secret behind browser sessions, kept in the state directory so a
+/// restart -- every upgrade is one -- does not sign every browser out.
+pub fn resolve_session_secret(state_dir: &std::path::Path) -> std::io::Result<String> {
+    let path = state_dir.join("session-secret");
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        let existing = existing.trim().to_owned();
+        if existing.len() >= 32 {
+            return Ok(existing);
+        }
+    }
+    let secret = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
+    std::fs::create_dir_all(state_dir)?;
+    write_owner_only(&path, &secret)?;
+    Ok(secret)
+}
+
 /// Create or replace a file only its owner can read.
 ///
 /// Deliberately not `providers::write_private`, which refuses to overwrite: a
@@ -118,6 +141,22 @@ pub struct Security {
     port: u16,
 }
 impl Security {
+    /// Sessions that outlive this process: the cookie is derived from a stored
+    /// secret and the token, so it survives a restart, and changing the token
+    /// still signs every browser out.
+    pub fn with_session_secret(mut self, secret: &str) -> Self {
+        use sha2::{Digest, Sha256};
+        let mut hash = Sha256::new();
+        hash.update(secret.as_bytes());
+        hash.update([0]);
+        hash.update(self.token.as_deref().unwrap_or("").as_bytes());
+        self.cookie = hash
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        self
+    }
     /// This server as a process on the same machine reaches it.
     pub fn local_url(&self) -> String {
         format!("http://127.0.0.1:{}", self.port)
@@ -358,7 +397,7 @@ pub async fn login(State(state): State<AppState>, Json(input): Json<Login>) -> R
         ""
     };
     let cookie = format!(
-        "agentdock_session={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200{secure}",
+        "agentdock_session={}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_SECONDS}{secure}",
         state.security.cookie
     );
     (
@@ -483,6 +522,28 @@ mod tests {
             Ok(_) => String::new(),
             Err(error) => error.to_string(),
         }
+    }
+
+    #[test]
+    fn a_browser_session_survives_a_restart_but_not_a_new_token() {
+        let address: SocketAddr = "0.0.0.0:28789".parse().unwrap();
+        let dir = std::env::temp_dir().join(format!("agentdock-session-{}", uuid::Uuid::new_v4()));
+        let secret = resolve_session_secret(&dir).unwrap();
+        assert_eq!(
+            resolve_session_secret(&dir).unwrap(),
+            secret,
+            "kept across restarts"
+        );
+        let session = |token: &str| {
+            Security::new(address, Some(token.into()))
+                .ok()
+                .unwrap()
+                .with_session_secret(&secret)
+                .cookie
+        };
+        assert_eq!(session("qwe41235"), session("qwe41235"));
+        assert_ne!(session("qwe41235"), session("another"));
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]

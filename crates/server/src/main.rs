@@ -576,7 +576,8 @@ async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Validate configuration and reserve both the port and database ownership
     // before any startup reconciliation can change existing session records.
     let token = security::resolve_token(&state_dir, !address.ip().is_loopback())?;
-    let security = security::Security::new(address, token)?;
+    let security = security::Security::new(address, token)?
+        .with_session_secret(&security::resolve_session_secret(&state_dir)?);
     let browse_roots = directories::roots()?;
     let workspace_roots = directories::workspace_roots(&browse_roots)?;
     let installation::PreparedServer {

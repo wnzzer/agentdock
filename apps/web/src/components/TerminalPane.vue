@@ -134,6 +134,8 @@ function pressArrow(key: ArrowKey) {
 function pressEnter() { sendKeys(ENTER_SEQUENCE); }
 function pressEscape() { sendKeys(ESCAPE_SEQUENCE); }
 function pressTab() { sendKeys(tabSequence({ shift: shiftArmed.value })); }
+/** A slash on its own key: it opens the command menu of Claude Code, Codex and most TUIs, and a phone keyboard hides it a layer down. */
+function pressSlash() { sendKeys("/"); }
 /**
  * Paste from the clipboard.
  *
@@ -333,6 +335,7 @@ onUnmounted(() => { stopPageReturn(); disposed = true; stream.dispose(); cleanup
         <button type="button" class="key-text" :class="{ armed: ctrlArmed }" :aria-pressed="ctrlArmed" :aria-label="t('Ctrl')" :title="t('Ctrl')" @pointerdown="keepFocus" @click="ctrlArmed = !ctrlArmed">Ctrl</button>
         <button type="button" class="key-text" :class="{ armed: shiftArmed }" :aria-pressed="shiftArmed" :aria-label="t('Shift')" :title="t('Shift')" @pointerdown="keepFocus" @click="shiftArmed = !shiftArmed">⇧</button>
         <button type="button" class="key-text" :aria-label="t('Tab')" :title="t('Tab')" @pointerdown="keepFocus" @click="pressTab">Tab</button>
+        <button type="button" class="key-text" :aria-label="t('Slash · command menu')" :title="t('Slash · command menu')" @pointerdown="keepFocus" @click="pressSlash">/</button>
         <span class="terminal-keys-sep" aria-hidden="true" />
         <button type="button" :aria-label="t('Arrow left')" :title="t('Arrow left')" @pointerdown="keepFocus" @click="pressArrow('left')"><Icon name="chevron" :size="16" class="key-left" /></button>
         <button type="button" :aria-label="t('Arrow up')" :title="t('Arrow up')" @pointerdown="keepFocus" @click="pressArrow('up')"><Icon name="chevron" :size="16" class="key-up" /></button>

@@ -53,8 +53,18 @@ export interface AccountView {
 export function accountStatusLabel(status: AccountView['status']): string {
   return { unknown: 'Not checked', signed_out: 'Signed out', signed_in: 'Signed in', login_pending: 'Sign-in in progress', error: 'Account needs attention' }[status];
 }
-export function accountLimitPercent(limit?: AccountLimit): number | undefined {
-  return limit && Number.isFinite(limit.used_percent) && limit.used_percent >= 0 && limit.used_percent <= 100 ? limit.used_percent : undefined;
+/**
+ * A window whose reset time has passed: the figure read before it describes a
+ * window that is over. A 5-hour window starts again with the next message, so
+ * until then nothing of it is used.
+ */
+export function accountLimitExpired(limit?: AccountLimit, now = Date.now()): boolean {
+  const resets = accountResetDate(limit?.resets_at);
+  return !!resets && resets.getTime() <= now;
+}
+export function accountLimitPercent(limit?: AccountLimit, now = Date.now()): number | undefined {
+  if (!limit || !Number.isFinite(limit.used_percent) || limit.used_percent < 0 || limit.used_percent > 100) return undefined;
+  return accountLimitExpired(limit, now) ? 0 : limit.used_percent;
 }
 /**
  * Return a label that makes the primary/secondary -> 5h/weekly mapping
