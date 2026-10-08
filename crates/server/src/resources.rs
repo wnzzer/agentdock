@@ -1,5 +1,5 @@
-//! Host and per-session CPU and memory, plus the host's fans and
-//! temperatures where they can be read, for the status bar.
+//! Host and per-session CPU and memory, plus the host's fans, temperatures
+//! and CPU clocks where they can be read, for the status bar.
 //!
 //! Read-only and cheap: one sampler shared by every request, refreshed at most
 //! once a second, so several open browsers polling it do not multiply the
@@ -9,7 +9,7 @@
 //! browser is open, and keeps the history in a separate metrics database.
 use crate::{
     ApiError, AppState, Result,
-    sensors::{self, Fan, Temperature},
+    sensors::{self, CpuClock, CpuFrequency, Fan, Temperature},
 };
 use agentdock_persistence::metrics::{self, HostPoint, MetricsStore, SessionPoint};
 use axum::{
@@ -41,6 +41,7 @@ pub struct HostUsage {
     pub memory_used_bytes: u64,
     pub memory_total_bytes: u64,
     /// Empty where the platform does not report them.
+    pub cpu_frequencies: Vec<CpuFrequency>,
     pub fans: Vec<Fan>,
     pub temperatures: Vec<Temperature>,
     pub sessions: Vec<SessionUsage>,
@@ -49,6 +50,7 @@ pub struct HostUsage {
 struct Sampler {
     system: System,
     components: Components,
+    clock: CpuClock,
     sampled: Option<(Instant, HostUsage)>,
 }
 
@@ -60,6 +62,7 @@ fn sampler() -> &'static Mutex<Sampler> {
         Mutex::new(Sampler {
             system,
             components: Components::new_with_refreshed_list(),
+            clock: CpuClock::new(),
             sampled: None,
         })
     })
@@ -100,7 +103,10 @@ pub fn sample(roots: Vec<(String, u32)>) -> HostUsage {
         return usage.clone();
     }
     let Sampler {
-        system, components, ..
+        system,
+        components,
+        clock,
+        ..
     } = &mut *guard;
     system.refresh_cpu_usage();
     system.refresh_memory();
@@ -121,6 +127,7 @@ pub fn sample(roots: Vec<(String, u32)>) -> HostUsage {
         cpu_count: system.cpus().len(),
         memory_used_bytes: system.used_memory(),
         memory_total_bytes: system.total_memory(),
+        cpu_frequencies: clock.sample(system),
         fans: sensors::fans(),
         temperatures: sensors::temperatures(components),
         sessions,
@@ -181,6 +188,7 @@ pub fn spawn_recorder(state: AppState, store: Arc<MetricsStore>) {
                 .iter()
                 .map(|t| t.celsius)
                 .reduce(f32::max);
+            let mhz = usage.cpu_frequencies.iter().filter_map(|c| c.mhz).max();
             host.push(HostPoint {
                 ts,
                 cpu_avg: usage.cpu_percent,
@@ -192,6 +200,8 @@ pub fn spawn_recorder(state: AppState, store: Arc<MetricsStore>) {
                 fan_rpm_max: rpm,
                 temperature_avg: celsius,
                 temperature_max: celsius,
+                cpu_mhz_avg: mhz,
+                cpu_mhz_max: mhz,
             });
             sessions.extend(usage.sessions.into_iter().map(|session| SessionPoint {
                 ts,
@@ -250,6 +260,9 @@ struct HostHistoryPoint {
     fan_rpm_max: Option<u32>,
     temperature_avg: Option<f32>,
     temperature_max: Option<f32>,
+    /// The fastest CPU cluster's clock; null where never read.
+    cpu_mhz_avg: Option<u32>,
+    cpu_mhz_max: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -313,6 +326,8 @@ async fn history(
                 fan_rpm_max: p.fan_rpm_max,
                 temperature_avg: p.temperature_avg,
                 temperature_max: p.temperature_max,
+                cpu_mhz_avg: p.cpu_mhz_avg,
+                cpu_mhz_max: p.cpu_mhz_max,
             })
             .collect(),
         sessions: sessions

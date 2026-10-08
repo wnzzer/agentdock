@@ -17,6 +17,9 @@ export interface HostHistoryPoint {
   fan_rpm_max: number | null;
   temperature_avg: number | null;
   temperature_max: number | null;
+  /** The fastest CPU cluster's clock; absent from an older backend. */
+  cpu_mhz_avg?: number | null;
+  cpu_mhz_max?: number | null;
 }
 export interface SessionHistoryPoint {
   ts: number;
@@ -59,7 +62,12 @@ export const measures = {
     : [null, null],
   temperature: (p: HostHistoryPoint): [number | null, number | null] => [p.temperature_avg, p.temperature_max],
   fan: (p: HostHistoryPoint): [number | null, number | null] => [p.fan_rpm_avg, p.fan_rpm_max],
+  clock: (p: HostHistoryPoint): [number | null, number | null] => [p.cpu_mhz_avg ?? null, p.cpu_mhz_max ?? null],
 };
+
+export function gigahertz(mhz: number): string {
+  return `${(mhz / 1000).toFixed(mhz >= 10_000 ? 0 : 1)} GHz`;
+}
 
 /** A round top for an axis that starts at zero: 1, 2 or 5 times a power of ten. */
 export function niceCeiling(value: number, floor = 1): number {

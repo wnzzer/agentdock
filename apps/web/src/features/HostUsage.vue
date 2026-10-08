@@ -4,6 +4,7 @@ import type { Session } from '@agentdock/protocol';
 import { ApiError, providerLabel, request } from './api';
 import ProviderIcon from './ProviderIcon.vue';
 import HostHistory from './HostHistory.vue';
+import { gigahertz } from './host-history';
 import { useI18n } from '../i18n';
 
 /**
@@ -16,8 +17,10 @@ import { useI18n } from '../i18n';
 interface SessionUsage { session_id: string; cpu_percent: number; memory_bytes: number }
 interface Fan { label: string; rpm: number; min_rpm: number | null; max_rpm: number | null }
 interface Temperature { label: string; celsius: number; critical_celsius: number | null }
+/** A cluster's clock while running; null when it sat idle over the last interval. */
+interface CpuFrequency { label: string; kind: 'efficiency' | 'performance' | null; mhz: number | null; max_mhz: number | null }
 /** Fans and temperatures are absent on an older backend and empty where unreadable. */
-interface HostUsage { cpu_percent: number; cpu_count: number; memory_used_bytes: number; memory_total_bytes: number; fans?: Fan[]; temperatures?: Temperature[]; sessions: SessionUsage[] }
+interface HostUsage { cpu_percent: number; cpu_count: number; memory_used_bytes: number; memory_total_bytes: number; cpu_frequencies?: CpuFrequency[]; fans?: Fan[]; temperatures?: Temperature[]; sessions: SessionUsage[] }
 const props = defineProps<{ sessions: Session[] }>();
 const { t } = useI18n();
 const usage = ref<HostUsage>(), open = ref(false), unsupported = ref(false);
@@ -46,6 +49,19 @@ const sessionRows = computed(() => {
   return (usage.value?.sessions ?? []).map(entry => ({ ...entry, session: props.sessions.find(item => item.id === entry.session_id), share: entry.cpu_percent / cores }))
     .sort((a, b) => b.memory_bytes - a.memory_bytes);
 });
+/** Performance clusters first, numbered only when a chip has more than one of a kind. */
+function clusterName(cluster: CpuFrequency, all: CpuFrequency[]) {
+  if (!cluster.kind) return t('CPU');
+  const same = all.filter(item => item.kind === cluster.kind);
+  const name = t(cluster.kind === 'performance' ? 'P-cores' : 'E-cores');
+  return same.length > 1 ? `${name} ${same.indexOf(cluster) + 1}` : name;
+}
+const clocks = computed(() => {
+  const all = usage.value?.cpu_frequencies ?? [];
+  const rank = (item: CpuFrequency) => item.kind === 'performance' ? 0 : item.kind === 'efficiency' ? 1 : 2;
+  return [...all].sort((a, b) => rank(a) - rank(b))
+    .map(item => `${clusterName(item, all)} ${item.mhz == null ? t('idle') : gigahertz(item.mhz)}`).join(' · ');
+});
 /** The fastest fan and the hottest sensor, which is what a person feels and hears. */
 const sensors = computed(() => {
   const fans = usage.value?.fans ?? [], temperatures = usage.value?.temperatures ?? [];
@@ -54,6 +70,7 @@ const sensors = computed(() => {
   return {
     text: [fan ? t('Fan {rpm} rpm', { rpm: fan.rpm }) : '', hottest !== undefined ? `${Math.round(hottest)} °C` : ''].filter(Boolean).join(' · '),
     fanMax: Math.max(0, ...fans.map(item => item.max_rpm ?? 0)) || undefined,
+    clockMax: Math.max(0, ...(usage.value?.cpu_frequencies ?? []).map(item => item.max_mhz ?? 0)) || undefined,
   };
 });
 function toggle() { open.value = !open.value; if (open.value) { if (timer) clearTimeout(timer); void poll(); } }
@@ -67,6 +84,7 @@ function toggle() { open.value = !open.value; if (open.value) { if (timer) clear
     </button>
     <div v-if="open" class="host-usage-panel" role="dialog" :aria-label="t('CPU and memory on this host')">
       <header><strong>{{ t('This host') }}</strong><small>{{ t('{count} cores', { count: usage.cpu_count }) }} · {{ bytes(usage.memory_used_bytes) }} / {{ bytes(usage.memory_total_bytes) }}</small></header>
+      <p v-if="clocks" class="host-usage-sensors">{{ clocks }}</p>
       <p v-if="sensors.text" class="host-usage-sensors">{{ sensors.text }}</p>
       <p v-if="!sessionRows.length" class="host-usage-empty">{{ t('No session is running.') }}</p>
       <ul v-else>
@@ -78,7 +96,7 @@ function toggle() { open.value = !open.value; if (open.value) { if (timer) clear
         </li>
       </ul>
       <small class="host-usage-note">{{ t('Each session counts its client and everything it started.') }}</small>
-      <HostHistory :sessions="sessions" :cores="usage.cpu_count" :fan-max-rpm="sensors.fanMax" />
+      <HostHistory :sessions="sessions" :cores="usage.cpu_count" :fan-max-rpm="sensors.fanMax" :clock-max-mhz="sensors.clockMax" />
     </div>
   </div>
 </template>

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { busiestSessions, chartPaths, measures, nearest, niceCeiling, samples, segments } from './host-history.ts';
+import { busiestSessions, chartPaths, gigahertz, measures, nearest, niceCeiling, samples, segments } from './host-history.ts';
 
 const host = (ts, extra = {}) => ({
   ts, cpu_avg: 10, cpu_max: 20, memory_used_avg: 4, memory_used_max: 6, memory_total: 8,
@@ -13,6 +13,8 @@ test('a measure keeps only the points that read it, in time order', () => {
   assert.deepEqual(samples(points, measures.cpu).map(p => p.ts), [10, 20, 30]);
   // Memory is a share of the machine, and a point without a total has none.
   assert.deepEqual(samples([host(1), host(2, { memory_total: 0 })], measures.memory), [{ ts: 1, avg: 50, max: 75 }]);
+  // The clock is absent from an older backend's points, and then not charted.
+  assert.deepEqual(samples([host(1), host(2, { cpu_mhz_avg: 3204, cpu_mhz_max: 3504 })], measures.clock), [{ ts: 2, avg: 3204, max: 3504 }]);
   // A peak below its own average (a rounding artefact) never inverts the band.
   assert.deepEqual(samples([host(1, { cpu_avg: 5, cpu_max: 4 })], measures.cpu), [{ ts: 1, avg: 5, max: 5 }]);
 });
@@ -24,6 +26,11 @@ test('axis tops are round numbers at or above the data', () => {
   assert.equal(niceCeiling(41), 50);
   assert.equal(niceCeiling(0), 1);
   assert.equal(niceCeiling(3, 50), 50);
+});
+
+test('clocks read in gigahertz', () => {
+  assert.equal(gigahertz(3504), '3.5 GHz');
+  assert.equal(gigahertz(912), '0.9 GHz');
 });
 
 test('a missing stretch splits the line instead of bridging it', () => {

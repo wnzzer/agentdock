@@ -4,7 +4,7 @@ import type { Session } from '@agentdock/protocol';
 import { ApiError, providerLabel, request } from './api';
 import ProviderIcon from './ProviderIcon.vue';
 import { useI18n } from '../i18n';
-import { RANGES, busiestSessions, chartPaths, measures, nearest, niceCeiling, samples, type HostHistory, type RangeKey, type Sample } from './host-history';
+import { RANGES, busiestSessions, chartPaths, gigahertz, measures, nearest, niceCeiling, samples, type HostHistory, type RangeKey, type Sample } from './host-history';
 
 /**
  * Trends behind the status bar's live figures: one small chart per measure,
@@ -14,7 +14,7 @@ import { RANGES, busiestSessions, chartPaths, measures, nearest, niceCeiling, sa
  * Mounted only while the host panel is open. The server writes history once
  * a minute, so it is fetched again no more often than that.
  */
-const props = defineProps<{ sessions: Session[]; cores: number; fanMaxRpm?: number }>();
+const props = defineProps<{ sessions: Session[]; cores: number; fanMaxRpm?: number; clockMaxMhz?: number }>();
 const { t } = useI18n();
 const range = ref<RangeKey>('1h'), history = ref<HostHistory>(), unsupported = ref(false), hover = ref<number>();
 let timer: ReturnType<typeof setTimeout> | undefined, disposed = false;
@@ -54,6 +54,12 @@ const charts = computed<Chart[]>(() => {
     build('cpu', 'CPU', samples(data.host, measures.cpu), 100, '100%', value => `${Math.round(value)}%`),
     build('memory', t('Mem'), samples(data.host, measures.memory), 100, '100%', value => `${Math.round(value)}%${memoryTotal.value ? ` · ${gb(value / 100 * memoryTotal.value)}` : ''}`),
   ];
+  const clock = samples(data.host, measures.clock);
+  if (clock.length) {
+    // The chip's top clock where known, so a full-speed cluster reaches the top.
+    const top = Math.max(props.clockMaxMhz ?? 0, peak(clock)) || niceCeiling(peak(clock), 1000);
+    list.push(build('clock', t('CPU clock'), clock, top, gigahertz(top), gigahertz));
+  }
   const temperature = samples(data.host, measures.temperature);
   if (temperature.length) {
     const top = niceCeiling(peak(temperature), 50);

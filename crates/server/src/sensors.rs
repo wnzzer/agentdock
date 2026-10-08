@@ -1,15 +1,20 @@
-//! Fan speeds and temperatures, where the platform offers them.
+//! Fan speeds, temperatures and CPU clocks, where the platform offers them.
 //!
 //! Temperatures come from sysinfo on every platform. Fans have no portable
 //! source: macOS reads them from the SMC, Linux from hwmon, and elsewhere the
 //! list is empty. An empty list means "not known", never "stopped"; a machine
-//! without fans reports the same.
+//! without fans reports the same. CPU clocks are live only where the platform
+//! reports them live: per cluster from IOReport on Apple Silicon, and averaged
+//! over the cores on Linux. Elsewhere sysinfo has only a nominal figure, which
+//! is not reported.
+#[cfg(target_os = "macos")]
+mod ioreport;
 #[cfg(target_os = "macos")]
 mod smc;
 
 use serde::Serialize;
 use std::{fs, path::Path};
-use sysinfo::Components;
+use sysinfo::{Components, System};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Fan {
@@ -24,6 +29,69 @@ pub struct Temperature {
     pub label: String,
     pub celsius: f32,
     pub critical_celsius: Option<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CpuFrequency {
+    /// The cluster as the platform names it, such as `PCPU` or `ECPU1`, or
+    /// `CPU` where cores are not told apart.
+    pub label: String,
+    /// `efficiency` or `performance` on a machine with both; absent otherwise.
+    pub kind: Option<&'static str>,
+    /// The clock while running over the last interval; absent when the
+    /// cluster sat idle throughout.
+    pub mhz: Option<u32>,
+    pub max_mhz: Option<u32>,
+}
+
+/// Keeps what a live clock reading needs between samples.
+pub struct CpuClock {
+    #[cfg(target_os = "macos")]
+    reader: Option<ioreport::Reader>,
+}
+
+impl CpuClock {
+    pub fn new() -> Self {
+        Self {
+            #[cfg(target_os = "macos")]
+            reader: ioreport::Reader::open(),
+        }
+    }
+
+    pub fn sample(&mut self, system: &mut System) -> Vec<CpuFrequency> {
+        #[cfg(target_os = "macos")]
+        {
+            let _ = system;
+            self.reader
+                .as_mut()
+                .map_or_else(Vec::new, ioreport::Reader::sample)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            if !cfg!(target_os = "linux") {
+                return Vec::new();
+            }
+            system.refresh_cpu_frequency();
+            average_clock(system.cpus().iter().map(|cpu| cpu.frequency()))
+        }
+    }
+}
+
+/// One figure for the whole machine, from the cores that report a clock.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn average_clock(cores: impl Iterator<Item = u64>) -> Vec<CpuFrequency> {
+    let (sum, count) = cores
+        .filter(|&mhz| mhz > 0)
+        .fold((0u64, 0u64), |(sum, count), mhz| (sum + mhz, count + 1));
+    if count == 0 {
+        return Vec::new();
+    }
+    vec![CpuFrequency {
+        label: "CPU".into(),
+        kind: None,
+        mhz: u32::try_from(sum / count).ok(),
+        max_mhz: None,
+    }]
 }
 
 #[cfg(target_os = "macos")]
@@ -167,6 +235,16 @@ mod tests {
     }
 
     #[test]
+    fn the_machine_clock_averages_the_cores_that_report_one() {
+        assert_eq!(
+            average_clock([3000, 0, 1000].into_iter())[0].mhz,
+            Some(2000)
+        );
+        assert!(average_clock([0, 0].into_iter()).is_empty());
+        assert!(average_clock(std::iter::empty()).is_empty());
+    }
+
+    #[test]
     fn a_missing_hwmon_tree_has_no_fans() {
         assert!(hwmon_fans(Path::new("/nonexistent/agentdock/hwmon")).is_empty());
     }
@@ -185,6 +263,27 @@ mod tests {
                 (-20.0..150.0).contains(&temperature.celsius),
                 "{temperature:?}"
             );
+        }
+        if cfg!(any(target_os = "macos", target_os = "linux")) {
+            let mut clock = CpuClock::new();
+            let mut system = System::new();
+            clock.sample(&mut system);
+            // Keep a core busy so at least one cluster runs over the interval.
+            let until = std::time::Instant::now() + std::time::Duration::from_millis(500);
+            let mut spin = 0u64;
+            while std::time::Instant::now() < until {
+                spin = std::hint::black_box(spin.wrapping_add(1));
+            }
+            let clocks = clock.sample(&mut system);
+            assert!(
+                clocks.iter().any(|c| c.mhz.is_some()),
+                "no live CPU clock: {clocks:?}"
+            );
+            for c in &clocks {
+                if let (Some(mhz), Some(max)) = (c.mhz, c.max_mhz) {
+                    assert!((100..=max).contains(&mhz), "{c:?}");
+                }
+            }
         }
         let fans = fans();
         if std::env::var_os("AGENTDOCK_NO_FANS").is_none() {

@@ -4012,6 +4012,8 @@ async fn resource_history_answers_from_the_metrics_database() {
         fan_rpm_max: Some(1200),
         temperature_avg: Some(48.5),
         temperature_max: Some(48.5),
+        cpu_mhz_avg: Some(3204),
+        cpu_mhz_max: Some(3504),
     };
     let session = |ts, id: &str| SessionPoint {
         ts,
@@ -4036,6 +4038,7 @@ async fn resource_history_answers_from_the_metrics_database() {
     assert_eq!(body["host"][0]["cpu_avg"], 12.5);
     assert_eq!(body["host"][0]["fan_rpm_max"], 1200);
     assert_eq!(body["host"][0]["temperature_max"], 48.5);
+    assert_eq!(body["host"][0]["cpu_mhz_max"], 3504);
     assert_eq!(body["sessions"].as_array().unwrap().len(), 2);
 
     let (_, body) = call(
