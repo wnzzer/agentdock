@@ -173,6 +173,8 @@ export const zhCN: Readonly<Record<string, string>> = {
   "up to {rpm} rpm": "最高 {rpm} rpm",
   "Clock while running, over the last moment": "运行时的频率（取最近片刻的平均）",
   "Trends": "趋势",
+  "Find a model, or enter an ID": "查找模型，或输入 ID",
+  "From the {provider} client on the host and from this endpoint. Type to find a model, or enter an ID.": "来自主机上的 {provider} 客户端和当前端点。输入文字可以查找模型，也可以直接填 ID。",
   "Memory {size}": "内存 {size}",
   "Power": "功耗",
   "Whole machine": "整机",

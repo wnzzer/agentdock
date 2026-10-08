@@ -14,6 +14,7 @@ import ModalDialog from "./ModalDialog.vue";
 import SessionDraftShell from "./SessionDraftShell.vue";
 import ProviderIcon from "./ProviderIcon.vue";
 import ModelPicker from "./ModelPicker.vue";
+import { resolveModel } from "./model-choices";
 const { t }=useI18n();
 /** `inline` draws the form as a draft tab on the canvas instead of a dialog over it. */
 const props = defineProps<{ workspace: Workspace; profiles: EndpointProfile[]; initialProvider?: ProviderKind; inline?: boolean }>();
@@ -75,7 +76,7 @@ async function create() {
   const selectedProvider=provider.value, selectedProfileId=profileId.value;
   busy.value = true; error.value = "";
   try {
-    let session = await request<Session>(`${workspacePath(props.workspace.id)}/sessions`, json("POST", { title: title.value.trim(), provider: selectedProvider, endpoint_profile_id: selectedProfileId || null, ...(backendCapabilities.structuredChat&&selectedProvider!=='terminal'?{interaction_mode:'structured'}:{}), ...sessionModelOverride(selectedProvider,selectedProfile.value,model.value), ...sessionEffortOverride(selectedProvider,selectedProfile.value,effort.value), ...(selectedProvider!=='terminal'&&!nativeConfig.value&&!effort.value.trim()?{effort:null}:{}), ...(backendCapabilities.environment&&Object.keys(parsedEnvironment.value.environment).length?{environment:parsedEnvironment.value.environment}:{}), ...(ephemeralSupported.value&&ephemeral.value?{ephemeral:true}:{}) })); if (place.value === 'worktree') { const branch = worktreeBranch.value.trim(); session = await request<Session>(`/sessions/${encodeURIComponent(session.id)}/checkout`, json("POST", { branch, create: !repo.value?.branches.includes(branch) })); }
+    let session = await request<Session>(`${workspacePath(props.workspace.id)}/sessions`, json("POST", { title: title.value.trim(), provider: selectedProvider, endpoint_profile_id: selectedProfileId || null, ...(backendCapabilities.structuredChat&&selectedProvider!=='terminal'?{interaction_mode:'structured'}:{}), ...sessionModelOverride(selectedProvider,selectedProfile.value,resolveModel(model.value,catalog.value?.models??[])), ...sessionEffortOverride(selectedProvider,selectedProfile.value,effort.value), ...(selectedProvider!=='terminal'&&!nativeConfig.value&&!effort.value.trim()?{effort:null}:{}), ...(backendCapabilities.environment&&Object.keys(parsedEnvironment.value.environment).length?{environment:parsedEnvironment.value.environment}:{}), ...(ephemeralSupported.value&&ephemeral.value?{ephemeral:true}:{}) })); if (place.value === 'worktree') { const branch = worktreeBranch.value.trim(); session = await request<Session>(`/sessions/${encodeURIComponent(session.id)}/checkout`, json("POST", { branch, create: !repo.value?.branches.includes(branch) })); }
     rememberProfileSelection(selectedProvider,selectedProfileId); emit("created", session); }
   catch (cause) { error.value = errorMessage(cause); }
   finally { busy.value = false; }
