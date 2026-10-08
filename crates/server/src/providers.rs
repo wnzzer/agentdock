@@ -214,7 +214,13 @@ pub fn build(state: &AppState, session: &Session, cwd: PathBuf) -> Result<SpawnS
     {
         spec.args.extend(["--name".into(), session.title.clone()]);
     }
-    crate::environment::apply(&mut spec, &session.environment, &state.state_dir)?;
+    let main_model = session.endpoint_snapshot.as_ref().and_then(resolve_model);
+    crate::environment::apply(
+        &mut spec,
+        &session.environment,
+        &state.state_dir,
+        main_model.as_deref(),
+    )?;
     // Last, so no session environment override can replace the session's own
     // identity with another's.
     crate::agent::equip(state, session, &mut spec)?;
@@ -359,6 +365,14 @@ fn build_base(state: &AppState, session: &Session, cwd: PathBuf) -> Result<Spawn
                 "OPENAI_API_KEY",
                 "OPENAI_BASE_URL",
                 "CODEX_API_KEY",
+                // Which model each of Claude Code's slots runs comes from the
+                // session's environment, where it is shown, never from the
+                // host's shell.
+                "ANTHROPIC_MODEL",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                "ANTHROPIC_SMALL_FAST_MODEL",
             ]
             .into_iter()
             .map(str::to_owned),

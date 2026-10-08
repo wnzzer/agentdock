@@ -6,6 +6,7 @@ import { parseModelAliases, formatModelAliases } from "./endpoint-models";
 import { sharesHostConfig, nativeProfileRenamePayload, nativeProfileUpdatePayload, profileEnvironmentPayload, profileEnvironmentDraftChanged } from "./native-profiles";
 import { environmentRows, type EnvironmentRow } from "./environment-model";
 import EnvironmentEditor from "./EnvironmentEditor.vue";
+import { SLOTS, followingRows, setSlot, slotState, slotSummary, type SlotVariable } from "./claude-slots";
 import { effortLabel, modelEfforts } from "./reasoning-effort";
 import { useI18n } from "../i18n";
 import { backendCapabilities } from "./backend-capabilities";
@@ -80,6 +81,31 @@ const canSave = computed(() => !!form.name.trim() && !environmentError.value && 
 let discoveryRevision = 0;
 function resetDiscovery() { discoveryRevision++; models.value = undefined; modelError.value = ""; discovering.value = false; }
 watch(() => [form.provider, form.endpoint_url, form.proxy_url, form.secret_ref], resetDiscovery);
+
+/**
+ * Claude Code's model slots, edited here and kept as the environment
+ * variables listed below: the same rows, so nothing about them is hidden.
+ */
+const slotsOpen = ref(false);
+const slotMode = (variable: SlotVariable) => slotState(environmentDraft.value, variable).mode;
+function slotModel(variable: SlotVariable) { const state = slotState(environmentDraft.value, variable); return state.mode === "model" ? state.model : ""; }
+function chooseSlot(variable: SlotVariable, mode: string) {
+  environmentDraft.value = setSlot(environmentDraft.value, variable, mode === "model" ? { mode: "model", model: slotModel(variable) } : mode === "main" ? { mode: "main" } : { mode: "client" });
+}
+function pinSlot(variable: SlotVariable, model: string) { environmentDraft.value = setSlot(environmentDraft.value, variable, { mode: "model", model }); }
+const slotsText = computed(() => t({
+  main: "Opus, Sonnet and Haiku follow the main model.",
+  client: "Opus, Sonnet and Haiku use Claude Code's own models.",
+  mixed: "Opus, Sonnet and Haiku are set one by one.",
+}[slotSummary(environmentDraft.value)]));
+// A new profile's slots follow its main model on Claude Code and are not
+// there at all on Codex, which has one model.
+watch(() => form.provider, provider => {
+  if (editing.value || editingRecord.value) return;
+  const plain = environmentDraft.value.filter(row => !SLOTS.some(slot => slot.variable === row.name.trim()));
+  environmentDraft.value = provider === "claude_code" ? followingRows(plain) : plain;
+  initialEnvironment.value = environmentDraft.value.map(row => ({ ...row }));
+});
 function payload(includeEnvironment = true) {
   if (editingNative.value) return includeEnvironment ? nativeProfileUpdatePayload(form.name, environmentDraft.value, backendCapabilities.environment, initialEnvironment.value) : nativeProfileRenamePayload(form.name);
   const environment = includeEnvironment ? profileEnvironmentPayload(environmentDraft.value, backendCapabilities.environment, initialEnvironment.value) : {};
@@ -97,7 +123,8 @@ function requestLeave(action: () => void) {
 function discardEnvironmentDraft() { const action = pendingNavigation.value; pendingNavigation.value = undefined; environmentDraft.value = initialEnvironment.value.map(row => ({ ...row })); action?.(); }
 function edit(p?: EndpointProfile) {
   pendingNavigation.value = undefined;
-  environmentDraft.value = environmentRows(p?.environment);
+  // A new profile starts on Claude Code, whose slots follow its main model.
+  environmentDraft.value = p ? environmentRows(p.environment) : followingRows();
   initialEnvironment.value = environmentDraft.value.map(row => ({ ...row }));
   resetDiscovery();editingRecord.value=p;
   editing.value=p?.id; formVisible.value=true; error.value=""; notice.value=""; deleteId.value=undefined;
@@ -204,6 +231,22 @@ onBeforeUnmount(()=>{discoveryRevision++;});
           <div v-if="modelError" class="inline-error" role="alert">{{ modelError }}<p>{{ t('You can still enter a model ID or alias manually.') }}</p></div>
           <p v-if="models" class="form-help">{{ t('{count} models returned', {count:models.models.length}) }} · <span>{{ models.source_url }}</span><br v-if="models.has_more" /><span v-if="models.has_more">{{ t('The endpoint has more models; this is the first page.') }}</span></p>
           <label>{{ t('Default model') }}<ModelPicker v-model="form.model" :models="choices" :placeholder="t('Choose a model or enter an ID')" /></label>
+          <div v-if="form.provider==='claude_code'" class="model-slots">
+            <p class="form-help">{{ slotsText }} <button type="button" class="text-button" :aria-expanded="slotsOpen" @click="slotsOpen=!slotsOpen">{{ t(slotsOpen ? 'Hide' : 'Advanced') }}</button></p>
+            <template v-if="slotsOpen">
+              <p class="form-help">{{ t('Claude Code also runs these slots, for background work, subagents and its Opus, Sonnet and Haiku choices. Each is an environment variable, listed with the others below.') }}</p>
+              <div v-for="slot in SLOTS" :key="slot.key" class="model-slot">
+                <span>{{ slot.label }}</span>
+                <select :value="slotMode(slot.variable)" :aria-label="slot.label" @change="chooseSlot(slot.variable, ($event.target as HTMLSelectElement).value)">
+                  <option value="main">{{ t('Follow the main model') }}</option>
+                  <option value="client">{{ t("Claude Code's own model") }}</option>
+                  <option value="model">{{ t('A model of its own') }}</option>
+                </select>
+                <ModelPicker v-if="slotMode(slot.variable)==='model'" :model-value="slotModel(slot.variable)" :models="choices" :placeholder="t('Choose a model or enter an ID')" @update:model-value="pinSlot(slot.variable, $event)" />
+                <code v-else>{{ slot.variable }}</code>
+              </div>
+            </template>
+          </div>
           <label v-if="effortOptions.length">{{ t('Thinking depth') }}<select v-model="form.effort"><option value="">{{ t('Automatic · provider default') }}</option><option v-for="effort in effortOptions" :key="effort" :value="effort">{{ effortLabel(effort) }}</option></select></label>
           <p v-else class="form-help">{{ t('Load a model list to show the reasoning levels supported by this model.') }}</p>
           <label>{{ t('Model aliases') }}<textarea v-model="aliasesText" rows="3" spellcheck="false" placeholder="fast = actual-model-id&#10;review = another-model-id" /></label>
@@ -224,6 +267,12 @@ onBeforeUnmount(()=>{discoveryRevision++;});
   </ModalDialog>
 </template>
 <style scoped>
+.model-slots{display:flex;flex-direction:column;gap:6px;margin-top:-4px}
+.model-slots .text-button{display:inline;margin-left:4px}
+.model-slot{display:grid;grid-template-columns:64px minmax(0,190px) minmax(0,1fr);align-items:center;gap:8px}
+.model-slot>span{font-size:var(--text-sm);font-weight:550;color:var(--ink)}
+.model-slot code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--text-xs);color:var(--muted)}
+@media(max-width:520px){.model-slot{grid-template-columns:56px minmax(0,1fr)}.model-slot>:last-child{grid-column:1/-1}}
 .secret-mode{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:var(--text-xs);color:var(--ink-soft)}
 .secret-mode>label{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
 .secret-clear{margin-left:8px;font-size:inherit}

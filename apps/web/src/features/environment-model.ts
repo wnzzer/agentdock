@@ -18,6 +18,7 @@ export function parseEnvironmentRows(rows: EnvironmentRow[]): { environment: Env
     seen.add(key);
     if (RESERVED.has(upper) || upper.startsWith("AGENTDOCK_")) errors.add("Account directories, workspace identity and AgentDock internal variables cannot be overridden.");
     if (row.kind === "unset") entries.push([key, { kind: "unset" }]);
+    else if (row.kind === "main_model") entries.push([key, { kind: "main_model" }]);
     else if (row.kind === "secret_ref") {
       const reference = row.value.trim();
       if (!/^env:AGENTDOCK_SECRET_[A-Z0-9_]+$/.test(reference)) errors.add("Use env:AGENTDOCK_SECRET_NAME for a secret reference.");

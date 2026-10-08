@@ -7,9 +7,18 @@ pub type EnvironmentOverrides = std::collections::BTreeMap<String, EnvironmentVa
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EnvironmentValue {
-    Literal { value: String },
-    SecretRef { reference: String },
+    Literal {
+        value: String,
+    },
+    SecretRef {
+        reference: String,
+    },
     Unset,
+    /// The session's main model ID, whatever it is at launch: how Claude
+    /// Code's slot variables (`ANTHROPIC_DEFAULT_HAIKU_MODEL` and the rest)
+    /// follow the model chosen for the session. Nothing is set when the
+    /// session names no model.
+    MainModel,
 }
 
 impl std::fmt::Debug for EnvironmentValue {
@@ -18,6 +27,7 @@ impl std::fmt::Debug for EnvironmentValue {
             Self::Literal { .. } => "Literal { value: [REDACTED] }",
             Self::SecretRef { .. } => "SecretRef { reference: [REDACTED] }",
             Self::Unset => "Unset",
+            Self::MainModel => "MainModel",
         })
     }
 }
@@ -116,7 +126,7 @@ pub fn validate_environment(environment: &EnvironmentOverrides) -> Result<(), St
                     ));
                 }
             }
-            EnvironmentValue::Unset => {}
+            EnvironmentValue::Unset | EnvironmentValue::MainModel => {}
         }
     }
     Ok(())

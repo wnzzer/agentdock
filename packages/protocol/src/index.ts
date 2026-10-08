@@ -1,7 +1,8 @@
 export type ProviderKind = "claude_code" | "codex" | "terminal";
 export type AgentProviderKind = Exclude<ProviderKind, "terminal">;
 export type SessionStatus = "starting" | "running" | "waiting" | "stopped" | "failed";
-export type EnvironmentValue = { kind: "literal"; value: string } | { kind: "secret_ref"; reference: string } | { kind: "unset" };
+/** `main_model`: the session's main model ID at launch (how Claude Code's slot variables follow it). */
+export type EnvironmentValue = { kind: "literal"; value: string } | { kind: "secret_ref"; reference: string } | { kind: "unset" } | { kind: "main_model" };
 export type EnvironmentOverrides = Record<string, EnvironmentValue>;
 
 export interface Workspace {

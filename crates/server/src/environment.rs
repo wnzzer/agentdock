@@ -8,18 +8,23 @@ pub fn validate(values: &EnvironmentOverrides) -> Result<(), ApiError> {
 }
 
 /// Secret references resolve from the server's environment, then from the
-/// secrets AgentDock stores (see secrets.rs).
+/// secrets AgentDock stores (see secrets.rs); a main-model value becomes
+/// `main_model`, the session's model at this launch.
 pub fn apply(
     spec: &mut SpawnSpec,
     values: &EnvironmentOverrides,
     state_dir: &std::path::Path,
+    main_model: Option<&str>,
 ) -> Result<(), ApiError> {
-    apply_with(spec, values, |key| crate::secrets::resolve(state_dir, key))
+    apply_with(spec, values, main_model, |key| {
+        crate::secrets::resolve(state_dir, key)
+    })
 }
 
 fn apply_with(
     spec: &mut SpawnSpec,
     values: &EnvironmentOverrides,
+    main_model: Option<&str>,
     mut resolve: impl FnMut(&str) -> Option<String>,
 ) -> Result<(), ApiError> {
     validate(values)?;
@@ -41,6 +46,12 @@ fn apply_with(
                 Some(value)
             }
             EnvironmentValue::Unset => None,
+            // No main model: the variable is left out, so the client keeps
+            // its own default for that slot.
+            EnvironmentValue::MainModel => match main_model {
+                Some(model) => Some(model.to_owned()),
+                None => continue,
+            },
         };
         if let Some(value) = resolved {
             spec.env_remove.retain(|removed| removed != key);
@@ -87,7 +98,7 @@ mod tests {
             ("REMOVE".into(), EnvironmentValue::Unset),
         ]
         .into();
-        apply_with(&mut spec, &values, |key| {
+        apply_with(&mut spec, &values, None, |key| {
             assert_eq!(key, "AGENTDOCK_SECRET_FIXTURE");
             Some("synthetic-secret-value".into())
         })
@@ -121,8 +132,49 @@ mod tests {
             },
         )]
         .into();
-        assert!(apply_with(&mut spec, &values, |_| None).is_err());
-        let error = apply_with(&mut spec, &values, |_| Some("secret\0suffix".into())).unwrap_err();
+        assert!(apply_with(&mut spec, &values, None, |_| None).is_err());
+        let error =
+            apply_with(&mut spec, &values, None, |_| Some("secret\0suffix".into())).unwrap_err();
         assert!(!error.message.contains("secret\0suffix"));
+    }
+
+    #[test]
+    fn a_main_model_value_follows_the_sessions_model_or_is_left_out() {
+        let values: EnvironmentOverrides = [(
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL".to_owned(),
+            EnvironmentValue::MainModel,
+        )]
+        .into();
+        let mut spec = SpawnSpec {
+            program: "fixture".into(),
+            args: vec![],
+            cwd: "/fixture".into(),
+            env: Default::default(),
+            env_remove: vec![],
+        };
+        apply_with(&mut spec, &values, Some("qwen-gateway-id"), |_| None).unwrap();
+        assert_eq!(
+            spec.env
+                .get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+                .map(String::as_str),
+            Some("qwen-gateway-id")
+        );
+        let mut spec = SpawnSpec {
+            program: "fixture".into(),
+            args: vec![],
+            cwd: "/fixture".into(),
+            env: Default::default(),
+            env_remove: vec![],
+        };
+        apply_with(&mut spec, &values, None, |_| None).unwrap();
+        assert!(!spec.env.contains_key("ANTHROPIC_DEFAULT_HAIKU_MODEL"));
+        assert!(
+            !spec
+                .env_remove
+                .contains(&"ANTHROPIC_DEFAULT_HAIKU_MODEL".to_owned()),
+            "no main model leaves the client its own default, not a removal"
+        );
+        let json = serde_json::to_value(&values).unwrap();
+        assert_eq!(json["ANTHROPIC_DEFAULT_HAIKU_MODEL"]["kind"], "main_model");
     }
 }
