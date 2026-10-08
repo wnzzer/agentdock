@@ -8,10 +8,14 @@
 //! between two samples, weighted by how long the cluster ran at each step, and
 //! the first sample after start is only a baseline.
 //!
-//! Intel Macs have neither the channels nor the tables, so they report none.
+//! Intel Macs have neither the channels nor the tables, so they report none,
+//! and neither does a virtual machine: its CPUs have no clock of their own,
+//! and IOReport is not probed there at all, since a guest's device tree is
+//! not the hardware's.
 use super::CpuFrequency;
 use std::{
     ffi::{CStr, c_char, c_void},
+    mem::size_of,
     ptr, slice,
 };
 
@@ -169,9 +173,30 @@ fn pmgr_table(key: &CStr) -> Option<Vec<u32>> {
             return None;
         }
         let length = usize::try_from(CFDataGetLength(data.0)).ok()?;
-        table_mhz(slice::from_raw_parts(CFDataGetBytePtr(data.0), length))
+        let bytes = CFDataGetBytePtr(data.0);
+        if length == 0 || bytes.is_null() {
+            return None;
+        }
+        table_mhz(slice::from_raw_parts(bytes, length))
     };
     (!table.is_empty()).then_some(table)
+}
+
+/// Whether macOS runs as a guest, as hosted CI runners do.
+fn in_virtual_machine() -> bool {
+    let mut present: i32 = 0;
+    let mut size = size_of::<i32>();
+    // SAFETY: the output buffer is an `i32` and its size is passed with it.
+    let status = unsafe {
+        libc::sysctlbyname(
+            c"kern.hv_vmm_present".as_ptr(),
+            (&mut present as *mut i32).cast(),
+            &mut size,
+            ptr::null_mut(),
+            0,
+        )
+    };
+    status == 0 && present != 0
 }
 
 /// The states a cluster is not running in. They come first, before the
@@ -208,6 +233,9 @@ unsafe impl Send for Reader {}
 
 impl Reader {
     pub fn open() -> Option<Self> {
+        if in_virtual_machine() {
+            return None;
+        }
         let efficiency = pmgr_table(c"voltage-states1-sram")?;
         let performance = pmgr_table(c"voltage-states5-sram")?;
         let group = cf_string(c"CPU Stats")?;
