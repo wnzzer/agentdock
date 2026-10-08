@@ -106,12 +106,31 @@ fn tree_usage(system: &System, root: u32) -> (f32, u64) {
     (cpu, memory)
 }
 
+fn session_usage(system: &System, roots: Vec<(String, u32)>) -> Vec<SessionUsage> {
+    roots
+        .into_iter()
+        .map(|(session_id, pid)| {
+            let (cpu_percent, memory_bytes) = tree_usage(system, pid);
+            SessionUsage {
+                session_id,
+                cpu_percent,
+                memory_bytes,
+            }
+        })
+        .collect()
+}
+
 pub fn sample(roots: Vec<(String, u32)>) -> HostUsage {
     let mut guard = sampler().lock().expect("resource sampler");
+    // The machine is reused within a second, but the sessions are always the
+    // caller's: two callers asking about different sessions in the same
+    // second each get their own, counted from the process table already read.
     if let Some((at, usage)) = &guard.sampled
         && at.elapsed() < Duration::from_secs(1)
     {
-        return usage.clone();
+        let mut usage = usage.clone();
+        usage.sessions = session_usage(&guard.system, roots);
+        return usage;
     }
     let Sampler {
         system,
@@ -122,17 +141,7 @@ pub fn sample(roots: Vec<(String, u32)>) -> HostUsage {
     system.refresh_cpu_usage();
     system.refresh_memory();
     system.refresh_processes(ProcessesToUpdate::All, true);
-    let sessions = roots
-        .into_iter()
-        .map(|(session_id, pid)| {
-            let (cpu_percent, memory_bytes) = tree_usage(system, pid);
-            SessionUsage {
-                session_id,
-                cpu_percent,
-                memory_bytes,
-            }
-        })
-        .collect();
+    let sessions = session_usage(system, roots);
     let usage = HostUsage {
         cpu_percent: system.global_cpu_usage(),
         cpu_count: system.cpus().len(),
@@ -413,7 +422,18 @@ fn session_roots(state: &AppState) -> Vec<(String, u32)> {
     roots
 }
 
+/// Turned off, nothing is read from the machine: not by the recorder, and
+/// not for the status bar or the system page either.
+async fn ensure_monitoring(state: &AppState) -> Result<()> {
+    if preferences::load(state).await?.resource_monitoring() {
+        Ok(())
+    } else {
+        Err(ApiError::conflict("Resource monitoring is turned off"))
+    }
+}
+
 async fn system(State(state): State<AppState>) -> Result<Json<SystemDetail>> {
+    ensure_monitoring(&state).await?;
     let roots = session_roots(&state);
     let detail = tokio::task::spawn_blocking(move || detail(roots))
         .await
@@ -422,6 +442,7 @@ async fn system(State(state): State<AppState>) -> Result<Json<SystemDetail>> {
 }
 
 async fn usage(State(state): State<AppState>) -> Result<Json<HostUsage>> {
+    ensure_monitoring(&state).await?;
     let roots = session_roots(&state);
     let usage = tokio::task::spawn_blocking(move || sample(roots))
         .await
@@ -453,11 +474,11 @@ pub fn spawn_recorder(state: AppState, store: Arc<MetricsStore>) {
             tick.tick().await;
             let roots = session_roots(&state);
             let preferences = state.clone();
-            // Asked every tick, so turning recording off stops the sampling
+            // Asked every tick, so turning monitoring off stops the sampling
             // at once, and what was buffered is dropped rather than written.
             let Ok(usage) = tokio::task::spawn_blocking(move || {
                 preferences::load_blocking(&preferences)
-                    .resource_history()
+                    .resource_monitoring()
                     .then(|| sample(roots))
             })
             .await
@@ -566,9 +587,9 @@ struct SessionHistoryPoint {
 
 #[derive(Debug, Serialize)]
 struct History {
-    /// Whether new samples are being recorded; what is stored stays readable
-    /// either way.
-    recording: bool,
+    /// Whether monitoring is on and new samples are being recorded; what is
+    /// stored stays readable either way.
+    monitoring: bool,
     /// Seconds each point covers.
     resolution: i64,
     host: Vec<HostHistoryPoint>,
@@ -603,9 +624,9 @@ async fn history(
     .await
     .map_err(ApiError::internal)?
     .map_err(ApiError::internal)?;
-    let recording = preferences::load(&state).await?.resource_history();
+    let monitoring = preferences::load(&state).await?.resource_monitoring();
     Ok(Json(History {
-        recording,
+        monitoring,
         resolution,
         host: host
             .into_iter()

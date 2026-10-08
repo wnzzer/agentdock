@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { Session } from '@agentdock/protocol';
 import { ApiError, request } from './api';
+import { preferences } from './preferences';
 import { useI18n } from '../i18n';
 
 /**
@@ -9,7 +10,9 @@ import { useI18n } from '../i18n';
  * where the rest of the machine (disks, network, load, sessions) is.
  *
  * It polls only while the page is visible, and stops for good on a backend
- * that has no such route rather than asking again every few seconds.
+ * that has no such route rather than asking again every few seconds. With
+ * resource monitoring turned off it is hidden and asks nothing; it comes back
+ * as soon as monitoring is turned on again.
  */
 interface HostUsage { cpu_percent: number; cpu_count: number; memory_used_bytes: number; memory_total_bytes: number }
 defineProps<{ sessions: Session[] }>();
@@ -17,16 +20,23 @@ const emit = defineEmits<{ open: [] }>();
 const { t } = useI18n();
 const usage = ref<HostUsage>(), unsupported = ref(false);
 let timer: ReturnType<typeof setTimeout> | undefined, disposed = false;
+const monitoring = computed(() => preferences.value.resource_monitoring !== false);
 
 async function poll() {
-  if (disposed || unsupported.value) return;
+  if (timer) clearTimeout(timer);
+  if (disposed || unsupported.value || !monitoring.value) { usage.value = undefined; return; }
   if (document.visibilityState === 'visible') {
     try { usage.value = await request<HostUsage>('/host/resources'); }
-    catch (cause) { if (cause instanceof ApiError && [404, 501].includes(cause.status)) { unsupported.value = true; return; } }
+    catch (cause) {
+      if (cause instanceof ApiError && [404, 501].includes(cause.status)) { unsupported.value = true; return; }
+      // Turned off from another browser: hide, and check again now and then.
+      if (cause instanceof ApiError && cause.status === 409) { usage.value = undefined; timer = setTimeout(poll, 30_000); return; }
+    }
   }
   timer = setTimeout(poll, 4000);
 }
 onMounted(() => { void poll(); });
+watch(monitoring, () => { void poll(); });
 onBeforeUnmount(() => { disposed = true; if (timer) clearTimeout(timer); });
 
 const memoryPercent = computed(() => usage.value && usage.value.memory_total_bytes ? usage.value.memory_used_bytes / usage.value.memory_total_bytes * 100 : 0);

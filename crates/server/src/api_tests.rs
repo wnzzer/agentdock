@@ -3287,7 +3287,7 @@ async fn shared_canvas_uses_existing_authentication_and_health_capabilities() {
             "stored_secrets",
             "agent_tools",
             "self_update",
-            "resource_history"
+            "resource_monitoring"
         ])
     );
     let allowed = Request::builder()
@@ -4210,7 +4210,7 @@ async fn resource_history_answers_from_the_metrics_database() {
 }
 
 #[tokio::test]
-async fn resource_history_can_be_turned_off_and_cleared() {
+async fn resource_monitoring_can_be_turned_off_and_history_cleared() {
     use agentdock_persistence::metrics::{HostPoint, MetricsStore};
     let mut f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
     let store = Arc::new(MetricsStore::open(":memory:").unwrap());
@@ -4237,23 +4237,35 @@ async fn resource_history_can_be_turned_off_and_cleared() {
     f.state.metrics = Some(store);
     let history = "/api/host/resources/history";
     let (_, body) = call(f.app(), "GET", history, Value::Null).await;
-    assert_eq!(body["recording"], true, "on unless turned off");
+    assert_eq!(body["monitoring"], true, "on unless turned off");
+    for live in ["/api/host/resources", "/api/host/system"] {
+        let (status, _) = call(f.app(), "GET", live, Value::Null).await;
+        assert_eq!(status, StatusCode::OK, "{live}");
+    }
 
     let (status, preferences) = call(
         f.app(),
         "PUT",
         "/api/preferences",
-        json!({"resource_history": false}),
+        json!({"resource_monitoring": false}),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(preferences["resource_history"], false);
+    assert_eq!(preferences["resource_monitoring"], false);
+    for live in ["/api/host/resources", "/api/host/system"] {
+        let (status, _) = call(f.app(), "GET", live, Value::Null).await;
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "{live} reads nothing while off"
+        );
+    }
     let (_, body) = call(f.app(), "GET", history, Value::Null).await;
-    assert_eq!(body["recording"], false);
+    assert_eq!(body["monitoring"], false);
     assert_eq!(
         body["host"].as_array().unwrap().len(),
         1,
-        "turning recording off keeps what was recorded"
+        "turning monitoring off keeps what was recorded"
     );
 
     let (status, _) = call(f.app(), "DELETE", history, Value::Null).await;

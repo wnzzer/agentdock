@@ -15,7 +15,8 @@ import { RANGES, bin, busiestSessions, chartPaths, gigahertz, measures, nearest,
  * Mounted only while the system page is open. The server writes history
  * once a minute, so it is fetched again no more often than that.
  */
-const props = defineProps<{ sessions: Session[]; cores: number; fanMaxRpm?: number; clockMaxMhz?: number }>();
+/** `offNoted`: the page already says monitoring is off, so this card need not. */
+const props = defineProps<{ sessions: Session[]; cores: number; fanMaxRpm?: number; clockMaxMhz?: number; offNoted?: boolean }>();
 const emit = defineEmits<{ openSession: [session: Session] }>();
 const { t } = useI18n();
 const range = ref<RangeKey>('1h'), history = ref<HostHistory>(), unsupported = ref(false), hover = ref<number>();
@@ -131,10 +132,11 @@ const percent = (value: number) => value < 0.5 ? '<1%' : `${Math.round(value)}%`
         <button v-for="item in RANGES" :key="item.key" type="button" :aria-pressed="range === item.key" @click="range = item.key">{{ item.key }}</button>
       </div>
     </header>
-    <p v-if="history?.recording === false" class="host-history-off">
-      {{ t(empty ? 'Recording is turned off.' : 'Recording is turned off; this is what was kept before.') }}
+    <p v-if="history?.monitoring === false && !offNoted" class="host-history-off">
+      {{ t(empty ? 'Resource monitoring is turned off.' : 'Resource monitoring is turned off; this is what was kept before.') }}
       <RouterLink :to="{ name: 'settings', params: { section: 'preferences' } }">{{ t('Settings') }}</RouterLink>
     </p>
+    <p v-else-if="history?.monitoring === false && empty" class="host-history-empty">{{ t('Nothing was kept before monitoring was turned off.') }}</p>
     <p v-else-if="empty" class="host-history-empty">{{ t('History builds up while AgentDock runs; the first points arrive within a minute.') }}</p>
     <template v-if="history && !empty">
       <div class="host-trends">
@@ -155,7 +157,8 @@ const percent = (value: number) => value < 0.5 ? '<1%' : `${Math.round(value)}%`
           </div>
         </div>
       </div>
-      <template v-if="busiest.length">
+      <!-- Without the core count a share of the machine cannot be worked out. -->
+      <template v-if="busiest.length && cores">
         <h3>{{ t('Busiest sessions') }}</h3>
         <ul>
           <li class="host-history-columns" aria-hidden="true"><span /><span /><span>{{ t('Average') }}</span><span>{{ t('Peak') }}</span></li>

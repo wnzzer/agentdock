@@ -39,7 +39,7 @@ async function update(provider: PreferenceProvider, field: 'endpoint_profile_id'
   finally { saving.value = false; }
 }
 /** Off is stored as `false`; on is the default, so it is stored as nothing. */
-async function setSwitch(key: 'agent_tools' | 'resource_history', on: boolean) {
+async function setSwitch(key: 'agent_tools' | 'resource_monitoring', on: boolean) {
   const next: Preferences = JSON.parse(JSON.stringify(preferences.value));
   if (on) delete next[key]; else next[key] = false;
   saving.value = true; error.value = ''; saved.value = false;
@@ -138,13 +138,13 @@ async function revokeGrants() { try { hostGrants.value = await request('/host/gr
           <input type="checkbox" class="preference-switch" role="switch" :checked="preferences.agent_tools !== false" :disabled="saving" :aria-label="t('AgentDock tools for agents')" @change="setSwitch('agent_tools', ($event.target as HTMLInputElement).checked)" />
         </label>
       </article>
-      <article v-if="backendCapabilities.resourceHistory" class="preference-card">
+      <article v-if="backendCapabilities.resourceMonitoring" class="preference-card">
         <label class="preference-row first">
-          <span><strong>{{ t('Record resource history') }}</strong><small>{{ t('Every five seconds, the host\'s CPU, memory, temperature, fans and clock, and each session\'s share, kept on this machine for up to 90 days for the trends on the system page. Off stops recording; what is already kept stays until cleared.') }}</small></span>
-          <input type="checkbox" class="preference-switch" role="switch" :checked="preferences.resource_history !== false" :disabled="saving" :aria-label="t('Record resource history')" @change="setSwitch('resource_history', ($event.target as HTMLInputElement).checked)" />
+          <span><strong>{{ t('Resource monitoring') }}</strong><small>{{ t('Reads the host\'s CPU, memory, temperature, fans and clock for the status bar and the system page, and every five seconds keeps them, with each session\'s share, on this machine for up to 90 days. Off reads nothing at all; what is already kept stays until cleared.') }}</small></span>
+          <input type="checkbox" class="preference-switch" role="switch" :checked="preferences.resource_monitoring !== false" :disabled="saving" :aria-label="t('Resource monitoring')" @change="setSwitch('resource_monitoring', ($event.target as HTMLInputElement).checked)" />
         </label>
         <div class="preference-row">
-          <span><strong>{{ t('Recorded history') }}</strong><small>{{ cleared ? t('Cleared.') : t('Removes every recorded sample. Recording continues if it is on.') }}</small></span>
+          <span><strong>{{ t('Recorded history') }}</strong><small>{{ cleared ? t('Cleared.') : t('Removes every recorded sample. Recording continues while monitoring is on.') }}</small></span>
           <button type="button" :class="['small-button', { danger: clearArmed }]" :disabled="clearing" @click="clearHistory">{{ t(clearArmed ? 'Press again to clear' : 'Clear history') }}</button>
         </div>
       </article>

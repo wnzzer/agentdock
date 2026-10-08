@@ -33,15 +33,16 @@ pub struct Preferences {
     /// turned off: `None` is the default, not a choice to disable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_tools: Option<bool>,
-    /// Whether the host's resource history is recorded (resources.rs). On
+    /// Whether the host's resources are read at all (resources.rs): the
+    /// recorded history, the status bar figures and the system page. On
     /// unless turned off, like the agent tools.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resource_history: Option<bool>,
+    pub resource_monitoring: Option<bool>,
 }
 
 impl Preferences {
-    pub fn resource_history(&self) -> bool {
-        self.resource_history != Some(false)
+    pub fn resource_monitoring(&self) -> bool {
+        self.resource_monitoring != Some(false)
     }
 
     pub fn agent_tools(&self) -> bool {

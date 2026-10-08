@@ -9,10 +9,12 @@ import { json, request } from "./api";
  */
 export interface ProviderPreference { endpoint_profile_id?: string | null; effort?: string | null; permission?: string | null }
 /**
- * `agent_tools`: whether sessions get AgentDock's own tools. `resource_history`:
- * whether the host's resource history is recorded. Absent means on for both.
+ * `agent_tools`: whether sessions get AgentDock's own tools.
+ * `resource_monitoring`: whether the host's resources are read at all, for
+ * the status bar, the system page and the recorded history. Absent means on
+ * for both.
  */
-export interface Preferences { claude_code: ProviderPreference; codex: ProviderPreference; agent_tools?: boolean; resource_history?: boolean }
+export interface Preferences { claude_code: ProviderPreference; codex: ProviderPreference; agent_tools?: boolean; resource_monitoring?: boolean }
 export type PreferenceProvider = "claude_code" | "codex";
 
 export const PERMISSION_CHOICES: Record<PreferenceProvider, readonly string[]> = {

@@ -173,15 +173,22 @@ export const zhCN: Readonly<Record<string, string>> = {
   "up to {rpm} rpm": "最高 {rpm} rpm",
   "Clock while running, over the last moment": "运行时的频率（取最近片刻的平均）",
   "Trends": "趋势",
-  "Record resource history": "记录资源历史",
-  "Every five seconds, the host's CPU, memory, temperature, fans and clock, and each session's share, kept on this machine for up to 90 days for the trends on the system page. Off stops recording; what is already kept stays until cleared.": "每 5 秒记录一次宿主机的 CPU、内存、温度、风扇和频率，以及各会话的占用，保存在本机最多 90 天，用于系统页的趋势图。关闭后停止记录，已有记录保留，直到手动清除。",
+  "Resource monitoring": "资源监控",
+  "Reads the host's CPU, memory, temperature, fans and clock for the status bar and the system page, and every five seconds keeps them, with each session's share, on this machine for up to 90 days. Off reads nothing at all; what is already kept stays until cleared.": "读取宿主机的 CPU、内存、温度、风扇和频率，用于状态栏和系统页；并每 5 秒连同各会话的占用一起保存在本机，最多 90 天。关闭后完全不再读取，已有记录保留，直到手动清除。",
+  "Removes every recorded sample. Recording continues while monitoring is on.": "删除所有已记录的数据。资源监控开着时会继续记录新数据。",
+  "Resource monitoring is turned off.": "资源监控已关闭。",
+  "Resource monitoring is turned off; this is what was kept before.": "资源监控已关闭，以下是关闭前保留的记录。",
+  "Resource monitoring is turned off, so nothing is read from this host. What was kept before is below.": "资源监控已关闭，不再读取这台主机的任何资源数据。下面是关闭前保留的记录。",
+  "Nothing was kept before monitoring was turned off.": "关闭前没有保留任何记录。",
+
+
   "Recorded history": "已记录的历史",
-  "Removes every recorded sample. Recording continues if it is on.": "删除所有已记录的数据。如果记录开着，会继续记录新数据。",
+
   "Cleared.": "已清除。",
   "Clear history": "清除历史",
   "Press again to clear": "再按一次确认清除",
-  "Recording is turned off.": "资源历史记录已关闭。",
-  "Recording is turned off; this is what was kept before.": "资源历史记录已关闭，以下是关闭前保留的记录。",
+
+
   "Average": "平均",
   "Peak": "峰值",
   "no data": "无数据",

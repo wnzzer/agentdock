@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { Session } from '@agentdock/protocol';
 import { ApiError, errorMessage, providerLabel, request } from './api';
 import PageShell from './PageShell.vue';
@@ -7,6 +7,7 @@ import ProviderIcon from './ProviderIcon.vue';
 import Icon from './Icon.vue';
 import HostHistory from './HostHistory.vue';
 import { gigahertz } from './host-history';
+import { preferences } from './preferences';
 import { useI18n } from '../i18n';
 import { formatBytes, formatDuration, formatRate, levelFor, pushSample, sparkPath } from './system-format';
 
@@ -35,16 +36,20 @@ const props = defineProps<{ sessions: Session[] }>();
 const emit = defineEmits<{ back: []; openSession: [session: Session] }>();
 const { t } = useI18n();
 const detail = ref<SystemDetail>(), error = ref(''), unsupported = ref(false);
+/** Resource monitoring is turned off: nothing live is read, and the page says so. */
+const off = ref(false);
 const history = ref({ cpu: [] as number[], memory: [] as number[], received: [] as number[], transmitted: [] as number[] });
 let timer: ReturnType<typeof setTimeout> | undefined, disposed = false;
 
 async function poll() {
+  if (timer) clearTimeout(timer);
   if (disposed) return;
+  if (preferences.value.resource_monitoring === false) { off.value = true; detail.value = undefined; return; }
   if (document.visibilityState === 'visible') {
     try {
       const next = await request<SystemDetail>('/host/system');
       if (disposed) return;
-      detail.value = next; error.value = '';
+      detail.value = next; error.value = ''; off.value = false;
       const net = next.networks.reduce((sum, item) => ({ rx: sum.rx + item.received_per_second, tx: sum.tx + item.transmitted_per_second }), { rx: 0, tx: 0 });
       history.value = {
         cpu: pushSample(history.value.cpu, next.cpu.percent),
@@ -54,12 +59,15 @@ async function poll() {
       };
     } catch (cause) {
       if (cause instanceof ApiError && [404, 501].includes(cause.status)) { unsupported.value = true; return; }
+      // Turned off from another browser: say so, and check again now and then.
+      if (cause instanceof ApiError && cause.status === 409) { off.value = true; detail.value = undefined; timer = setTimeout(poll, 30_000); return; }
       error.value = errorMessage(cause);
     }
   }
   timer = setTimeout(poll, 2000);
 }
 onMounted(() => { void poll(); });
+watch(() => preferences.value.resource_monitoring, () => { off.value = false; void poll(); });
 onBeforeUnmount(() => { disposed = true; if (timer) clearTimeout(timer); });
 
 const memoryPercent = computed(() => detail.value?.memory.total_bytes ? detail.value.memory.used_bytes / detail.value.memory.total_bytes * 100 : 0);
@@ -99,7 +107,14 @@ const subtitle = computed(() => {
     <div class="system-page">
       <p v-if="unsupported" class="inline-notice">{{ t('This backend does not report system details. Update AgentDock on the host to see them.') }}</p>
       <p v-else-if="error" class="inline-error" role="alert">{{ error }}</p>
-      <div v-if="!detail && !unsupported" class="pane-empty"><p>{{ t('Reading this host…') }}</p></div>
+      <template v-if="off">
+        <p class="inline-notice system-off">
+          {{ t('Resource monitoring is turned off, so nothing is read from this host. What was kept before is below.') }}
+          <RouterLink :to="{ name: 'settings', params: { section: 'preferences' } }">{{ t('Settings') }}</RouterLink>
+        </p>
+        <HostHistory :sessions="sessions" :cores="0" off-noted @open-session="emit('openSession', $event)" />
+      </template>
+      <div v-else-if="!detail && !unsupported" class="pane-empty"><p>{{ t('Reading this host…') }}</p></div>
       <template v-if="detail">
         <div class="system-facts">
           <span><Icon name="clock" :size="14" />{{ t('Up {time}', { time: formatDuration(detail.host.uptime_seconds) }) }}</span>
@@ -205,6 +220,9 @@ const subtitle = computed(() => {
 
 <style scoped>
 .system-page{display:flex;flex-direction:column;gap:var(--space-4)}
+.system-off{display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--space-2)}
+.system-off a{color:var(--accent);font-weight:550;text-decoration:none}
+.system-off a:hover{text-decoration:underline}
 .system-facts{display:flex;flex-wrap:wrap;gap:var(--space-2) var(--space-5);font-size:var(--text-sm);color:var(--ink-soft)}
 .system-facts span{display:inline-flex;align-items:center;gap:6px}
 .system-facts svg{color:var(--muted)}
