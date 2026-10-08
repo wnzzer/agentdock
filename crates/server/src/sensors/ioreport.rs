@@ -136,9 +136,10 @@ fn rust_string(text: CFTypeRef) -> Option<String> {
 /// later chips kilohertz; no clock is under 100 MHz or over 100 GHz, so the
 /// largest entry tells which.
 fn table_mhz(bytes: &[u8]) -> Vec<u32> {
-    let raw: Vec<u32> = bytes
-        .chunks_exact(8)
-        .map(|pair| u32::from_le_bytes([pair[0], pair[1], pair[2], pair[3]]))
+    let (pairs, _) = bytes.as_chunks::<8>();
+    let raw: Vec<u32> = pairs
+        .iter()
+        .map(|[a, b, c, d, ..]| u32::from_le_bytes([*a, *b, *c, *d]))
         .collect();
     let divisor = if raw.iter().any(|&value| value > 100_000_000) {
         1_000_000
