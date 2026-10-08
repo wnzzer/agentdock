@@ -4,6 +4,7 @@ import { setThemePreference, themePreference, type ThemePreference } from './the
 import { desktopNotifications, notificationSupport, setDesktopNotifications } from './attention';
 import type { EndpointProfile } from '@agentdock/protocol';
 import ProviderIcon from './ProviderIcon.vue';
+import Icon from './Icon.vue';
 import { errorMessage, json, providerLabel, request } from './api';
 import { REASONING_EFFORTS, effortLabel } from './reasoning-effort';
 import { PERMISSION_CHOICES, loadPreferences, preferences, savePreferences, type PreferenceProvider, type Preferences } from './preferences';
@@ -87,7 +88,8 @@ async function revokeGrants() { try { hostGrants.value = await request('/host/gr
     <!-- The interface language belongs to this browser, not the server: it is
          a per-viewer choice, and a phone and a laptop may well differ. -->
     <article class="preference-card">
-      <label class="preference-row first">
+      <header><span class="preference-mark general"><Icon name="settings" :size="17"/></span><strong>{{ t('General') }}</strong></header>
+      <label class="preference-row">
         <span><strong>{{ t('Language') }}</strong><small>{{ t('For this browser.') }}</small></span>
         <select :value="locale" :aria-label="t('Language')" @change="setLocale(($event.target as HTMLSelectElement).value === 'en' ? 'en' : 'zh-CN')"><option value="zh-CN" lang="zh-CN">中文</option><option value="en" lang="en">English</option></select>
       </label>
@@ -132,14 +134,15 @@ async function revokeGrants() { try { hostGrants.value = await request('/host/gr
         </label>
         <p v-if="preferences[provider].permission==='danger'" class="preference-note danger">{{ t('New sessions will run tools without asking. Only choose this for directories you trust completely.') }}</p>
       </article>
+      <!-- What AgentDock itself does on this host, beside the clients' defaults. -->
       <article class="preference-card">
-        <label class="preference-row first">
+        <header><span class="preference-mark general"><Icon name="spark" :size="17"/></span><strong>AgentDock</strong></header>
+        <label class="preference-row">
           <span><strong>{{ t('AgentDock tools for agents') }}</strong><small>{{ t('Claude Code and Codex sessions can look at AgentDock and, once you confirm here, change it: endpoints, defaults, workspaces. Takes effect when a session next starts.') }}</small></span>
           <input type="checkbox" class="preference-switch" role="switch" :checked="preferences.agent_tools !== false" :disabled="saving" :aria-label="t('AgentDock tools for agents')" @change="setSwitch('agent_tools', ($event.target as HTMLInputElement).checked)" />
         </label>
-      </article>
-      <article v-if="backendCapabilities.resourceMonitoring" class="preference-card">
-        <label class="preference-row first">
+        <template v-if="backendCapabilities.resourceMonitoring">
+        <label class="preference-row">
           <span><strong>{{ t('Resource monitoring') }}</strong><small>{{ t('Reads the host\'s CPU, memory, temperature, fans and clock for the status bar and the system page, and every five seconds keeps them, with each session\'s share, on this machine for up to 90 days. Off reads nothing at all; what is already kept stays until cleared.') }}</small></span>
           <input type="checkbox" class="preference-switch" role="switch" :checked="preferences.resource_monitoring !== false" :disabled="saving" :aria-label="t('Resource monitoring')" @change="setSwitch('resource_monitoring', ($event.target as HTMLInputElement).checked)" />
         </label>
@@ -147,6 +150,7 @@ async function revokeGrants() { try { hostGrants.value = await request('/host/gr
           <span><strong>{{ t('Recorded history') }}</strong><small>{{ cleared ? t('Cleared.') : t('Removes every recorded sample. Recording continues while monitoring is on.') }}</small></span>
           <button type="button" :class="['small-button', { danger: clearArmed }]" :disabled="clearing" @click="clearHistory">{{ t(clearArmed ? 'Press again to clear' : 'Clear history') }}</button>
         </div>
+        </template>
       </article>
     </template>
   </section>
@@ -163,6 +167,9 @@ async function revokeGrants() { try { hostGrants.value = await request('/host/gr
 .preference-card header strong{font-size:var(--text-md);font-weight:600;color:var(--ink)}
 .preference-mark{display:grid;place-items:center;width:30px;height:30px;border-radius:var(--radius-md);background:var(--codex-soft);color:var(--codex);flex-shrink:0}
 .preference-mark.claude_code{background:var(--claude-soft);color:var(--claude)}
+/* Only the cards carry an icon; the rows are read by their labels. Functional
+   icons take the text's tone rather than a hue of their own (icon-palette.ts). */
+.preference-mark.general{background:var(--fill);color:var(--ink-soft)}
 .preference-row{display:flex;align-items:center;gap:14px;padding:9px 0;border-top:1px solid var(--border)}
 .preference-row.first{border-top:0;padding-top:0}
 .preference-switch{appearance:none;flex:none;position:relative;width:38px;height:22px;margin:0;border-radius:var(--radius-md);background:var(--line-strong);cursor:pointer;transition:background .15s}
