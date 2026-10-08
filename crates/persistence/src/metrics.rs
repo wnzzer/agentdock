@@ -30,6 +30,9 @@ pub struct HostPoint {
     /// The fastest CPU cluster's clock in MHz; absent where it cannot be read.
     pub cpu_mhz_avg: Option<u32>,
     pub cpu_mhz_max: Option<u32>,
+    /// The whole machine's draw in watts; absent where it cannot be read.
+    pub power_avg: Option<f32>,
+    pub power_max: Option<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -52,7 +55,7 @@ impl MetricsStore {
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 3 {
+        if version > 4 {
             return Err(rusqlite::Error::InvalidQuery);
         }
         if version < 1 {
@@ -93,6 +96,15 @@ impl MetricsStore {
                 COMMIT;",
             )?;
         }
+        if version < 4 {
+            connection.execute_batch(
+                "BEGIN;
+                ALTER TABLE host_samples ADD COLUMN power_avg REAL;
+                ALTER TABLE host_samples ADD COLUMN power_max REAL;
+                PRAGMA user_version = 4;
+                COMMIT;",
+            )?;
+        }
         Ok(Self {
             connection: Mutex::new(connection),
         })
@@ -108,8 +120,8 @@ impl MetricsStore {
                 "INSERT OR REPLACE INTO host_samples (resolution, ts, cpu_avg, cpu_max,
                     memory_used_avg, memory_used_max, memory_total,
                     fan_rpm_avg, fan_rpm_max, temperature_avg, temperature_max,
-                    cpu_mhz_avg, cpu_mhz_max)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                    cpu_mhz_avg, cpu_mhz_max, power_avg, power_max)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             )?;
             for point in host {
                 insert.execute(params![
@@ -125,7 +137,9 @@ impl MetricsStore {
                     point.temperature_avg,
                     point.temperature_max,
                     point.cpu_mhz_avg,
-                    point.cpu_mhz_max
+                    point.cpu_mhz_max,
+                    point.power_avg,
+                    point.power_max
                 ])?;
             }
             let mut insert = tx.prepare_cached(
@@ -168,12 +182,13 @@ impl MetricsStore {
                 "INSERT OR REPLACE INTO host_samples (resolution, ts, cpu_avg, cpu_max,
                     memory_used_avg, memory_used_max, memory_total,
                     fan_rpm_avg, fan_rpm_max, temperature_avg, temperature_max,
-                    cpu_mhz_avg, cpu_mhz_max)
+                    cpu_mhz_avg, cpu_mhz_max, power_avg, power_max)
                  SELECT ?2, (ts / ?2) * ?2, AVG(cpu_avg), MAX(cpu_max),
                         CAST(AVG(memory_used_avg) AS INTEGER), MAX(memory_used_max), MAX(memory_total),
                         CAST(AVG(fan_rpm_avg) AS INTEGER), MAX(fan_rpm_max),
                         AVG(temperature_avg), MAX(temperature_max),
-                        CAST(AVG(cpu_mhz_avg) AS INTEGER), MAX(cpu_mhz_max)
+                        CAST(AVG(cpu_mhz_avg) AS INTEGER), MAX(cpu_mhz_max),
+                        AVG(power_avg), MAX(power_max)
                  FROM host_samples WHERE resolution = ?1 AND ts >= ?3 AND ts < ?4
                  GROUP BY ts / ?2",
                 params![from, to, start, end],
@@ -210,7 +225,7 @@ impl MetricsStore {
         let mut statement = connection.prepare_cached(
             "SELECT ts, cpu_avg, cpu_max, memory_used_avg, memory_used_max, memory_total,
                     fan_rpm_avg, fan_rpm_max, temperature_avg, temperature_max,
-                    cpu_mhz_avg, cpu_mhz_max
+                    cpu_mhz_avg, cpu_mhz_max, power_avg, power_max
              FROM host_samples WHERE resolution = ?1 AND ts >= ?2 AND ts <= ?3 ORDER BY ts",
         )?;
         statement
@@ -228,6 +243,8 @@ impl MetricsStore {
                     temperature_max: row.get(9)?,
                     cpu_mhz_avg: row.get(10)?,
                     cpu_mhz_max: row.get(11)?,
+                    power_avg: row.get(12)?,
+                    power_max: row.get(13)?,
                 })
             })?
             .collect()
@@ -292,6 +309,8 @@ mod tests {
             temperature_max: None,
             cpu_mhz_avg: None,
             cpu_mhz_max: None,
+            power_avg: None,
+            power_max: None,
         }
     }
     fn session(ts: i64, id: &str, cpu: f32) -> SessionPoint {
@@ -413,6 +432,8 @@ mod tests {
             temperature_max: celsius,
             cpu_mhz_avg: rpm.map(|rpm| rpm + 500),
             cpu_mhz_max: rpm.map(|rpm| rpm + 500),
+            power_avg: celsius.map(|c| c / 2.0),
+            power_max: celsius.map(|c| c / 2.0),
             ..host(ts, 1.0, 1)
         };
         store
@@ -435,9 +456,12 @@ mod tests {
         assert_eq!(minutes[0].temperature_max, Some(60.0));
         assert_eq!(minutes[0].cpu_mhz_avg, Some(2500));
         assert_eq!(minutes[0].cpu_mhz_max, Some(3500));
+        assert_eq!(minutes[0].power_avg, Some(25.0));
+        assert_eq!(minutes[0].power_max, Some(30.0));
         assert_eq!(minutes[1].fan_rpm_max, None);
         assert_eq!(minutes[1].temperature_max, None);
         assert_eq!(minutes[1].cpu_mhz_max, None);
+        assert_eq!(minutes[1].power_max, None);
     }
 
     #[test]

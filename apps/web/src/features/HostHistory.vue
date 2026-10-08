@@ -4,7 +4,7 @@ import type { Session } from '@agentdock/protocol';
 import { ApiError, providerLabel, request } from './api';
 import ProviderIcon from './ProviderIcon.vue';
 import { useI18n } from '../i18n';
-import { RANGES, bin, busiestSessions, chartPaths, gigahertz, measures, nearest, niceCeiling, niceRange, samples, type HostHistory, type RangeKey, type Sample } from './host-history';
+import { RANGES, bin, busiestSessions, chartPaths, gigahertz, measures, watts, nearest, niceCeiling, niceRange, samples, type HostHistory, type RangeKey, type Sample } from './host-history';
 
 /**
  * The system page's longer view, from the history the server records: one
@@ -75,6 +75,11 @@ const charts = computed<Chart[]>(() => {
     // The chip's top clock where known, so a full-speed cluster reaches the top.
     const top = Math.max(props.clockMaxMhz ?? 0, peak(clock)) || niceCeiling(peak(clock), 1000);
     list.push(build('clock', t('CPU clock'), clock, 0, top, `0–${gigahertz(top)}`, gigahertz));
+  }
+  const power = samples(data.host, measures.power);
+  if (power.length) {
+    const top = niceCeiling(peak(power), 10);
+    list.push(build('power', t('Power'), power, 0, top, `0–${top} W`, watts));
   }
   const temperature = samples(data.host, measures.temperature);
   if (temperature.length) {

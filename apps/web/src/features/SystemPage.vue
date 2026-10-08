@@ -6,7 +6,7 @@ import PageShell from './PageShell.vue';
 import ProviderIcon from './ProviderIcon.vue';
 import Icon from './Icon.vue';
 import HostHistory from './HostHistory.vue';
-import { gigahertz } from './host-history';
+import { gigahertz, watts } from './host-history';
 import { preferences } from './preferences';
 import { useI18n } from '../i18n';
 import { formatBytes, formatDuration, formatRate, levelFor, pushSample, sparkPath } from './system-format';
@@ -28,6 +28,9 @@ interface SystemDetail {
   fans?: Array<{ label: string; rpm: number; min_rpm: number | null; max_rpm: number | null }>;
   /** Each cluster's clock while running, null when it sat idle; live only where the platform says. */
   cpu_frequencies?: CpuFrequency[];
+  /** The whole machine's draw, and the parts the chip counts; absent where unknown. */
+  power_watts?: number | null;
+  power_parts?: Array<{ kind: 'cpu' | 'gpu' | 'ane' | 'dram'; watts: number }>;
   processes: Array<{ pid: number; name: string; cpu_percent: number; memory_bytes: number }>;
   sessions: Array<{ session_id: string; cpu_percent: number; memory_bytes: number }>;
 }
@@ -38,7 +41,7 @@ const { t } = useI18n();
 const detail = ref<SystemDetail>(), error = ref(''), unsupported = ref(false);
 /** Resource monitoring is turned off: nothing live is read, and the page says so. */
 const off = ref(false);
-const history = ref({ cpu: [] as number[], memory: [] as number[], received: [] as number[], transmitted: [] as number[] });
+const history = ref({ cpu: [] as number[], memory: [] as number[], received: [] as number[], transmitted: [] as number[], power: [] as number[] });
 let timer: ReturnType<typeof setTimeout> | undefined, disposed = false;
 
 async function poll() {
@@ -56,6 +59,7 @@ async function poll() {
         memory: pushSample(history.value.memory, next.memory.total_bytes ? next.memory.used_bytes / next.memory.total_bytes * 100 : 0),
         received: pushSample(history.value.received, net.rx),
         transmitted: pushSample(history.value.transmitted, net.tx),
+        power: pushSample(history.value.power, powerOf(next) ?? 0),
       };
     } catch (cause) {
       if (cause instanceof ApiError && [404, 501].includes(cause.status)) { unsupported.value = true; return; }
@@ -92,6 +96,24 @@ const clocks = computed(() => {
     return same.length > 1 ? `${base} ${same.indexOf(item) + 1}` : base;
   };
   return [...all].sort((a, b) => rank(a) - rank(b)).map(item => `${name(item)} ${item.mhz == null ? t('idle') : gigahertz(item.mhz)}`).join(' · ');
+});
+/** The whole machine's draw where known, else what the measured parts add up to. */
+function powerOf(next: SystemDetail): number | undefined {
+  if (next.power_watts != null) return next.power_watts;
+  const parts = next.power_parts ?? [];
+  return parts.length ? parts.reduce((sum, part) => sum + part.watts, 0) : undefined;
+}
+const PART_LABELS: Record<string, string> = { cpu: 'CPU', gpu: 'GPU', ane: 'Neural Engine', dram: 'Memory' };
+const power = computed(() => {
+  const next = detail.value;
+  const now = next ? powerOf(next) : undefined;
+  if (!next || now === undefined) return undefined;
+  return {
+    now,
+    whole: next.power_watts != null,
+    // A part drawing next to nothing (an idle neural engine) is left out of the line.
+    parts: (next.power_parts ?? []).filter(part => part.watts >= 0.05).map(part => `${t(PART_LABELS[part.kind] ?? part.kind)} ${watts(part.watts)}`).join(' · '),
+  };
 });
 const fanMax = computed(() => Math.max(0, ...(detail.value?.fans ?? []).map(fan => fan.max_rpm ?? 0)) || undefined);
 const clockMax = computed(() => Math.max(0, ...(detail.value?.cpu_frequencies ?? []).map(item => item.max_mhz ?? 0)) || undefined);
@@ -139,6 +161,12 @@ const subtitle = computed(() => {
             <header><span>{{ t('Load') }}</span><small>1 · 5 · 15 {{ t('min') }}</small></header>
             <strong>{{ detail.load.one.toFixed(2) }}</strong>
             <footer>{{ detail.load.five.toFixed(2) }} · {{ detail.load.fifteen.toFixed(2) }}</footer>
+          </article>
+          <article v-if="power" class="system-tile ok">
+            <header><span>{{ t('Power') }}</span><small>{{ t(power.whole ? 'Whole machine' : 'Measured parts') }}</small></header>
+            <strong>{{ watts(power.now).replace(' W', '') }}<small>W</small></strong>
+            <svg class="spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true"><path :d="sparkPath(history.power)" /></svg>
+            <footer v-if="power.parts">{{ power.parts }}</footer>
           </article>
           <article v-if="mainDisk" :class="['system-tile', levelFor(diskPercent(mainDisk))]">
             <header><span>{{ t('Disk') }}</span><small>{{ mainDisk.mount_point }}</small></header>

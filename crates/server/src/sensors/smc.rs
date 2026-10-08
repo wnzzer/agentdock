@@ -172,14 +172,29 @@ fn decode(kind: &[u8; 4], bytes: &[u8]) -> Option<f32> {
 /// More than any Mac has; guards against reading garbage as a count.
 const MOST_FANS: u32 = 8;
 
-pub fn fans() -> Vec<Fan> {
-    // Opened once and kept: a connection is cheap to hold, and a Mac whose SMC
-    // cannot be opened is not asked again every second.
+/// Run `read` against the one SMC connection. Opened once and kept: a
+/// connection is cheap to hold, and a Mac whose SMC cannot be opened is not
+/// asked again every second.
+fn with_smc<T>(read: impl FnOnce(&Smc) -> T) -> Option<T> {
     static SMC: OnceLock<Option<Mutex<Smc>>> = OnceLock::new();
-    let Some(smc) = SMC.get_or_init(|| Smc::open().map(Mutex::new)) else {
-        return Vec::new();
-    };
-    let smc = smc.lock().expect("smc connection");
+    let smc = SMC.get_or_init(|| Smc::open().map(Mutex::new)).as_ref()?;
+    Some(read(&smc.lock().expect("smc connection")))
+}
+
+/// The whole machine's draw in watts, from `PSTR`, which Apple Silicon and
+/// recent Intel Macs keep. A reading outside any Mac's range is a key that
+/// means something else on this model.
+pub fn system_power() -> Option<f32> {
+    with_smc(|smc| smc.number("PSTR"))
+        .flatten()
+        .filter(|watts| *watts > 0.0 && *watts < 2_000.0)
+}
+
+pub fn fans() -> Vec<Fan> {
+    with_smc(read_fans).unwrap_or_default()
+}
+
+fn read_fans(smc: &Smc) -> Vec<Fan> {
     let count = smc.number("FNum").map_or(0, |n| n as u32).min(MOST_FANS);
     let rpm = |key: String| smc.number(&key).map(|value| value.round() as u32);
     (0..count)

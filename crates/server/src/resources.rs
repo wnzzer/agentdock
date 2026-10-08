@@ -10,7 +10,7 @@
 //! browser is open, and keeps the history in a separate metrics database.
 use crate::{
     ApiError, AppState, Result, preferences,
-    sensors::{self, CpuClock, CpuFrequency, Fan, Temperature},
+    sensors::{self, ChipSensors, CpuFrequency, Fan, PowerPart, Temperature},
 };
 use agentdock_persistence::metrics::{self, HostPoint, MetricsStore, SessionPoint};
 use axum::{
@@ -44,6 +44,10 @@ pub struct HostUsage {
     pub memory_total_bytes: u64,
     /// Empty where the platform does not report them.
     pub cpu_frequencies: Vec<CpuFrequency>,
+    /// The whole machine's draw, and the parts of it the chip counts; absent
+    /// and empty where the platform does not say.
+    pub power_watts: Option<f32>,
+    pub power_parts: Vec<PowerPart>,
     pub fans: Vec<Fan>,
     pub temperatures: Vec<Temperature>,
     pub sessions: Vec<SessionUsage>,
@@ -52,7 +56,7 @@ pub struct HostUsage {
 struct Sampler {
     system: System,
     components: Components,
-    clock: CpuClock,
+    chip: ChipSensors,
     sampled: Option<(Instant, HostUsage)>,
     disks: Disks,
     networks: Networks,
@@ -69,7 +73,7 @@ fn sampler() -> &'static Mutex<Sampler> {
         Mutex::new(Sampler {
             system,
             components: Components::new_with_refreshed_list(),
-            clock: CpuClock::new(),
+            chip: ChipSensors::new(),
             sampled: None,
             disks: Disks::new_with_refreshed_list(),
             networks: Networks::new_with_refreshed_list(),
@@ -135,19 +139,22 @@ pub fn sample(roots: Vec<(String, u32)>) -> HostUsage {
     let Sampler {
         system,
         components,
-        clock,
+        chip,
         ..
     } = &mut *guard;
     system.refresh_cpu_usage();
     system.refresh_memory();
     system.refresh_processes(ProcessesToUpdate::All, true);
     let sessions = session_usage(system, roots);
+    let reading = chip.sample(system);
     let usage = HostUsage {
         cpu_percent: system.global_cpu_usage(),
         cpu_count: system.cpus().len(),
         memory_used_bytes: system.used_memory(),
         memory_total_bytes: system.total_memory(),
-        cpu_frequencies: clock.sample(system),
+        cpu_frequencies: reading.clocks,
+        power_watts: reading.power_watts,
+        power_parts: reading.power_parts,
         fans: sensors::fans(),
         temperatures: sensors::temperatures(components),
         sessions,
@@ -237,6 +244,8 @@ pub struct SystemDetail {
     pub temperatures: Vec<Temperature>,
     pub fans: Vec<Fan>,
     pub cpu_frequencies: Vec<CpuFrequency>,
+    pub power_watts: Option<f32>,
+    pub power_parts: Vec<PowerPart>,
     /// The busiest processes on the machine, by CPU then memory.
     pub processes: Vec<ProcessDetail>,
     pub sessions: Vec<SessionUsage>,
@@ -404,6 +413,8 @@ pub fn detail(roots: Vec<(String, u32)>) -> SystemDetail {
         temperatures,
         fans: usage.fans,
         cpu_frequencies: usage.cpu_frequencies,
+        power_watts: usage.power_watts,
+        power_parts: usage.power_parts,
         processes,
         sessions,
     };
@@ -499,6 +510,7 @@ pub fn spawn_recorder(state: AppState, store: Arc<MetricsStore>) {
                 .map(|t| t.celsius)
                 .reduce(f32::max);
             let mhz = usage.cpu_frequencies.iter().filter_map(|c| c.mhz).max();
+            let watts = usage.power_watts;
             host.push(HostPoint {
                 ts,
                 cpu_avg: usage.cpu_percent,
@@ -512,6 +524,8 @@ pub fn spawn_recorder(state: AppState, store: Arc<MetricsStore>) {
                 temperature_max: celsius,
                 cpu_mhz_avg: mhz,
                 cpu_mhz_max: mhz,
+                power_avg: watts,
+                power_max: watts,
             });
             sessions.extend(usage.sessions.into_iter().map(|session| SessionPoint {
                 ts,
@@ -573,6 +587,9 @@ struct HostHistoryPoint {
     /// The fastest CPU cluster's clock; null where never read.
     cpu_mhz_avg: Option<u32>,
     cpu_mhz_max: Option<u32>,
+    /// The whole machine's draw in watts; null where never read.
+    power_avg: Option<f32>,
+    power_max: Option<f32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -643,6 +660,8 @@ async fn history(
                 temperature_max: p.temperature_max,
                 cpu_mhz_avg: p.cpu_mhz_avg,
                 cpu_mhz_max: p.cpu_mhz_max,
+                power_avg: p.power_avg,
+                power_max: p.power_max,
             })
             .collect(),
         sessions: sessions

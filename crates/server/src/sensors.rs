@@ -1,4 +1,5 @@
-//! Fan speeds, temperatures and CPU clocks, where the platform offers them.
+//! Fan speeds, temperatures, CPU clocks and power, where the platform offers
+//! them.
 //!
 //! Temperatures come from sysinfo on every platform. Fans have no portable
 //! source: macOS reads them from the SMC, Linux from hwmon, and elsewhere the
@@ -7,13 +8,19 @@
 //! reports them live: per cluster from IOReport on Apple Silicon, and averaged
 //! over the cores on Linux. Elsewhere sysinfo has only a nominal figure, which
 //! is not reported.
+//!
+//! Power is the whole machine's draw where it is known: the SMC on a Mac, the
+//! battery while it discharges on a Linux laptop. Its parts come from the
+//! chip's energy counters: IOReport on Apple Silicon, RAPL for the CPU package
+//! on Linux, which most distributions let only root read. A desktop running
+//! Linux as a user, and Windows, report no power.
 #[cfg(target_os = "macos")]
 mod ioreport;
 #[cfg(target_os = "macos")]
 mod smc;
 
 use serde::Serialize;
-use std::{fs, path::Path};
+use std::{fs, path::Path, time::Instant};
 use sysinfo::{Components, System};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -44,37 +51,127 @@ pub struct CpuFrequency {
     pub max_mhz: Option<u32>,
 }
 
-/// Keeps what a live clock reading needs between samples.
-pub struct CpuClock {
-    #[cfg(target_os = "macos")]
-    reader: Option<ioreport::Reader>,
+/// One part of the machine's draw: `cpu`, `gpu`, `ane` (the neural engine)
+/// or `dram`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PowerPart {
+    pub kind: &'static str,
+    pub watts: f32,
 }
 
-impl CpuClock {
+/// What one sample read from the chip: clocks, and power where it is known.
+#[derive(Debug, Default)]
+pub struct ChipReading {
+    pub clocks: Vec<CpuFrequency>,
+    pub power_watts: Option<f32>,
+    pub power_parts: Vec<PowerPart>,
+}
+
+/// Keeps what a live clock or power reading needs between samples: both are
+/// counters, read as a rate over the time since the last one.
+pub struct ChipSensors {
+    #[cfg(target_os = "macos")]
+    reader: Option<ioreport::Reader>,
+    /// The CPU package's energy counter when last read, and when.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    rapl: Option<(u64, Instant)>,
+}
+
+impl ChipSensors {
     pub fn new() -> Self {
         Self {
             #[cfg(target_os = "macos")]
             reader: ioreport::Reader::open(),
+            rapl: None,
         }
     }
 
-    pub fn sample(&mut self, system: &mut System) -> Vec<CpuFrequency> {
+    pub fn sample(&mut self, system: &mut System) -> ChipReading {
         #[cfg(target_os = "macos")]
         {
             let _ = system;
-            self.reader
+            let chip = self
+                .reader
                 .as_mut()
-                .map_or_else(Vec::new, ioreport::Reader::sample)
+                .map(ioreport::Reader::sample)
+                .unwrap_or_default();
+            ChipReading {
+                clocks: chip.clusters,
+                power_watts: smc::system_power(),
+                power_parts: chip.power,
+            }
         }
         #[cfg(not(target_os = "macos"))]
         {
             if !cfg!(target_os = "linux") {
-                return Vec::new();
+                return ChipReading::default();
             }
             system.refresh_cpu_frequency();
-            average_clock(system.cpus().iter().map(|cpu| cpu.frequency()))
+            let cpu = self.rapl_watts(Path::new("/sys/class/powercap/intel-rapl:0"));
+            ChipReading {
+                clocks: average_clock(system.cpus().iter().map(|cpu| cpu.frequency())),
+                power_watts: battery_draw(Path::new("/sys/class/power_supply")),
+                power_parts: cpu
+                    .map(|watts| vec![PowerPart { kind: "cpu", watts }])
+                    .unwrap_or_default(),
+            }
         }
     }
+
+    /// The CPU package's power from its RAPL counter, which wraps at
+    /// `max_energy_range_uj`; nothing on the first read or where the counter
+    /// cannot be read.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    fn rapl_watts(&mut self, domain: &Path) -> Option<f32> {
+        let read = |name: &str| -> Option<u64> {
+            fs::read_to_string(domain.join(name))
+                .ok()?
+                .trim()
+                .parse()
+                .ok()
+        };
+        let energy = read("energy_uj")?;
+        let now = Instant::now();
+        let previous = self.rapl.replace((energy, now));
+        let (before, at) = previous?;
+        let range = read("max_energy_range_uj").unwrap_or(u64::MAX);
+        let used = if energy >= before {
+            energy - before
+        } else {
+            range.saturating_sub(before) + energy
+        };
+        let seconds = now.duration_since(at).as_secs_f64();
+        (seconds > 0.0).then(|| (used as f64 / 1e6 / seconds) as f32)
+    }
+}
+
+/// What the batteries supply while discharging, in watts: the machine's whole
+/// draw on a laptop off its charger. Charging, or with no battery, unknown.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn battery_draw(root: &Path) -> Option<f32> {
+    let read = |path: &Path| {
+        fs::read_to_string(path)
+            .ok()
+            .map(|text| text.trim().to_owned())
+    };
+    let mut total = None;
+    for supply in fs::read_dir(root).ok()?.flatten() {
+        let supply = supply.path();
+        if read(&supply.join("type")).as_deref() != Some("Battery")
+            || read(&supply.join("status")).as_deref() != Some("Discharging")
+        {
+            continue;
+        }
+        let number = |name: &str| read(&supply.join(name))?.parse::<f64>().ok();
+        // Microwatts, or microamps times microvolts.
+        let watts = number("power_now")
+            .map(|microwatts| microwatts / 1e6)
+            .or_else(|| Some(number("current_now")? * number("voltage_now")? / 1e12));
+        if let Some(watts) = watts.filter(|watts| *watts > 0.0) {
+            *total.get_or_insert(0.0) += watts as f32;
+        }
+    }
+    total
 }
 
 /// One figure for the whole machine, from the cores that report a clock.
@@ -247,6 +344,68 @@ mod tests {
         assert!(average_clock(std::iter::empty()).is_empty());
     }
 
+    fn tree(files: &[(&str, &str)]) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("agentdock-sys-{}", uuid::Uuid::new_v4()));
+        for (path, value) in files {
+            let path = root.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, value).unwrap();
+        }
+        root
+    }
+
+    #[test]
+    fn a_discharging_battery_is_the_machines_draw() {
+        let root = tree(&[
+            ("BAT0/type", "Battery\n"),
+            ("BAT0/status", "Discharging\n"),
+            ("BAT0/power_now", "12500000\n"),
+            // A second battery reports current and voltage instead.
+            ("BAT1/type", "Battery\n"),
+            ("BAT1/status", "Discharging\n"),
+            ("BAT1/current_now", "500000\n"),
+            ("BAT1/voltage_now", "12000000\n"),
+            // The charger is not a battery.
+            ("AC/type", "Mains\n"),
+            ("AC/power_now", "65000000\n"),
+        ]);
+        assert_eq!(battery_draw(&root), Some(18.5));
+        fs::write(root.join("BAT0/status"), "Charging\n").unwrap();
+        fs::write(root.join("BAT1/status"), "Full\n").unwrap();
+        assert_eq!(
+            battery_draw(&root),
+            None,
+            "on the charger the draw is unknown"
+        );
+        fs::remove_dir_all(&root).unwrap();
+        assert_eq!(
+            battery_draw(Path::new("/nonexistent/agentdock/power")),
+            None
+        );
+    }
+
+    #[test]
+    fn the_cpu_package_counter_is_read_as_a_rate_across_its_wrap() {
+        let root = tree(&[("energy_uj", "900\n"), ("max_energy_range_uj", "1000\n")]);
+        let mut chip = ChipSensors {
+            #[cfg(target_os = "macos")]
+            reader: None,
+            rapl: None,
+        };
+        assert_eq!(chip.rapl_watts(&root), None, "the first read is a baseline");
+        // Pretend the first read was a second ago, then the counter wrapped.
+        chip.rapl = Some((900, Instant::now() - std::time::Duration::from_secs(1)));
+        fs::write(root.join("energy_uj"), "400\n").unwrap();
+        let watts = chip.rapl_watts(&root).unwrap();
+        // 100 to the wrap and 400 after: 500 microjoules in about a second.
+        assert!((watts - 0.0005).abs() < 0.0001, "{watts}");
+        fs::remove_dir_all(&root).unwrap();
+        assert_eq!(
+            chip.rapl_watts(Path::new("/nonexistent/agentdock/rapl")),
+            None
+        );
+    }
+
     #[test]
     fn a_missing_hwmon_tree_has_no_fans() {
         assert!(hwmon_fans(Path::new("/nonexistent/agentdock/hwmon")).is_empty());
@@ -268,16 +427,29 @@ mod tests {
             );
         }
         if cfg!(any(target_os = "macos", target_os = "linux")) {
-            let mut clock = CpuClock::new();
+            let mut chip = ChipSensors::new();
             let mut system = System::new();
-            clock.sample(&mut system);
+            chip.sample(&mut system);
             // Keep a core busy so at least one cluster runs over the interval.
             let until = std::time::Instant::now() + std::time::Duration::from_millis(500);
             let mut spin = 0u64;
             while std::time::Instant::now() < until {
                 spin = std::hint::black_box(spin.wrapping_add(1));
             }
-            let clocks = clock.sample(&mut system);
+            let reading = chip.sample(&mut system);
+            let clocks = reading.clocks;
+            if cfg!(target_os = "macos") {
+                // A Mac reports its whole draw and the chip's parts; a Linux
+                // desktop without root may report neither.
+                let watts = reading.power_watts.expect("whole-machine power");
+                assert!((0.5..500.0).contains(&watts), "{watts} W");
+                let cpu = reading.power_parts.iter().find(|part| part.kind == "cpu");
+                assert!(
+                    cpu.is_some_and(|part| part.watts > 0.0),
+                    "{:?}",
+                    reading.power_parts
+                );
+            }
             assert!(
                 clocks.iter().any(|c| c.mhz.is_some()),
                 "no live CPU clock: {clocks:?}"

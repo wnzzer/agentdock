@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bin, busiestSessions, chartPaths, gigahertz, measures, nearest, niceCeiling, niceRange, samples, segments } from './host-history.ts';
+import { bin, busiestSessions, chartPaths, gigahertz, measures, nearest, niceCeiling, niceRange, samples, segments, watts } from './host-history.ts';
 
 const host = (ts, extra = {}) => ({
   ts, cpu_avg: 10, cpu_max: 20, memory_used_avg: 4, memory_used_max: 6, memory_total: 8,
@@ -55,6 +55,12 @@ test('dense points are gathered into buckets that keep the average, the peak and
 test('a raised axis puts its bottom at the baseline', () => {
   const { line } = chartPaths([{ ts: 0, avg: 50, max: 50 }, { ts: 10, avg: 60, max: 60 }], 10, { from: 0, to: 10, width: 10, height: 10, top: 60, bottom: 50 });
   assert.equal(line, 'M0 10L10 0');
+});
+
+test('power is charted where the backend records it, and reads in watts', () => {
+  assert.deepEqual(samples([host(1), host(2, { power_avg: 8.25, power_max: 21 })], measures.power), [{ ts: 2, avg: 8.25, max: 21 }]);
+  assert.equal(watts(8.25), '8.3 W');
+  assert.equal(watts(21.4), '21 W');
 });
 
 test('clocks read in gigahertz', () => {

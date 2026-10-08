@@ -20,6 +20,9 @@ export interface HostHistoryPoint {
   /** The fastest CPU cluster's clock; absent from an older backend. */
   cpu_mhz_avg?: number | null;
   cpu_mhz_max?: number | null;
+  /** The whole machine's draw in watts; absent from an older backend. */
+  power_avg?: number | null;
+  power_max?: number | null;
 }
 export interface SessionHistoryPoint {
   ts: number;
@@ -65,7 +68,13 @@ export const measures = {
   temperature: (p: HostHistoryPoint): [number | null, number | null] => [p.temperature_avg, p.temperature_max],
   fan: (p: HostHistoryPoint): [number | null, number | null] => [p.fan_rpm_avg, p.fan_rpm_max],
   clock: (p: HostHistoryPoint): [number | null, number | null] => [p.cpu_mhz_avg ?? null, p.cpu_mhz_max ?? null],
+  power: (p: HostHistoryPoint): [number | null, number | null] => [p.power_avg ?? null, p.power_max ?? null],
 };
+
+/** Watts, with a decimal while they are few. */
+export function watts(value: number): string {
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} W`;
+}
 
 export function gigahertz(mhz: number): string {
   return `${(mhz / 1000).toFixed(mhz >= 10_000 ? 0 : 1)} GHz`;

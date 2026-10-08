@@ -1,4 +1,4 @@
-//! CPU cluster clocks on Apple Silicon, from IOReport.
+//! CPU cluster clocks and the chip's power on Apple Silicon, from IOReport.
 //!
 //! IOReport is a private but long-stable library (Stats, macmon and asitop
 //! read the same channels) that needs no privileges. The "CPU Complex
@@ -8,15 +8,20 @@
 //! between two samples, weighted by how long the cluster ran at each step, and
 //! the first sample after start is only a baseline.
 //!
+//! The "Energy Model" group counts the energy each part of the chip used;
+//! over the time between two samples that is its power. Each channel states
+//! its own unit (the CPU counts millijoules, the GPU nanojoules).
+//!
 //! Intel Macs have neither the channels nor the tables, so they report none,
 //! and neither does a virtual machine: its CPUs have no clock of their own,
 //! and IOReport is not probed there at all, since a guest's device tree is
 //! not the hardware's.
-use super::CpuFrequency;
+use super::{CpuFrequency, PowerPart};
 use std::{
     ffi::{CStr, c_char, c_void},
     mem::size_of,
     ptr, slice,
+    time::Instant,
 };
 
 type CFTypeRef = *const c_void;
@@ -94,6 +99,10 @@ unsafe extern "C" {
         a: CFTypeRef,
     ) -> CFTypeRef;
     fn IOReportChannelGetChannelName(channel: CFTypeRef) -> CFTypeRef;
+    fn IOReportChannelGetGroup(channel: CFTypeRef) -> CFTypeRef;
+    fn IOReportChannelGetUnitLabel(channel: CFTypeRef) -> CFTypeRef;
+    fn IOReportSimpleGetIntegerValue(channel: CFTypeRef, a: *mut i32) -> i64;
+    fn IOReportMergeChannels(into: CFTypeRef, from: CFTypeRef, a: CFTypeRef);
     fn IOReportStateGetCount(channel: CFTypeRef) -> i32;
     fn IOReportStateGetNameForIndex(channel: CFTypeRef, index: i32) -> CFTypeRef;
     fn IOReportStateGetResidency(channel: CFTypeRef, index: i32) -> i64;
@@ -218,32 +227,121 @@ fn running_mhz(states: &[(String, i64)], table: &[u32]) -> Option<u32> {
     (running > 0.0).then(|| (weighted / running).round() as u32)
 }
 
+/// The parts of the chip whose energy is reported, by channel name. Many
+/// more channels exist (each core, each cache); these are the totals.
+fn power_kind(channel: &str) -> Option<&'static str> {
+    if channel.ends_with("CPU Energy") {
+        Some("cpu")
+    } else if channel == "GPU Energy" {
+        Some("gpu")
+    } else if channel.starts_with("ANE") {
+        Some("ane")
+    } else if channel == "DRAM" {
+        Some("dram")
+    } else {
+        None
+    }
+}
+
+fn joules(unit: &str) -> Option<f64> {
+    match unit {
+        "mJ" => Some(1e-3),
+        "uJ" | "\u{b5}J" => Some(1e-6),
+        "nJ" => Some(1e-9),
+        _ => None,
+    }
+}
+
+/// Watts per part from each energy channel's (name, unit, count) over
+/// `seconds`, parts in a fixed order and each summed over its channels.
+fn power_parts(channels: &[(String, String, i64)], seconds: f64) -> Vec<PowerPart> {
+    if seconds <= 0.0 {
+        return Vec::new();
+    }
+    let mut parts: Vec<PowerPart> = Vec::new();
+    for (name, unit, count) in channels {
+        let (Some(kind), Some(scale)) = (power_kind(name), joules(unit)) else {
+            continue;
+        };
+        let watts = ((*count).max(0) as f64 * scale / seconds) as f32;
+        match parts.iter_mut().find(|part| part.kind == kind) {
+            Some(part) => part.watts += watts,
+            None => parts.push(PowerPart { kind, watts }),
+        }
+    }
+    let order = |kind: &str| {
+        ["cpu", "gpu", "ane", "dram"]
+            .iter()
+            .position(|k| *k == kind)
+    };
+    parts.sort_by_key(|part| order(part.kind));
+    parts
+}
+
+/// What one sample read from the chip.
+#[derive(Default)]
+pub struct Reading {
+    pub clusters: Vec<CpuFrequency>,
+    pub power: Vec<PowerPart>,
+}
+
 pub struct Reader {
     subscription: Owned,
     channels: Owned,
     _desired: Owned,
-    previous: Option<Owned>,
-    efficiency: Vec<u32>,
-    performance: Vec<u32>,
+    previous: Option<(Owned, Instant)>,
+    /// The clock of each performance state, efficiency then performance
+    /// cluster; absent where the tables are, and then no clocks are read.
+    tables: Option<(Vec<u32>, Vec<u32>)>,
 }
 
 // SAFETY: the Core Foundation objects are only ever used through `&mut self`,
 // and the sampler that owns this reader keeps it behind a lock.
 unsafe impl Send for Reader {}
 
+/// The channels of one IOReport group (and subgroup), owned.
+fn group(name: &CStr, subgroup: Option<&CStr>) -> Option<Owned> {
+    let name = cf_string(name)?;
+    let subgroup = match subgroup {
+        Some(subgroup) => Some(cf_string(subgroup)?),
+        None => None,
+    };
+    // SAFETY: CF strings live for the call; the result is owned.
+    Owned::new(unsafe {
+        IOReportCopyChannelsInGroup(
+            name.0,
+            subgroup.as_ref().map_or(ptr::null(), |s| s.0),
+            0,
+            0,
+            0,
+        )
+    })
+}
+
 impl Reader {
     pub fn open() -> Option<Self> {
         if in_virtual_machine() {
             return None;
         }
-        let efficiency = pmgr_table(c"voltage-states1-sram")?;
-        let performance = pmgr_table(c"voltage-states5-sram")?;
-        let group = cf_string(c"CPU Stats")?;
-        let subgroup = cf_string(c"CPU Complex Performance States")?;
+        let tables = pmgr_table(c"voltage-states1-sram").zip(pmgr_table(c"voltage-states5-sram"));
+        let clocks = tables
+            .is_some()
+            .then(|| group(c"CPU Stats", Some(c"CPU Complex Performance States")))
+            .flatten();
+        let energy = group(c"Energy Model", None);
+        let channels = match (clocks, energy) {
+            (Some(clocks), Some(energy)) => {
+                // SAFETY: both are live channel dictionaries; the merge
+                // copies `energy` into `clocks` and transfers nothing.
+                unsafe { IOReportMergeChannels(clocks.0, energy.0, ptr::null()) };
+                clocks
+            }
+            (Some(only), None) | (None, Some(only)) => only,
+            (None, None) => return None,
+        };
         // SAFETY: IOReport calls with live CF objects; every object created
         // here is owned by an `Owned` and released with the reader.
         unsafe {
-            let channels = Owned::new(IOReportCopyChannelsInGroup(group.0, subgroup.0, 0, 0, 0))?;
             let desired = Owned::new(CFDictionaryCreateMutableCopy(
                 kCFAllocatorDefault,
                 CFDictionaryGetCount(channels.0),
@@ -262,53 +360,71 @@ impl Reader {
                 channels: Owned::new(subscribed)?,
                 _desired: desired,
                 previous: None,
-                efficiency,
-                performance,
+                tables,
             })
         }
     }
 
-    /// Each cluster's clock since the previous call; empty on the first.
-    pub fn sample(&mut self) -> Vec<CpuFrequency> {
+    /// Each cluster's clock and each part's power since the previous call;
+    /// nothing on the first.
+    pub fn sample(&mut self) -> Reading {
         // SAFETY: the subscription and channels live as long as `self`.
         let Some(current) = Owned::new(unsafe {
             IOReportCreateSamples(self.subscription.0, self.channels.0, ptr::null())
         }) else {
-            return Vec::new();
+            return Reading::default();
         };
-        let Some(previous) = self.previous.replace(current) else {
-            return Vec::new();
+        let now = Instant::now();
+        let Some((previous, at)) = self.previous.replace((current, now)) else {
+            return Reading::default();
         };
+        let seconds = now.duration_since(at).as_secs_f64();
         let current = self
             .previous
             .as_ref()
-            .map_or(ptr::null(), |sample| sample.0);
+            .map_or(ptr::null(), |(sample, _)| sample.0);
         // SAFETY: both samples are live; the delta is owned and released below.
         let Some(delta) =
             Owned::new(unsafe { IOReportCreateSamplesDelta(previous.0, current, ptr::null()) })
         else {
-            return Vec::new();
+            return Reading::default();
         };
         let Some(key) = cf_string(c"IOReportChannels") else {
-            return Vec::new();
+            return Reading::default();
         };
-        let mut clusters = Vec::new();
+        let mut reading = Reading::default();
+        let mut energy = Vec::new();
         // SAFETY: the channel array and its items are borrowed from `delta`,
         // which outlives the loop; the IOReport getters do not transfer ownership.
         unsafe {
             let items = CFDictionaryGetValue(delta.0, key.0);
             if items.is_null() {
-                return Vec::new();
+                return reading;
             }
             for index in 0..CFArrayGetCount(items) {
                 let item = CFArrayGetValueAtIndex(items, index);
                 let Some(name) = rust_string(IOReportChannelGetChannelName(item)) else {
                     continue;
                 };
+                if rust_string(IOReportChannelGetGroup(item)).as_deref() == Some("Energy Model") {
+                    if power_kind(&name).is_some() {
+                        let unit =
+                            rust_string(IOReportChannelGetUnitLabel(item)).unwrap_or_default();
+                        energy.push((
+                            name,
+                            unit,
+                            IOReportSimpleGetIntegerValue(item, ptr::null_mut()),
+                        ));
+                    }
+                    continue;
+                }
+                let Some((efficiency, performance)) = &self.tables else {
+                    continue;
+                };
                 let (kind, table) = if name.starts_with("ECPU") {
-                    ("efficiency", &self.efficiency)
+                    ("efficiency", efficiency)
                 } else if name.starts_with("PCPU") {
-                    ("performance", &self.performance)
+                    ("performance", performance)
                 } else {
                     continue;
                 };
@@ -321,7 +437,7 @@ impl Reader {
                         )
                     })
                     .collect();
-                clusters.push(CpuFrequency {
+                reading.clusters.push(CpuFrequency {
                     label: name,
                     kind: Some(kind),
                     mhz: running_mhz(&states, table),
@@ -329,7 +445,8 @@ impl Reader {
                 });
             }
         }
-        clusters
+        reading.power = power_parts(&energy, seconds);
+        reading
     }
 }
 
@@ -342,6 +459,32 @@ mod tests {
             .iter()
             .flat_map(|value| [value.to_le_bytes(), 800_000u32.to_le_bytes()].concat())
             .collect()
+    }
+
+    #[test]
+    fn energy_over_time_is_power_in_each_channels_own_unit() {
+        let channel = |name: &str, unit: &str, count| (name.to_owned(), unit.to_owned(), count);
+        let parts = power_parts(
+            &[
+                channel("DRAM", "mJ", 500),
+                // The GPU counts in nanojoules.
+                channel("GPU Energy", "nJ", 2_000_000_000),
+                channel("CPU Energy", "mJ", 3_000),
+                // A die's CPU total adds to the CPU.
+                channel("DIE_1_CPU Energy", "mJ", 1_000),
+                channel("ANE0", "uJ", 0),
+                // Not a total, and an unknown unit: both left out.
+                channel("PCPU0", "mJ", 9_999),
+                channel("CPU Energy", "kWh", 1),
+            ],
+            2.0,
+        );
+        let watts: Vec<_> = parts.iter().map(|part| (part.kind, part.watts)).collect();
+        assert_eq!(
+            watts,
+            [("cpu", 2.0), ("gpu", 1.0), ("ane", 0.0), ("dram", 0.25)]
+        );
+        assert!(power_parts(&[channel("CPU Energy", "mJ", 1)], 0.0).is_empty());
     }
 
     #[test]
