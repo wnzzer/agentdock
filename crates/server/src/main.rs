@@ -28,6 +28,7 @@ mod providers;
 mod resources;
 mod secrets;
 mod security;
+mod sensors;
 mod settings;
 mod update;
 mod workspace_io;
@@ -77,6 +78,8 @@ struct AppState {
     operations: Arc<tokio::sync::Mutex<()>>,
     agents: agent::AgentRegistry,
     activity: activity::Activity,
+    /// Resource history; absent when its database could not be opened.
+    metrics: Option<Arc<agentdock_persistence::metrics::MetricsStore>>,
 }
 
 #[derive(Debug)]
@@ -607,7 +610,11 @@ async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         operations: Arc::new(tokio::sync::Mutex::new(())),
         agents: agent::AgentRegistry::default(),
         activity: activity::Activity::default(),
+        metrics: open_metrics(&database),
     };
+    if let Some(metrics) = state.metrics.clone() {
+        resources::spawn_recorder(state.clone(), metrics);
+    }
     let app = router(state.clone());
     // Reconcile only after startup has passed all configuration, binding and
     // ownership checks. `locked_database` stays alive through graceful shutdown.
@@ -632,6 +639,21 @@ async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         })
         .await?;
     Ok(())
+}
+
+/// Beside the main database, so a test or custom `AGENTDOCK_DB` gets its own.
+/// History is disposable: if it cannot be opened the server runs without it.
+fn open_metrics(
+    database: &std::path::Path,
+) -> Option<Arc<agentdock_persistence::metrics::MetricsStore>> {
+    let path = database.with_file_name("agentdock-metrics.db");
+    match agentdock_persistence::metrics::MetricsStore::open(&path) {
+        Ok(store) => Some(Arc::new(store)),
+        Err(error) => {
+            tracing::warn!(%error, path=%path.display(), "resource history disabled");
+            None
+        }
+    }
 }
 
 fn router(state: AppState) -> Router {

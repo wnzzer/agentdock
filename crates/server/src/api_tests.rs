@@ -78,6 +78,7 @@ impl Fixture {
             operations: Arc::new(tokio::sync::Mutex::new(())),
             agents: agent::AgentRegistry::default(),
             activity: activity::Activity::default(),
+            metrics: None,
         };
         Self { state, path }
     }
@@ -3985,4 +3986,69 @@ async fn a_session_can_have_the_agent_tools_on_or_off_whatever_the_preference() 
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     f.state.runtime.stop(&claude.id.to_string()).await.unwrap();
+}
+
+#[tokio::test]
+async fn resource_history_answers_from_the_metrics_database() {
+    use agentdock_persistence::metrics::{HostPoint, MetricsStore, SessionPoint};
+    let mut f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
+    let (status, _) = call(f.app(), "GET", "/api/host/resources/history", Value::Null).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "no metrics database, no history"
+    );
+
+    let store = Arc::new(MetricsStore::open(":memory:").unwrap());
+    let now = chrono::Utc::now().timestamp();
+    let host = |ts| HostPoint {
+        ts,
+        cpu_avg: 12.5,
+        cpu_max: 12.5,
+        memory_used_avg: 100,
+        memory_used_max: 100,
+        memory_total: 1000,
+        fan_rpm_avg: Some(1200),
+        fan_rpm_max: Some(1200),
+        temperature_avg: Some(48.5),
+        temperature_max: Some(48.5),
+    };
+    let session = |ts, id: &str| SessionPoint {
+        ts,
+        session_id: id.into(),
+        cpu_avg: 3.0,
+        cpu_max: 3.0,
+        memory_avg: 10,
+        memory_max: 10,
+    };
+    store
+        .record(
+            &[host(now - 30), host(now - 25)],
+            &[session(now - 30, "a"), session(now - 30, "b")],
+        )
+        .unwrap();
+    f.state.metrics = Some(store);
+
+    let (status, body) = call(f.app(), "GET", "/api/host/resources/history", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["resolution"], 5);
+    assert_eq!(body["host"].as_array().unwrap().len(), 2);
+    assert_eq!(body["host"][0]["cpu_avg"], 12.5);
+    assert_eq!(body["host"][0]["fan_rpm_max"], 1200);
+    assert_eq!(body["host"][0]["temperature_max"], 48.5);
+    assert_eq!(body["sessions"].as_array().unwrap().len(), 2);
+
+    let (_, body) = call(
+        f.app(),
+        "GET",
+        "/api/host/resources/history?session_id=b",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(body["sessions"].as_array().unwrap().len(), 1);
+    assert_eq!(body["sessions"][0]["session_id"], "b");
+
+    let path = format!("/api/host/resources/history?from={now}&to={}", now - 1);
+    let (status, _) = call(f.app(), "GET", &path, Value::Null).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }

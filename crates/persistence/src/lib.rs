@@ -1,5 +1,6 @@
 mod conversations;
 pub use conversations::{MessageSubmission, StoredConversation};
+pub mod metrics;
 
 use agentdock_domain::{
     EndpointProfile, EnvironmentOverrides, NativeConfigReference, ProviderKind, Session, SessionId,
