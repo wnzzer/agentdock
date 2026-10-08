@@ -14,13 +14,24 @@
 //! chip's energy counters: IOReport on Apple Silicon, RAPL for the CPU package
 //! on Linux, which most distributions let only root read. A desktop running
 //! Linux as a user, and Windows, report no power.
+//!
+//! GPUs: Apple Silicon's from its driver's statistics and IOReport, NVIDIA's
+//! from `nvidia-smi` and AMD's from sysfs on Linux. None elsewhere.
+#[cfg(target_os = "macos")]
+mod agx;
+#[cfg(target_os = "macos")]
+mod cf;
 #[cfg(target_os = "macos")]
 mod ioreport;
 #[cfg(target_os = "macos")]
 mod smc;
 
 use serde::Serialize;
-use std::{fs, path::Path, time::Instant};
+use std::{
+    fs,
+    path::Path,
+    time::{Duration, Instant},
+};
 use sysinfo::{Components, System};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -59,12 +70,30 @@ pub struct PowerPart {
     pub watts: f32,
 }
 
-/// What one sample read from the chip: clocks, and power where it is known.
+/// One GPU, with whatever its platform reports of it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Gpu {
+    pub name: String,
+    /// Its core count, where the platform says (Apple Silicon).
+    pub cores: Option<u32>,
+    /// How busy it was, 0–100.
+    pub utilization_percent: Option<f32>,
+    pub memory_used_bytes: Option<u64>,
+    /// Absent where the GPU shares the machine's memory (Apple Silicon).
+    pub memory_total_bytes: Option<u64>,
+    pub mhz: Option<u32>,
+    pub max_mhz: Option<u32>,
+    pub watts: Option<f32>,
+    pub celsius: Option<f32>,
+}
+
+/// What one sample read from the chip: clocks, power and GPUs where known.
 #[derive(Debug, Default)]
 pub struct ChipReading {
     pub clocks: Vec<CpuFrequency>,
     pub power_watts: Option<f32>,
     pub power_parts: Vec<PowerPart>,
+    pub gpus: Vec<Gpu>,
 }
 
 /// Keeps what a live clock or power reading needs between samples: both are
@@ -75,6 +104,13 @@ pub struct ChipSensors {
     /// The CPU package's energy counter when last read, and when.
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     rapl: Option<(u64, Instant)>,
+    /// The last GPU reading and when: `nvidia-smi` is a process, so it is
+    /// run at most every few seconds however often the machine is sampled.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    gpus: Option<(Instant, Vec<Gpu>)>,
+    /// False once `nvidia-smi` could not be run: it is not asked again.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    nvidia: bool,
 }
 
 impl ChipSensors {
@@ -83,6 +119,8 @@ impl ChipSensors {
             #[cfg(target_os = "macos")]
             reader: ioreport::Reader::open(),
             rapl: None,
+            gpus: None,
+            nvidia: true,
         }
     }
 
@@ -95,10 +133,18 @@ impl ChipSensors {
                 .as_mut()
                 .map(ioreport::Reader::sample)
                 .unwrap_or_default();
+            let gpu_watts = chip
+                .power
+                .iter()
+                .find(|part| part.kind == "gpu")
+                .map(|part| part.watts);
             ChipReading {
                 clocks: chip.clusters,
                 power_watts: smc::system_power(),
                 power_parts: chip.power,
+                gpus: agx::gpu(chip.gpu_mhz, chip.gpu_max_mhz, gpu_watts)
+                    .into_iter()
+                    .collect(),
             }
         }
         #[cfg(not(target_os = "macos"))]
@@ -114,6 +160,7 @@ impl ChipSensors {
                 power_parts: cpu
                     .map(|watts| vec![PowerPart { kind: "cpu", watts }])
                     .unwrap_or_default(),
+                gpus: self.linux_gpus(),
             }
         }
     }
@@ -143,6 +190,164 @@ impl ChipSensors {
         let seconds = now.duration_since(at).as_secs_f64();
         (seconds > 0.0).then(|| (used as f64 / 1e6 / seconds) as f32)
     }
+}
+
+impl ChipSensors {
+    /// NVIDIA cards through `nvidia-smi`, then AMD cards through sysfs,
+    /// reread at most every few seconds.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    fn linux_gpus(&mut self) -> Vec<Gpu> {
+        if let Some((at, gpus)) = &self.gpus
+            && at.elapsed() < GPU_REREAD
+        {
+            return gpus.clone();
+        }
+        let mut gpus = Vec::new();
+        if self.nvidia {
+            match nvidia_smi() {
+                Some(text) => gpus.extend(parse_nvidia(&text)),
+                None => self.nvidia = false,
+            }
+        }
+        gpus.extend(amd_gpus(Path::new("/sys/class/drm")));
+        self.gpus = Some((Instant::now(), gpus.clone()));
+        gpus
+    }
+}
+
+const GPU_REREAD: Duration = Duration::from_secs(3);
+const NVIDIA_FIELDS: &str = "name,utilization.gpu,memory.used,memory.total,clocks.gr,clocks.max.gr,power.draw,temperature.gpu";
+
+/// `nvidia-smi`'s CSV, or none when it is absent, fails, or hangs: it is
+/// killed after two seconds rather than holding up the sample.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn nvidia_smi() -> Option<String> {
+    let mut child = std::process::Command::new("nvidia-smi")
+        .args([
+            &format!("--query-gpu={NVIDIA_FIELDS}"),
+            "--format=csv,noheader,nounits",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let until = Instant::now() + Duration::from_secs(2);
+    loop {
+        match child.try_wait().ok()? {
+            Some(status) if status.success() => break,
+            Some(_) => return None,
+            None if Instant::now() >= until => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            None => std::thread::sleep(Duration::from_millis(20)),
+        }
+    }
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut child.stdout.take()?, &mut text).ok()?;
+    Some(text)
+}
+
+/// One GPU per line of `nvidia-smi --format=csv,noheader,nounits`, in the
+/// order of `NVIDIA_FIELDS`; a field it cannot report reads `[N/A]`.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn parse_nvidia(text: &str) -> Vec<Gpu> {
+    text.lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split(',').map(str::trim).collect();
+            if fields.len() < 8 || fields[0].is_empty() {
+                return None;
+            }
+            let number = |index: usize| {
+                fields[index]
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|value| value.is_finite())
+            };
+            let mib = |index: usize| number(index).map(|mib| (mib * 1024.0 * 1024.0) as u64);
+            Some(Gpu {
+                name: fields[0].to_owned(),
+                cores: None,
+                utilization_percent: number(1).map(|percent| percent as f32),
+                memory_used_bytes: mib(2),
+                memory_total_bytes: mib(3),
+                mhz: number(4).map(|mhz| mhz as u32),
+                max_mhz: number(5).map(|mhz| mhz as u32),
+                watts: number(6).map(|watts| watts as f32),
+                celsius: number(7).map(|celsius| celsius as f32),
+            })
+        })
+        .collect()
+}
+
+/// Each AMD card under `/sys/class/drm`: the ones whose device reports
+/// `gpu_busy_percent`, which only amdgpu does.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn amd_gpus(root: &Path) -> Vec<Gpu> {
+    let Ok(cards) = fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut cards: Vec<_> = cards
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_prefix("card"))
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        })
+        .collect();
+    cards.sort();
+    let text = |path: &Path| {
+        fs::read_to_string(path)
+            .ok()
+            .map(|text| text.trim().to_owned())
+    };
+    let number = |path: &Path| text(path)?.parse::<f64>().ok();
+    cards
+        .into_iter()
+        .filter_map(|card| {
+            let device = card.join("device");
+            let busy = number(&device.join("gpu_busy_percent"))?;
+            // The clock in use is the line marked `*`: "1: 2100Mhz *".
+            let clocks: Vec<(u32, bool)> = text(&device.join("pp_dpm_sclk"))
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|line| {
+                    let mhz = line.split_whitespace().nth(1)?.to_ascii_lowercase();
+                    Some((
+                        mhz.strip_suffix("mhz")?.parse().ok()?,
+                        line.trim_end().ends_with('*'),
+                    ))
+                })
+                .collect();
+            let hwmon = fs::read_dir(device.join("hwmon"))
+                .ok()
+                .and_then(|mut entries| entries.next())
+                .and_then(|entry| entry.ok())
+                .map(|entry| entry.path());
+            let sensor = |name: &str| hwmon.as_ref().and_then(|dir| number(&dir.join(name)));
+            Some(Gpu {
+                name: format!("AMD GPU {}", card.file_name()?.to_string_lossy()),
+                cores: None,
+                utilization_percent: Some(busy.clamp(0.0, 100.0) as f32),
+                memory_used_bytes: number(&device.join("mem_info_vram_used"))
+                    .map(|bytes| bytes as u64),
+                memory_total_bytes: number(&device.join("mem_info_vram_total"))
+                    .map(|bytes| bytes as u64),
+                mhz: clocks
+                    .iter()
+                    .find(|(_, current)| *current)
+                    .map(|(mhz, _)| *mhz),
+                max_mhz: clocks.iter().map(|(mhz, _)| *mhz).max(),
+                watts: sensor("power1_average")
+                    .or_else(|| sensor("power1_input"))
+                    .map(|microwatts| (microwatts / 1e6) as f32),
+                celsius: sensor("temp1_input").map(|millidegrees| (millidegrees / 1000.0) as f32),
+            })
+        })
+        .collect()
 }
 
 /// What the batteries supply while discharging, in watts: the machine's whole
@@ -391,6 +596,8 @@ mod tests {
             #[cfg(target_os = "macos")]
             reader: None,
             rapl: None,
+            gpus: None,
+            nvidia: false,
         };
         assert_eq!(chip.rapl_watts(&root), None, "the first read is a baseline");
         // Pretend the first read was a second ago, then the counter wrapped.
@@ -404,6 +611,70 @@ mod tests {
             chip.rapl_watts(Path::new("/nonexistent/agentdock/rapl")),
             None
         );
+    }
+
+    #[test]
+    fn nvidia_smi_lines_become_gpus_and_missing_fields_stay_unknown() {
+        let gpus = parse_nvidia(
+            "NVIDIA GeForce RTX 4090, 37, 2048, 24564, 2520, 3105, 85.52, 51\n\
+             Tesla T4, 0, [N/A], 15360, [N/A], 1590, [N/A], 38\n\
+             garbage line\n",
+        );
+        assert_eq!(gpus.len(), 2);
+        assert_eq!(
+            gpus[0],
+            Gpu {
+                name: "NVIDIA GeForce RTX 4090".into(),
+                cores: None,
+                utilization_percent: Some(37.0),
+                memory_used_bytes: Some(2048 * 1024 * 1024),
+                memory_total_bytes: Some(24564 * 1024 * 1024),
+                mhz: Some(2520),
+                max_mhz: Some(3105),
+                watts: Some(85.52),
+                celsius: Some(51.0),
+            }
+        );
+        assert_eq!(
+            (gpus[1].memory_used_bytes, gpus[1].mhz, gpus[1].watts),
+            (None, None, None)
+        );
+        assert!(parse_nvidia("").is_empty());
+    }
+
+    #[test]
+    fn an_amd_card_reports_its_busy_share_clock_memory_and_power() {
+        let root = tree(&[
+            ("card0/device/gpu_busy_percent", "42\n"),
+            ("card0/device/mem_info_vram_used", "1073741824\n"),
+            ("card0/device/mem_info_vram_total", "8589934592\n"),
+            (
+                "card0/device/pp_dpm_sclk",
+                "0: 500Mhz\n1: 1800Mhz *\n2: 2400Mhz\n",
+            ),
+            ("card0/device/hwmon/hwmon3/power1_average", "45000000\n"),
+            ("card0/device/hwmon/hwmon3/temp1_input", "61000\n"),
+            // A connector, and a card that is not amdgpu.
+            ("card0-DP-1/status", "connected\n"),
+            ("card1/device/vendor", "0x8086\n"),
+        ]);
+        let gpus = amd_gpus(&root);
+        fs::remove_dir_all(&root).unwrap();
+        assert_eq!(
+            gpus,
+            [Gpu {
+                name: "AMD GPU card0".into(),
+                cores: None,
+                utilization_percent: Some(42.0),
+                memory_used_bytes: Some(1 << 30),
+                memory_total_bytes: Some(8 << 30),
+                mhz: Some(1800),
+                max_mhz: Some(2400),
+                watts: Some(45.0),
+                celsius: Some(61.0),
+            }]
+        );
+        assert!(amd_gpus(Path::new("/nonexistent/agentdock/drm")).is_empty());
     }
 
     #[test]
@@ -443,6 +714,13 @@ mod tests {
                 // desktop without root may report neither.
                 let watts = reading.power_watts.expect("whole-machine power");
                 assert!((0.5..500.0).contains(&watts), "{watts} W");
+                let gpu = reading.gpus.first().expect("Apple Silicon's GPU");
+                assert!(
+                    gpu.utilization_percent
+                        .is_some_and(|p| (0.0..=100.0).contains(&p)),
+                    "{gpu:?}"
+                );
+                assert!(gpu.max_mhz.is_some(), "{gpu:?}");
                 let cpu = reading.power_parts.iter().find(|part| part.kind == "cpu");
                 assert!(
                     cpu.is_some_and(|part| part.watts > 0.0),

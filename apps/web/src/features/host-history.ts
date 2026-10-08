@@ -23,6 +23,9 @@ export interface HostHistoryPoint {
   /** The whole machine's draw in watts; absent from an older backend. */
   power_avg?: number | null;
   power_max?: number | null;
+  /** The busiest GPU's utilization, 0–100; absent from an older backend. */
+  gpu_avg?: number | null;
+  gpu_max?: number | null;
 }
 export interface SessionHistoryPoint {
   ts: number;
@@ -69,6 +72,7 @@ export const measures = {
   fan: (p: HostHistoryPoint): [number | null, number | null] => [p.fan_rpm_avg, p.fan_rpm_max],
   clock: (p: HostHistoryPoint): [number | null, number | null] => [p.cpu_mhz_avg ?? null, p.cpu_mhz_max ?? null],
   power: (p: HostHistoryPoint): [number | null, number | null] => [p.power_avg ?? null, p.power_max ?? null],
+  gpu: (p: HostHistoryPoint): [number | null, number | null] => [p.gpu_avg ?? null, p.gpu_max ?? null],
 };
 
 /** Watts, with a decimal while they are few. */

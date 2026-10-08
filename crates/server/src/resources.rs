@@ -10,7 +10,7 @@
 //! browser is open, and keeps the history in a separate metrics database.
 use crate::{
     ApiError, AppState, Result, preferences,
-    sensors::{self, ChipSensors, CpuFrequency, Fan, PowerPart, Temperature},
+    sensors::{self, ChipSensors, CpuFrequency, Fan, Gpu, PowerPart, Temperature},
 };
 use agentdock_persistence::metrics::{self, HostPoint, MetricsStore, SessionPoint};
 use axum::{
@@ -48,6 +48,8 @@ pub struct HostUsage {
     /// and empty where the platform does not say.
     pub power_watts: Option<f32>,
     pub power_parts: Vec<PowerPart>,
+    /// Each GPU the platform reports; empty where none is known.
+    pub gpus: Vec<Gpu>,
     pub fans: Vec<Fan>,
     pub temperatures: Vec<Temperature>,
     pub sessions: Vec<SessionUsage>,
@@ -155,6 +157,7 @@ pub fn sample(roots: Vec<(String, u32)>) -> HostUsage {
         cpu_frequencies: reading.clocks,
         power_watts: reading.power_watts,
         power_parts: reading.power_parts,
+        gpus: reading.gpus,
         fans: sensors::fans(),
         temperatures: sensors::temperatures(components),
         sessions,
@@ -246,6 +249,7 @@ pub struct SystemDetail {
     pub cpu_frequencies: Vec<CpuFrequency>,
     pub power_watts: Option<f32>,
     pub power_parts: Vec<PowerPart>,
+    pub gpus: Vec<Gpu>,
     /// The busiest processes on the machine, by CPU then memory.
     pub processes: Vec<ProcessDetail>,
     pub sessions: Vec<SessionUsage>,
@@ -415,6 +419,7 @@ pub fn detail(roots: Vec<(String, u32)>) -> SystemDetail {
         cpu_frequencies: usage.cpu_frequencies,
         power_watts: usage.power_watts,
         power_parts: usage.power_parts,
+        gpus: usage.gpus,
         processes,
         sessions,
     };
@@ -511,6 +516,11 @@ pub fn spawn_recorder(state: AppState, store: Arc<MetricsStore>) {
                 .reduce(f32::max);
             let mhz = usage.cpu_frequencies.iter().filter_map(|c| c.mhz).max();
             let watts = usage.power_watts;
+            let gpu = usage
+                .gpus
+                .iter()
+                .filter_map(|gpu| gpu.utilization_percent)
+                .reduce(f32::max);
             host.push(HostPoint {
                 ts,
                 cpu_avg: usage.cpu_percent,
@@ -526,6 +536,8 @@ pub fn spawn_recorder(state: AppState, store: Arc<MetricsStore>) {
                 cpu_mhz_max: mhz,
                 power_avg: watts,
                 power_max: watts,
+                gpu_avg: gpu,
+                gpu_max: gpu,
             });
             sessions.extend(usage.sessions.into_iter().map(|session| SessionPoint {
                 ts,
@@ -590,6 +602,9 @@ struct HostHistoryPoint {
     /// The whole machine's draw in watts; null where never read.
     power_avg: Option<f32>,
     power_max: Option<f32>,
+    /// The busiest GPU's utilization, 0–100; null where never read.
+    gpu_avg: Option<f32>,
+    gpu_max: Option<f32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -662,6 +677,8 @@ async fn history(
                 cpu_mhz_max: p.cpu_mhz_max,
                 power_avg: p.power_avg,
                 power_max: p.power_max,
+                gpu_avg: p.gpu_avg,
+                gpu_max: p.gpu_max,
             })
             .collect(),
         sessions: sessions

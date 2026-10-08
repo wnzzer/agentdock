@@ -173,6 +173,7 @@ export const zhCN: Readonly<Record<string, string>> = {
   "up to {rpm} rpm": "最高 {rpm} rpm",
   "Clock while running, over the last moment": "运行时的频率（取最近片刻的平均）",
   "Trends": "趋势",
+  "Memory {size}": "内存 {size}",
   "Power": "功耗",
   "Whole machine": "整机",
   "Measured parts": "已测部件",

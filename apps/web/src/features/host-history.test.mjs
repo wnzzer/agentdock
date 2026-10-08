@@ -60,6 +60,7 @@ test('a raised axis puts its bottom at the baseline', () => {
 test('power is charted where the backend records it, and reads in watts', () => {
   assert.deepEqual(samples([host(1), host(2, { power_avg: 8.25, power_max: 21 })], measures.power), [{ ts: 2, avg: 8.25, max: 21 }]);
   assert.equal(watts(8.25), '8.3 W');
+  assert.deepEqual(samples([host(1), host(2, { gpu_avg: 12, gpu_max: 40 })], measures.gpu), [{ ts: 2, avg: 12, max: 40 }]);
   assert.equal(watts(21.4), '21 W');
 });
 

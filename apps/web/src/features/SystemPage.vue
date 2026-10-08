@@ -31,9 +31,12 @@ interface SystemDetail {
   /** The whole machine's draw, and the parts the chip counts; absent where unknown. */
   power_watts?: number | null;
   power_parts?: Array<{ kind: 'cpu' | 'gpu' | 'ane' | 'dram'; watts: number }>;
+  /** Each GPU the platform reports; absent from an older backend. */
+  gpus?: Gpu[];
   processes: Array<{ pid: number; name: string; cpu_percent: number; memory_bytes: number }>;
   sessions: Array<{ session_id: string; cpu_percent: number; memory_bytes: number }>;
 }
+interface Gpu { name: string; cores: number | null; utilization_percent: number | null; memory_used_bytes: number | null; memory_total_bytes: number | null; mhz: number | null; max_mhz: number | null; watts: number | null; celsius: number | null }
 interface CpuFrequency { label: string; kind: 'efficiency' | 'performance' | null; mhz: number | null; max_mhz: number | null }
 const props = defineProps<{ sessions: Session[] }>();
 const emit = defineEmits<{ back: []; openSession: [session: Session] }>();
@@ -41,7 +44,7 @@ const { t } = useI18n();
 const detail = ref<SystemDetail>(), error = ref(''), unsupported = ref(false);
 /** Resource monitoring is turned off: nothing live is read, and the page says so. */
 const off = ref(false);
-const history = ref({ cpu: [] as number[], memory: [] as number[], received: [] as number[], transmitted: [] as number[], power: [] as number[] });
+const history = ref({ cpu: [] as number[], memory: [] as number[], received: [] as number[], transmitted: [] as number[], power: [] as number[], gpu: [] as number[] });
 let timer: ReturnType<typeof setTimeout> | undefined, disposed = false;
 
 async function poll() {
@@ -60,6 +63,7 @@ async function poll() {
         received: pushSample(history.value.received, net.rx),
         transmitted: pushSample(history.value.transmitted, net.tx),
         power: pushSample(history.value.power, powerOf(next) ?? 0),
+        gpu: pushSample(history.value.gpu, Math.max(0, ...(next.gpus ?? []).map(gpu => gpu.utilization_percent ?? 0))),
       };
     } catch (cause) {
       if (cause instanceof ApiError && [404, 501].includes(cause.status)) { unsupported.value = true; return; }
@@ -112,9 +116,18 @@ const power = computed(() => {
     now,
     whole: next.power_watts != null,
     // A part drawing next to nothing (an idle neural engine) is left out of the line.
-    parts: (next.power_parts ?? []).filter(part => part.watts >= 0.05).map(part => `${t(PART_LABELS[part.kind] ?? part.kind)} ${watts(part.watts)}`).join(' · '),
+    parts: (next.power_parts ?? []).filter(part => part.watts >= 0.05).map(part => `${t(PART_LABELS[part.kind] ?? part.kind)} ${watts(part.watts)}`),
   };
 });
+const megahertz = (mhz: number) => mhz >= 1000 ? gigahertz(mhz) : `${mhz} MHz`;
+/** What a GPU tile says under its figure: clock, memory, power, temperature, where known. */
+function gpuLine(gpu: Gpu): string[] {
+  const memory = gpu.memory_used_bytes == null ? undefined
+    : gpu.memory_total_bytes ? `${formatBytes(gpu.memory_used_bytes)} / ${formatBytes(gpu.memory_total_bytes)}`
+    : t('Memory {size}', { size: formatBytes(gpu.memory_used_bytes) });
+  return [gpu.mhz != null ? megahertz(gpu.mhz) : undefined, memory, gpu.watts != null ? watts(gpu.watts) : undefined, gpu.celsius != null ? `${Math.round(gpu.celsius)} °C` : undefined]
+    .filter((item): item is string => !!item);
+}
 const fanMax = computed(() => Math.max(0, ...(detail.value?.fans ?? []).map(fan => fan.max_rpm ?? 0)) || undefined);
 const clockMax = computed(() => Math.max(0, ...(detail.value?.cpu_frequencies ?? []).map(item => item.max_mhz ?? 0)) || undefined);
 const subtitle = computed(() => {
@@ -162,11 +175,18 @@ const subtitle = computed(() => {
             <strong>{{ detail.load.one.toFixed(2) }}</strong>
             <footer>{{ detail.load.five.toFixed(2) }} · {{ detail.load.fifteen.toFixed(2) }}</footer>
           </article>
+          <article v-for="gpu in detail.gpus ?? []" :key="gpu.name" :class="['system-tile', levelFor(gpu.utilization_percent ?? 0)]">
+            <header><span>GPU</span><small :title="gpu.name">{{ gpu.cores ? `${gpu.name} · ${t('{count} cores', { count: gpu.cores })}` : gpu.name }}</small></header>
+            <strong>{{ gpu.utilization_percent == null ? '—' : Math.round(gpu.utilization_percent) }}<small v-if="gpu.utilization_percent != null">%</small></strong>
+            <!-- One line of history for the busiest GPU; with several, a line under each would repeat it. -->
+            <svg v-if="(detail.gpus ?? []).length === 1" class="spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true"><path :d="sparkPath(history.gpu, 100)" /></svg>
+            <footer v-if="gpuLine(gpu).length" class="facts"><span v-for="item in gpuLine(gpu)" :key="item">{{ item }}</span></footer>
+          </article>
           <article v-if="power" class="system-tile ok">
             <header><span>{{ t('Power') }}</span><small>{{ t(power.whole ? 'Whole machine' : 'Measured parts') }}</small></header>
             <strong>{{ watts(power.now).replace(' W', '') }}<small>W</small></strong>
             <svg class="spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true"><path :d="sparkPath(history.power)" /></svg>
-            <footer v-if="power.parts">{{ power.parts }}</footer>
+            <footer v-if="power.parts.length" class="facts"><span v-for="item in power.parts" :key="item">{{ item }}</span></footer>
           </article>
           <article v-if="mainDisk" :class="['system-tile', levelFor(diskPercent(mainDisk))]">
             <header><span>{{ t('Disk') }}</span><small>{{ mainDisk.mount_point }}</small></header>
@@ -264,6 +284,10 @@ const subtitle = computed(() => {
 .system-tile strong.dual{font-size:var(--text-xl)}
 .system-tile strong.dual span{display:block;font-size:var(--text-md);color:var(--ink-soft);font-weight:550}
 .system-tile footer{margin-top:auto;font-size:var(--text-xs);color:var(--muted);font-variant-numeric:tabular-nums}
+/* A list of facts breaks between them, never inside one ("0.1 W"). */
+.system-tile footer.facts{display:flex;flex-wrap:wrap;column-gap:6px}
+.system-tile footer.facts span{white-space:nowrap}
+.system-tile footer.facts span+span::before{content:"·";margin-right:6px}
 .spark{margin-top:auto;width:100%;height:30px;overflow:visible}
 .spark path{fill:none;stroke:var(--tone);stroke-width:1.6;vector-effect:non-scaling-stroke;stroke-linejoin:round}
 .spark path.secondary{stroke:var(--violet);opacity:.7}

@@ -16,61 +16,22 @@
 //! and neither does a virtual machine: its CPUs have no clock of their own,
 //! and IOReport is not probed there at all, since a guest's device tree is
 //! not the hardware's.
-use super::{CpuFrequency, PowerPart};
+use super::{
+    CpuFrequency, PowerPart,
+    cf::{
+        CFArrayGetCount, CFArrayGetValueAtIndex, CFDataGetBytePtr, CFDataGetLength,
+        CFDataGetTypeID, CFDictionaryCreateMutableCopy, CFDictionaryGetCount, CFDictionaryGetValue,
+        CFGetTypeID, CFTypeRef, IOObjectRelease, IORegistryEntryCreateCFProperty,
+        IOServiceGetMatchingService, IOServiceNameMatching, Owned, cf_string, kCFAllocatorDefault,
+        rust_string,
+    },
+};
 use std::{
-    ffi::{CStr, c_char, c_void},
+    ffi::{CStr, c_void},
     mem::size_of,
     ptr, slice,
     time::Instant,
 };
-
-type CFTypeRef = *const c_void;
-type CFIndex = isize;
-
-const UTF8: u32 = 0x0800_0100;
-
-#[link(name = "CoreFoundation", kind = "framework")]
-unsafe extern "C" {
-    static kCFAllocatorDefault: CFTypeRef;
-    fn CFRelease(object: CFTypeRef);
-    fn CFGetTypeID(object: CFTypeRef) -> usize;
-    fn CFDataGetTypeID() -> usize;
-    fn CFDataGetLength(data: CFTypeRef) -> CFIndex;
-    fn CFDataGetBytePtr(data: CFTypeRef) -> *const u8;
-    fn CFStringCreateWithCString(
-        allocator: CFTypeRef,
-        text: *const c_char,
-        encoding: u32,
-    ) -> CFTypeRef;
-    fn CFStringGetCString(
-        text: CFTypeRef,
-        buffer: *mut c_char,
-        size: CFIndex,
-        encoding: u32,
-    ) -> bool;
-    fn CFDictionaryGetCount(dictionary: CFTypeRef) -> CFIndex;
-    fn CFDictionaryGetValue(dictionary: CFTypeRef, key: CFTypeRef) -> CFTypeRef;
-    fn CFDictionaryCreateMutableCopy(
-        allocator: CFTypeRef,
-        capacity: CFIndex,
-        dictionary: CFTypeRef,
-    ) -> CFTypeRef;
-    fn CFArrayGetCount(array: CFTypeRef) -> CFIndex;
-    fn CFArrayGetValueAtIndex(array: CFTypeRef, index: CFIndex) -> CFTypeRef;
-}
-
-#[link(name = "IOKit", kind = "framework")]
-unsafe extern "C" {
-    fn IOServiceNameMatching(name: *const c_char) -> *mut c_void;
-    fn IOServiceGetMatchingService(main_port: u32, matching: *mut c_void) -> u32;
-    fn IORegistryEntryCreateCFProperty(
-        entry: u32,
-        key: CFTypeRef,
-        allocator: CFTypeRef,
-        options: u32,
-    ) -> CFTypeRef;
-    fn IOObjectRelease(object: u32) -> i32;
-}
 
 #[link(name = "IOReport", kind = "dylib")]
 unsafe extern "C" {
@@ -106,42 +67,6 @@ unsafe extern "C" {
     fn IOReportStateGetCount(channel: CFTypeRef) -> i32;
     fn IOReportStateGetNameForIndex(channel: CFTypeRef, index: i32) -> CFTypeRef;
     fn IOReportStateGetResidency(channel: CFTypeRef, index: i32) -> i64;
-}
-
-/// A Core Foundation object this code created, released when dropped.
-struct Owned(CFTypeRef);
-
-impl Owned {
-    fn new(object: CFTypeRef) -> Option<Self> {
-        (!object.is_null()).then_some(Self(object))
-    }
-}
-
-impl Drop for Owned {
-    fn drop(&mut self) {
-        // SAFETY: only created from a Create/Copy call, so this holds a reference.
-        unsafe { CFRelease(self.0) }
-    }
-}
-
-fn cf_string(text: &CStr) -> Option<Owned> {
-    // SAFETY: a NUL-terminated string in, an owned CFString or null out.
-    Owned::new(unsafe { CFStringCreateWithCString(kCFAllocatorDefault, text.as_ptr(), UTF8) })
-}
-
-fn rust_string(text: CFTypeRef) -> Option<String> {
-    if text.is_null() {
-        return None;
-    }
-    let mut buffer = [0 as c_char; 128];
-    // SAFETY: the buffer's length is passed, and the call NUL-terminates it on success.
-    unsafe { CFStringGetCString(text, buffer.as_mut_ptr(), buffer.len() as CFIndex, UTF8) }.then(
-        || {
-            unsafe { CStr::from_ptr(buffer.as_ptr()) }
-                .to_string_lossy()
-                .into_owned()
-        },
-    )
 }
 
 /// The frequency of each performance state, in MHz, from a `pmgr` table of
@@ -283,6 +208,9 @@ fn power_parts(channels: &[(String, String, i64)], seconds: f64) -> Vec<PowerPar
 pub struct Reading {
     pub clusters: Vec<CpuFrequency>,
     pub power: Vec<PowerPart>,
+    /// The GPU's clock while running, and its top clock.
+    pub gpu_mhz: Option<u32>,
+    pub gpu_max_mhz: Option<u32>,
 }
 
 pub struct Reader {
@@ -293,6 +221,8 @@ pub struct Reader {
     /// The clock of each performance state, efficiency then performance
     /// cluster; absent where the tables are, and then no clocks are read.
     tables: Option<(Vec<u32>, Vec<u32>)>,
+    /// The GPU's clock per performance state, from P1 up.
+    gpu_table: Option<Vec<u32>>,
 }
 
 // SAFETY: the Core Foundation objects are only ever used through `&mut self`,
@@ -328,17 +258,28 @@ impl Reader {
             .is_some()
             .then(|| group(c"CPU Stats", Some(c"CPU Complex Performance States")))
             .flatten();
+        // The table's first state is the GPU switched off, at no clock; the
+        // GPU's P1 is the first that runs.
+        let gpu_table = pmgr_table(c"voltage-states9")
+            .map(|table| {
+                table
+                    .into_iter()
+                    .skip_while(|mhz| *mhz == 0)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|table| !table.is_empty());
+        let gpu = gpu_table
+            .is_some()
+            .then(|| group(c"GPU Stats", Some(c"GPU Performance States")))
+            .flatten();
         let energy = group(c"Energy Model", None);
-        let channels = match (clocks, energy) {
-            (Some(clocks), Some(energy)) => {
-                // SAFETY: both are live channel dictionaries; the merge
-                // copies `energy` into `clocks` and transfers nothing.
-                unsafe { IOReportMergeChannels(clocks.0, energy.0, ptr::null()) };
-                clocks
-            }
-            (Some(only), None) | (None, Some(only)) => only,
-            (None, None) => return None,
-        };
+        let mut groups = [clocks, gpu, energy].into_iter().flatten();
+        let channels = groups.next()?;
+        for more in groups {
+            // SAFETY: both are live channel dictionaries; the merge copies
+            // `more` into `channels` and transfers nothing.
+            unsafe { IOReportMergeChannels(channels.0, more.0, ptr::null()) };
+        }
         // SAFETY: IOReport calls with live CF objects; every object created
         // here is owned by an `Owned` and released with the reader.
         unsafe {
@@ -361,6 +302,7 @@ impl Reader {
                 _desired: desired,
                 previous: None,
                 tables,
+                gpu_table,
             })
         }
     }
@@ -418,6 +360,24 @@ impl Reader {
                     }
                     continue;
                 }
+                let states = || -> Vec<(String, i64)> {
+                    (0..IOReportStateGetCount(item))
+                        .map(|state| {
+                            (
+                                rust_string(IOReportStateGetNameForIndex(item, state))
+                                    .unwrap_or_default(),
+                                IOReportStateGetResidency(item, state),
+                            )
+                        })
+                        .collect()
+                };
+                if name == "GPUPH" {
+                    if let Some(table) = &self.gpu_table {
+                        reading.gpu_mhz = running_mhz(&states(), table);
+                        reading.gpu_max_mhz = table.last().copied();
+                    }
+                    continue;
+                }
                 let Some((efficiency, performance)) = &self.tables else {
                     continue;
                 };
@@ -428,15 +388,7 @@ impl Reader {
                 } else {
                     continue;
                 };
-                let states: Vec<(String, i64)> = (0..IOReportStateGetCount(item))
-                    .map(|state| {
-                        (
-                            rust_string(IOReportStateGetNameForIndex(item, state))
-                                .unwrap_or_default(),
-                            IOReportStateGetResidency(item, state),
-                        )
-                    })
-                    .collect();
+                let states = states();
                 reading.clusters.push(CpuFrequency {
                     label: name,
                     kind: Some(kind),

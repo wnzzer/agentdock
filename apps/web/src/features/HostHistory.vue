@@ -70,6 +70,9 @@ const charts = computed<Chart[]>(() => {
       ? build('memory', t('Memory'), samples(data.host, measures.memory), 0, 100, `0–${Math.round(total / 1024 ** 3)} GB`, value => gb(value / 100 * total))
       : build('memory', t('Memory'), samples(data.host, measures.memory), 0, 100, '0–100%', value => `${Math.round(value)}%`),
   ];
+  // The GPU sits beside the CPU, before memory and the rest.
+  const gpu = samples(data.host, measures.gpu);
+  if (gpu.length) list.splice(1, 0, build('gpu', 'GPU', gpu, 0, 100, '0–100%', value => `${Math.round(value)}%`));
   const clock = samples(data.host, measures.clock);
   if (clock.length) {
     // The chip's top clock where known, so a full-speed cluster reaches the top.
