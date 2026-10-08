@@ -90,19 +90,19 @@ async function revokeGrants() { try { hostGrants.value = await request('/host/gr
     <article class="preference-card">
       <header><span class="preference-mark general"><Icon name="settings" :size="17"/></span><strong>{{ t('General') }}</strong></header>
       <label class="preference-row">
-        <span class="preference-icon"><Icon name="globe" :size="16"/></span><span><strong>{{ t('Language') }}</strong><small>{{ t('For this browser.') }}</small></span>
+        <span><strong>{{ t('Language') }}</strong><small>{{ t('For this browser.') }}</small></span>
         <select :value="locale" :aria-label="t('Language')" @change="setLocale(($event.target as HTMLSelectElement).value === 'en' ? 'en' : 'zh-CN')"><option value="zh-CN" lang="zh-CN">中文</option><option value="en" lang="en">English</option></select>
       </label>
       <label class="preference-row">
-        <span class="preference-icon"><Icon name="moon" :size="16"/></span><span><strong>{{ t('Appearance') }}</strong><small>{{ t('For this browser.') }}</small></span>
+        <span><strong>{{ t('Appearance') }}</strong><small>{{ t('For this browser.') }}</small></span>
         <select :value="themePreference" :aria-label="t('Appearance')" @change="setThemePreference(($event.target as HTMLSelectElement).value as ThemePreference)"><option value="system">{{ t('Match system') }}</option><option value="light">{{ t('Light') }}</option><option value="dark">{{ t('Dark') }}</option></select>
       </label>
       <label class="preference-row">
-        <span class="preference-icon"><Icon name="bell" :size="16"/></span><span><strong>{{ t('Desktop notifications') }}</strong><small>{{ t(notificationNote) }}</small></span>
+        <span><strong>{{ t('Desktop notifications') }}</strong><small>{{ t(notificationNote) }}</small></span>
         <select :value="desktopNotifications ? 'on' : 'off'" :disabled="!notificationsPossible" :aria-label="t('Desktop notifications')" @change="toggleNotifications(($event.target as HTMLSelectElement).value === 'on')"><option value="off">{{ t('Off') }}</option><option value="on">{{ t('On') }}</option></select>
       </label>
       <div v-if="hostGrants.length" class="preference-row">
-        <span class="preference-icon"><Icon name="folder" :size="16"/></span><span><strong>{{ t('Temporary file access') }}</strong><small>{{ t('Read-only, for the file preview, until AgentDock restarts.') }}</small><code v-for="item in hostGrants" :key="item.path" class="grant-path">{{ item.path }}{{ item.directory ? '/' : '' }}</code></span>
+        <span><strong>{{ t('Temporary file access') }}</strong><small>{{ t('Read-only, for the file preview, until AgentDock restarts.') }}</small><code v-for="item in hostGrants" :key="item.path" class="grant-path">{{ item.path }}{{ item.directory ? '/' : '' }}</code></span>
         <button type="button" class="small-button danger" @click="revokeGrants">{{ t('Revoke all') }}</button>
       </div>
     </article>
@@ -111,7 +111,7 @@ async function revokeGrants() { try { hostGrants.value = await request('/host/gr
       <article v-for="provider in PROVIDERS" :key="provider" class="preference-card">
         <header><span :class="['preference-mark',provider]"><ProviderIcon :provider="provider" :size="17"/></span><strong>{{ providerLabel(provider) }}</strong></header>
         <label class="preference-row">
-          <span class="preference-icon"><Icon name="plug" :size="16"/></span><span><strong>{{ t('Default endpoint') }}</strong><small>{{ t('Chosen in the new-session dialog, and used by one-click sessions.') }}</small></span>
+          <span><strong>{{ t('Default endpoint') }}</strong><small>{{ t('Chosen in the new-session dialog, and used by one-click sessions.') }}</small></span>
           <select :value="staleProfile[provider] ? '' : preferences[provider].endpoint_profile_id ?? ''" :disabled="saving" @change="pick(provider,'endpoint_profile_id')($event)">
             <option value="">{{ t('Last used') }}</option>
             <option v-for="profile in profilesFor(provider)" :key="profile.id" :value="profile.id">{{ profile.name }}</option>
@@ -119,14 +119,14 @@ async function revokeGrants() { try { hostGrants.value = await request('/host/gr
         </label>
         <p v-if="staleProfile[provider]" class="preference-note">{{ t('The profile chosen before no longer exists; the last used one applies.') }}</p>
         <label class="preference-row">
-          <span class="preference-icon"><Icon name="spark" :size="16"/></span><span><strong>{{ t('Default thinking depth') }}</strong><small>{{ t(provider === 'codex' ? 'Only where the model offers it.' : 'Deeper is slower and uses more of your quota.') }}</small></span>
+          <span><strong>{{ t('Default thinking depth') }}</strong><small>{{ t(provider === 'codex' ? 'Only where the model offers it.' : 'Deeper is slower and uses more of your quota.') }}</small></span>
           <select :value="preferences[provider].effort ?? ''" :disabled="saving" @change="pick(provider,'effort')($event)">
             <option value="">{{ t('Automatic · provider default') }}</option>
             <option v-for="level in REASONING_EFFORTS" :key="level" :value="level">{{ t(effortLabel(level)) }}</option>
           </select>
         </label>
         <label class="preference-row">
-          <span :class="['preference-icon',{danger:preferences[provider].permission==='danger'}]"><Icon name="shield" :size="16"/></span><span><strong>{{ t('Default permission') }}</strong><small>{{ t('How tools are approved each time a session starts. The session\'s own chip can change it between turns.') }}</small></span>
+          <span><strong>{{ t('Default permission') }}</strong><small>{{ t('How tools are approved each time a session starts. The session\'s own chip can change it between turns.') }}</small></span>
           <select :value="preferences[provider].permission ?? ''" :class="{danger:preferences[provider].permission==='danger'}" :disabled="saving" @change="pick(provider,'permission')($event)">
             <option value="">{{ t('Client default') }}</option>
             <option v-for="mode in PERMISSION_CHOICES[provider]" :key="mode" :value="mode">{{ t(PERMISSION_LABELS[mode]) }}</option>
@@ -134,21 +134,23 @@ async function revokeGrants() { try { hostGrants.value = await request('/host/gr
         </label>
         <p v-if="preferences[provider].permission==='danger'" class="preference-note danger">{{ t('New sessions will run tools without asking. Only choose this for directories you trust completely.') }}</p>
       </article>
+      <!-- What AgentDock itself does on this host, beside the clients' defaults. -->
       <article class="preference-card">
-        <label class="preference-row first">
-          <span class="preference-icon"><Icon name="wrench" :size="16"/></span><span><strong>{{ t('AgentDock tools for agents') }}</strong><small>{{ t('Claude Code and Codex sessions can look at AgentDock and, once you confirm here, change it: endpoints, defaults, workspaces. Takes effect when a session next starts.') }}</small></span>
+        <header><span class="preference-mark general"><Icon name="spark" :size="17"/></span><strong>AgentDock</strong></header>
+        <label class="preference-row">
+          <span><strong>{{ t('AgentDock tools for agents') }}</strong><small>{{ t('Claude Code and Codex sessions can look at AgentDock and, once you confirm here, change it: endpoints, defaults, workspaces. Takes effect when a session next starts.') }}</small></span>
           <input type="checkbox" class="preference-switch" role="switch" :checked="preferences.agent_tools !== false" :disabled="saving" :aria-label="t('AgentDock tools for agents')" @change="setSwitch('agent_tools', ($event.target as HTMLInputElement).checked)" />
         </label>
-      </article>
-      <article v-if="backendCapabilities.resourceMonitoring" class="preference-card">
-        <label class="preference-row first">
-          <span class="preference-icon"><Icon name="gauge" :size="16"/></span><span><strong>{{ t('Resource monitoring') }}</strong><small>{{ t('Reads the host\'s CPU, memory, temperature, fans and clock for the status bar and the system page, and every five seconds keeps them, with each session\'s share, on this machine for up to 90 days. Off reads nothing at all; what is already kept stays until cleared.') }}</small></span>
+        <template v-if="backendCapabilities.resourceMonitoring">
+        <label class="preference-row">
+          <span><strong>{{ t('Resource monitoring') }}</strong><small>{{ t('Reads the host\'s CPU, memory, temperature, fans and clock for the status bar and the system page, and every five seconds keeps them, with each session\'s share, on this machine for up to 90 days. Off reads nothing at all; what is already kept stays until cleared.') }}</small></span>
           <input type="checkbox" class="preference-switch" role="switch" :checked="preferences.resource_monitoring !== false" :disabled="saving" :aria-label="t('Resource monitoring')" @change="setSwitch('resource_monitoring', ($event.target as HTMLInputElement).checked)" />
         </label>
         <div class="preference-row">
-          <span class="preference-icon"><Icon name="clock" :size="16"/></span><span><strong>{{ t('Recorded history') }}</strong><small>{{ cleared ? t('Cleared.') : t('Removes every recorded sample. Recording continues while monitoring is on.') }}</small></span>
+          <span><strong>{{ t('Recorded history') }}</strong><small>{{ cleared ? t('Cleared.') : t('Removes every recorded sample. Recording continues while monitoring is on.') }}</small></span>
           <button type="button" :class="['small-button', { danger: clearArmed }]" :disabled="clearing" @click="clearHistory">{{ t(clearArmed ? 'Press again to clear' : 'Clear history') }}</button>
         </div>
+        </template>
       </article>
     </template>
   </section>
@@ -165,11 +167,9 @@ async function revokeGrants() { try { hostGrants.value = await request('/host/gr
 .preference-card header strong{font-size:var(--text-md);font-weight:600;color:var(--ink)}
 .preference-mark{display:grid;place-items:center;width:30px;height:30px;border-radius:var(--radius-md);background:var(--codex-soft);color:var(--codex);flex-shrink:0}
 .preference-mark.claude_code{background:var(--claude-soft);color:var(--claude)}
+/* Only the cards carry an icon; the rows are read by their labels. Functional
+   icons take the text's tone rather than a hue of their own (icon-palette.ts). */
 .preference-mark.general{background:var(--fill);color:var(--ink-soft)}
-/* Functional icons take the text's tone, not a hue of their own (icon-palette.ts);
-   only a choice that runs tools unasked is marked, in the danger colour. */
-.preference-icon{display:grid;place-items:center;flex:none;width:30px;height:30px;border-radius:var(--radius-sm);background:var(--fill);color:var(--ink-soft)}
-.preference-icon.danger{background:var(--danger-soft);color:var(--danger-ink)}
 .preference-row{display:flex;align-items:center;gap:14px;padding:9px 0;border-top:1px solid var(--border)}
 .preference-row.first{border-top:0;padding-top:0}
 .preference-switch{appearance:none;flex:none;position:relative;width:38px;height:22px;margin:0;border-radius:var(--radius-md);background:var(--line-strong);cursor:pointer;transition:background .15s}
@@ -177,14 +177,13 @@ async function revokeGrants() { try { hostGrants.value = await request('/host/gr
 .preference-switch:checked{background:var(--teal)}
 .preference-switch:checked::after{transform:translateX(16px)}
 .preference-switch:focus-visible{outline:2px solid var(--focus,var(--focus));outline-offset:2px}
-.preference-row>span:not(.preference-icon){flex:1;min-width:0}
+.preference-row>span{flex:1;min-width:0}
 .preference-row strong{display:block;font-size:var(--text-sm);font-weight:550;color:var(--ink)}
 .preference-row small{display:block;margin-top:2px;font-size:var(--text-xs);line-height:1.5;color:var(--muted)}
 .preference-row select{width:190px;flex-shrink:0;height:32px;padding:0 8px;border:1px solid var(--line);border-radius:var(--radius-md);background:var(--surface);font:inherit;font-size:var(--text-sm);color:var(--ink)}
 .preference-row select.danger{color:var(--danger-ink);border-color:var(--danger-line)}
 .preference-note{margin:-4px 0 8px;font-size:var(--text-xs);line-height:1.5;color:var(--muted)}
 .preference-note.danger{color:var(--danger-ink)}
-/* On a phone the icon stays beside its label; a select takes the next line, a switch stays put. */
-@media(max-width:520px){.preference-row{flex-wrap:wrap;gap:8px 12px}.preference-row select{width:100%;height:40px}}
+@media(max-width:520px){.preference-row{flex-direction:column;align-items:stretch;gap:6px}.preference-row select{width:100%;height:40px}}
 .grant-path{display:block;margin-top:4px;font-family:var(--mono);font-size:var(--text-xs);color:var(--ink-soft);overflow-wrap:anywhere}
 </style>
