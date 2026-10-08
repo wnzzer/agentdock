@@ -7,6 +7,7 @@ import ProviderIcon from './ProviderIcon.vue';
 import { errorMessage, json, providerLabel, request } from './api';
 import { REASONING_EFFORTS, effortLabel } from './reasoning-effort';
 import { PERMISSION_CHOICES, loadPreferences, preferences, savePreferences, type PreferenceProvider, type Preferences } from './preferences';
+import { backendCapabilities } from './backend-capabilities';
 import { useI18n } from '../i18n';
 
 /**
@@ -38,13 +39,28 @@ async function update(provider: PreferenceProvider, field: 'endpoint_profile_id'
   finally { saving.value = false; }
 }
 /** Off is stored as `false`; on is the default, so it is stored as nothing. */
-async function setAgentTools(on: boolean) {
+async function setSwitch(key: 'agent_tools' | 'resource_history', on: boolean) {
   const next: Preferences = JSON.parse(JSON.stringify(preferences.value));
-  if (on) delete next.agent_tools; else next.agent_tools = false;
+  if (on) delete next[key]; else next[key] = false;
   saving.value = true; error.value = ''; saved.value = false;
   try { await savePreferences(next); saved.value = true; }
   catch (cause) { error.value = errorMessage(cause); }
   finally { saving.value = false; }
+}
+/** Clearing asks twice: the first press arms it for a few seconds. */
+const clearArmed = ref(false), clearing = ref(false), cleared = ref(false);
+let disarm: ReturnType<typeof setTimeout> | undefined;
+async function clearHistory() {
+  if (!clearArmed.value) {
+    clearArmed.value = true; cleared.value = false;
+    disarm = setTimeout(() => { clearArmed.value = false; }, 4000);
+    return;
+  }
+  if (disarm) clearTimeout(disarm);
+  clearArmed.value = false; clearing.value = true; error.value = '';
+  try { await request('/host/resources/history', { method: 'DELETE' }); cleared.value = true; }
+  catch (cause) { error.value = errorMessage(cause); }
+  finally { clearing.value = false; }
 }
 const pick = (provider: PreferenceProvider, field: 'endpoint_profile_id' | 'effort' | 'permission') => (event: Event) => update(provider, field, (event.target as HTMLSelectElement).value);
 /** Desktop notifications need a secure page and the browser's permission; the row says which is missing. */
@@ -119,8 +135,18 @@ async function revokeGrants() { try { hostGrants.value = await request('/host/gr
       <article class="preference-card">
         <label class="preference-row first">
           <span><strong>{{ t('AgentDock tools for agents') }}</strong><small>{{ t('Claude Code and Codex sessions can look at AgentDock and, once you confirm here, change it: endpoints, defaults, workspaces. Takes effect when a session next starts.') }}</small></span>
-          <input type="checkbox" class="preference-switch" role="switch" :checked="preferences.agent_tools !== false" :disabled="saving" :aria-label="t('AgentDock tools for agents')" @change="setAgentTools(($event.target as HTMLInputElement).checked)" />
+          <input type="checkbox" class="preference-switch" role="switch" :checked="preferences.agent_tools !== false" :disabled="saving" :aria-label="t('AgentDock tools for agents')" @change="setSwitch('agent_tools', ($event.target as HTMLInputElement).checked)" />
         </label>
+      </article>
+      <article v-if="backendCapabilities.resourceHistory" class="preference-card">
+        <label class="preference-row first">
+          <span><strong>{{ t('Record resource history') }}</strong><small>{{ t('Every five seconds, the host\'s CPU, memory, temperature, fans and clock, and each session\'s share, kept on this machine for up to 90 days for the trends on the system page. Off stops recording; what is already kept stays until cleared.') }}</small></span>
+          <input type="checkbox" class="preference-switch" role="switch" :checked="preferences.resource_history !== false" :disabled="saving" :aria-label="t('Record resource history')" @change="setSwitch('resource_history', ($event.target as HTMLInputElement).checked)" />
+        </label>
+        <div class="preference-row">
+          <span><strong>{{ t('Recorded history') }}</strong><small>{{ cleared ? t('Cleared.') : t('Removes every recorded sample. Recording continues if it is on.') }}</small></span>
+          <button type="button" :class="['small-button', { danger: clearArmed }]" :disabled="clearing" @click="clearHistory">{{ t(clearArmed ? 'Press again to clear' : 'Clear history') }}</button>
+        </div>
       </article>
     </template>
   </section>

@@ -30,6 +30,8 @@ export interface SessionHistoryPoint {
   memory_max: number;
 }
 export interface HostHistory {
+  /** False when recording is turned off; absent from an older backend, which always records. */
+  recording?: boolean;
   resolution: number;
   host: HostHistoryPoint[];
   sessions: SessionHistoryPoint[];

@@ -131,8 +131,12 @@ const percent = (value: number) => value < 0.5 ? '<1%' : `${Math.round(value)}%`
         <button v-for="item in RANGES" :key="item.key" type="button" :aria-pressed="range === item.key" @click="range = item.key">{{ item.key }}</button>
       </div>
     </header>
-    <p v-if="empty" class="host-history-empty">{{ t('History builds up while AgentDock runs; the first points arrive within a minute.') }}</p>
-    <template v-else-if="history">
+    <p v-if="history?.recording === false" class="host-history-off">
+      {{ t(empty ? 'Recording is turned off.' : 'Recording is turned off; this is what was kept before.') }}
+      <RouterLink :to="{ name: 'settings', params: { section: 'preferences' } }">{{ t('Settings') }}</RouterLink>
+    </p>
+    <p v-else-if="empty" class="host-history-empty">{{ t('History builds up while AgentDock runs; the first points arrive within a minute.') }}</p>
+    <template v-if="history && !empty">
       <div class="host-trends">
         <div v-for="chart in charts" :key="chart.key" class="host-trend">
           <div class="host-trend-head">
@@ -179,6 +183,9 @@ const percent = (value: number) => value < 0.5 ? '<1%' : `${Math.round(value)}%`
 .host-history-ranges button{min-width:34px;padding:2px var(--space-2);border:0;border-radius:var(--radius-xs);background:none;color:var(--muted);font:inherit;font-size:var(--text-xs);cursor:pointer}
 .host-history-ranges button[aria-pressed=true]{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-sm)}
 .host-history-empty{color:var(--muted);font-size:var(--text-sm)}
+.host-history-off{display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--space-2);padding:var(--space-2) var(--space-3);border-radius:var(--radius-md);background:var(--sunken);color:var(--ink-soft);font-size:var(--text-sm)}
+.host-history-off a{color:var(--accent);font-weight:550;text-decoration:none}
+.host-history-off a:hover{text-decoration:underline}
 .host-trends{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:var(--space-5) var(--space-6)}
 .host-trend{min-width:0}
 .host-trend-head{display:flex;align-items:flex-end;justify-content:space-between;gap:var(--space-3);margin-bottom:var(--space-2)}

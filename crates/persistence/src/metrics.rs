@@ -199,6 +199,12 @@ impl MetricsStore {
         tx.commit()
     }
 
+    /// Forget everything recorded, at every resolution.
+    pub fn clear(&self) -> Result<()> {
+        let connection = self.connection.lock().expect("metrics connection");
+        connection.execute_batch("DELETE FROM host_samples; DELETE FROM session_samples;")
+    }
+
     pub fn host_history(&self, resolution: i64, from: i64, to: i64) -> Result<Vec<HostPoint>> {
         let connection = self.connection.lock().expect("metrics connection");
         let mut statement = connection.prepare_cached(

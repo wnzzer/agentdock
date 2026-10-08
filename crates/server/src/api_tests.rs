@@ -3286,7 +3286,8 @@ async fn shared_canvas_uses_existing_authentication_and_health_capabilities() {
             "session_terminal_escape",
             "stored_secrets",
             "agent_tools",
-            "self_update"
+            "self_update",
+            "resource_history"
         ])
     );
     let allowed = Request::builder()
@@ -4206,4 +4207,57 @@ async fn resource_history_answers_from_the_metrics_database() {
     let path = format!("/api/host/resources/history?from={now}&to={}", now - 1);
     let (status, _) = call(f.app(), "GET", &path, Value::Null).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn resource_history_can_be_turned_off_and_cleared() {
+    use agentdock_persistence::metrics::{HostPoint, MetricsStore};
+    let mut f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
+    let store = Arc::new(MetricsStore::open(":memory:").unwrap());
+    let now = chrono::Utc::now().timestamp();
+    store
+        .record(
+            &[HostPoint {
+                ts: now - 30,
+                cpu_avg: 1.0,
+                cpu_max: 1.0,
+                memory_used_avg: 1,
+                memory_used_max: 1,
+                memory_total: 2,
+                fan_rpm_avg: None,
+                fan_rpm_max: None,
+                temperature_avg: None,
+                temperature_max: None,
+                cpu_mhz_avg: None,
+                cpu_mhz_max: None,
+            }],
+            &[],
+        )
+        .unwrap();
+    f.state.metrics = Some(store);
+    let history = "/api/host/resources/history";
+    let (_, body) = call(f.app(), "GET", history, Value::Null).await;
+    assert_eq!(body["recording"], true, "on unless turned off");
+
+    let (status, preferences) = call(
+        f.app(),
+        "PUT",
+        "/api/preferences",
+        json!({"resource_history": false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(preferences["resource_history"], false);
+    let (_, body) = call(f.app(), "GET", history, Value::Null).await;
+    assert_eq!(body["recording"], false);
+    assert_eq!(
+        body["host"].as_array().unwrap().len(),
+        1,
+        "turning recording off keeps what was recorded"
+    );
+
+    let (status, _) = call(f.app(), "DELETE", history, Value::Null).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, body) = call(f.app(), "GET", history, Value::Null).await;
+    assert!(body["host"].as_array().unwrap().is_empty());
 }

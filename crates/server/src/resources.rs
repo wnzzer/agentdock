@@ -9,13 +9,14 @@
 //! A background recorder also samples on its own clock, whether or not a
 //! browser is open, and keeps the history in a separate metrics database.
 use crate::{
-    ApiError, AppState, Result,
+    ApiError, AppState, Result, preferences,
     sensors::{self, CpuClock, CpuFrequency, Fan, Temperature},
 };
 use agentdock_persistence::metrics::{self, HostPoint, MetricsStore, SessionPoint};
 use axum::{
     Json, Router,
     extract::{Query, State},
+    http::StatusCode,
     routing::get,
 };
 use serde::{Deserialize, Serialize};
@@ -451,7 +452,22 @@ pub fn spawn_recorder(state: AppState, store: Arc<MetricsStore>) {
         loop {
             tick.tick().await;
             let roots = session_roots(&state);
-            let Ok(usage) = tokio::task::spawn_blocking(move || sample(roots)).await else {
+            let preferences = state.clone();
+            // Asked every tick, so turning recording off stops the sampling
+            // at once, and what was buffered is dropped rather than written.
+            let Ok(usage) = tokio::task::spawn_blocking(move || {
+                preferences::load_blocking(&preferences)
+                    .resource_history()
+                    .then(|| sample(roots))
+            })
+            .await
+            else {
+                continue;
+            };
+            let Some(usage) = usage else {
+                host.clear();
+                sessions.clear();
+                samples = 0;
                 continue;
             };
             let ts = now();
@@ -550,6 +566,9 @@ struct SessionHistoryPoint {
 
 #[derive(Debug, Serialize)]
 struct History {
+    /// Whether new samples are being recorded; what is stored stays readable
+    /// either way.
+    recording: bool,
     /// Seconds each point covers.
     resolution: i64,
     host: Vec<HostHistoryPoint>,
@@ -584,7 +603,9 @@ async fn history(
     .await
     .map_err(ApiError::internal)?
     .map_err(ApiError::internal)?;
+    let recording = preferences::load(&state).await?.resource_history();
     Ok(Json(History {
+        recording,
         resolution,
         host: host
             .into_iter()
@@ -617,11 +638,23 @@ async fn history(
     }))
 }
 
+async fn clear(State(state): State<AppState>) -> Result<StatusCode> {
+    let store = state
+        .metrics
+        .clone()
+        .ok_or_else(|| ApiError::missing("Resource history"))?;
+    tokio::task::spawn_blocking(move || store.clear())
+        .await
+        .map_err(ApiError::internal)?
+        .map_err(ApiError::internal)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/host/resources", get(usage))
         .route("/api/host/system", get(system))
-        .route("/api/host/resources/history", get(history))
+        .route("/api/host/resources/history", get(history).delete(clear))
 }
 
 #[cfg(test)]
