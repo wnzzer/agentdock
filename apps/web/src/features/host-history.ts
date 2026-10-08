@@ -76,6 +76,47 @@ export function niceCeiling(value: number, floor = 1): number {
   return ([1, 2, 5, 10].map(step => step * power).find(step => step >= target) ?? 10 * power);
 }
 
+/**
+ * A lower and upper bound for an axis that need not start at zero, such as a
+ * temperature: the data's range widened to whole steps and to at least
+ * `minSpan`, so a steady reading is not drawn as a wild one.
+ */
+export function niceRange(points: Sample[], step: number, minSpan: number): { bottom: number; top: number } {
+  if (!points.length) return { bottom: 0, top: minSpan };
+  const low = Math.min(...points.map(point => point.avg)), high = Math.max(...points.map(point => point.max));
+  let bottom = Math.max(0, Math.floor(low / step) * step), top = Math.ceil(high / step) * step;
+  if (top - bottom < minSpan) {
+    const grow = minSpan - (top - bottom);
+    bottom = Math.max(0, bottom - Math.ceil(grow / 2 / step) * step);
+    top = Math.max(top, bottom + minSpan);
+  }
+  return { bottom, top: top > bottom ? top : bottom + step };
+}
+
+/**
+ * Points gathered into at most `bins` equal buckets across the window, each
+ * the mean of its averages and the highest of its peaks, so a chart a few
+ * hundred pixels wide is not asked to draw several samples per pixel. Empty
+ * buckets stay empty, so gaps survive. Points already sparser than a bucket
+ * are returned as they are.
+ */
+export function bin(points: Sample[], from: number, to: number, bins: number, resolution: number): { points: Sample[]; resolution: number } {
+  const width = (to - from) / Math.max(1, bins);
+  if (width <= resolution) return { points, resolution };
+  const buckets = new Map<number, { sum: number; count: number; max: number }>();
+  for (const point of points) {
+    const index = Math.floor((point.ts - from) / width);
+    const bucket = buckets.get(index) ?? { sum: 0, count: 0, max: -Infinity };
+    bucket.sum += point.avg; bucket.count += 1; bucket.max = Math.max(bucket.max, point.max);
+    buckets.set(index, bucket);
+  }
+  return {
+    points: [...buckets].sort(([a], [b]) => a - b)
+      .map(([index, bucket]) => ({ ts: from + (index + 0.5) * width, avg: bucket.sum / bucket.count, max: bucket.max })),
+    resolution: width,
+  };
+}
+
 /** Runs of points no further apart than a missing bucket allows. */
 export function segments(points: Sample[], resolution: number): Sample[][] {
   const runs: Sample[][] = [];
@@ -87,7 +128,8 @@ export function segments(points: Sample[], resolution: number): Sample[][] {
   return runs;
 }
 
-export interface Frame { from: number; to: number; width: number; height: number; top: number }
+/** The plotted window; values run from `bottom` (zero when absent) to `top`. */
+export interface Frame { from: number; to: number; width: number; height: number; top: number; bottom?: number }
 
 /**
  * SVG path data for the average line and the band up to the peak. A run of
@@ -96,7 +138,8 @@ export interface Frame { from: number; to: number; width: number; height: number
 export function chartPaths(points: Sample[], resolution: number, frame: Frame): { line: string; band: string } {
   const span = Math.max(1, frame.to - frame.from);
   const x = (ts: number) => +((ts - frame.from) / span * frame.width).toFixed(2);
-  const y = (value: number) => +(frame.height - Math.min(Math.max(value, 0), frame.top) / frame.top * frame.height).toFixed(2);
+  const bottom = frame.bottom ?? 0, range = Math.max(Number.MIN_VALUE, frame.top - bottom);
+  const y = (value: number) => +(frame.height - (Math.min(Math.max(value, bottom), frame.top) - bottom) / range * frame.height).toFixed(2);
   const half = Math.max(0.75, resolution / span * frame.width / 2);
   let line = '', band = '';
   for (const run of segments(points, resolution)) {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { busiestSessions, chartPaths, gigahertz, measures, nearest, niceCeiling, samples, segments } from './host-history.ts';
+import { bin, busiestSessions, chartPaths, gigahertz, measures, nearest, niceCeiling, niceRange, samples, segments } from './host-history.ts';
 
 const host = (ts, extra = {}) => ({
   ts, cpu_avg: 10, cpu_max: 20, memory_used_avg: 4, memory_used_max: 6, memory_total: 8,
@@ -26,6 +26,35 @@ test('axis tops are round numbers at or above the data', () => {
   assert.equal(niceCeiling(41), 50);
   assert.equal(niceCeiling(0), 1);
   assert.equal(niceCeiling(3, 50), 50);
+});
+
+test('a range that need not start at zero is widened to whole steps', () => {
+  const points = values => values.map((value, ts) => ({ ts, avg: value, max: value }));
+  // Readings between 52 and 60 °C fit a 50–60 axis, not a 0–100 one.
+  assert.deepEqual(niceRange(points([52, 60]), 10, 10), { bottom: 50, top: 60 });
+  // A steady reading still gets the minimum span, centred where it can be.
+  assert.deepEqual(niceRange(points([52, 52]), 10, 20), { bottom: 40, top: 60 });
+  // Never below zero.
+  assert.deepEqual(niceRange(points([3, 4]), 10, 20), { bottom: 0, top: 20 });
+  assert.deepEqual(niceRange([], 10, 20), { bottom: 0, top: 20 });
+});
+
+test('dense points are gathered into buckets that keep the average, the peak and the gaps', () => {
+  const raw = [0, 5, 10, 15, 60, 65].map(ts => ({ ts, avg: ts, max: ts + 100 }));
+  const { points, resolution } = bin(raw, 0, 100, 5, 5);
+  assert.equal(resolution, 20);
+  assert.deepEqual(points, [
+    { ts: 10, avg: 7.5, max: 115 },
+    // Nothing between 20 and 60: that bucket stays empty rather than zero.
+    { ts: 70, avg: 62.5, max: 165 },
+  ]);
+  // Points already sparser than a bucket are left alone.
+  assert.deepEqual(bin(raw, 0, 100, 50, 5), { points: raw, resolution: 5 });
+});
+
+test('a raised axis puts its bottom at the baseline', () => {
+  const { line } = chartPaths([{ ts: 0, avg: 50, max: 50 }, { ts: 10, avg: 60, max: 60 }], 10, { from: 0, to: 10, width: 10, height: 10, top: 60, bottom: 50 });
+  assert.equal(line, 'M0 10L10 0');
 });
 
 test('clocks read in gigahertz', () => {
