@@ -148,9 +148,10 @@ async fn usage(State(state): State<AppState>) -> Result<Json<HostUsage>> {
     Ok(Json(usage))
 }
 
-/// Raw samples are buffered and written once a minute; the rollups run every
-/// fifth write, always straight after one, so no sample still in the buffer
-/// belongs to a bucket being rolled up.
+/// Raw samples are buffered and written once a minute; the rollups run on the
+/// first write and every fifth after, always straight after one, so no sample
+/// still in the buffer belongs to a bucket being rolled up. The first write
+/// catches up on whatever a short earlier run left unrolled.
 const FLUSH_EVERY: u32 = 12;
 const COMPACT_EVERY: u32 = 5;
 
@@ -206,7 +207,7 @@ pub fn spawn_recorder(state: AppState, store: Arc<MetricsStore>) {
             }
             samples = 0;
             flushes += 1;
-            let compact = flushes % COMPACT_EVERY == 0;
+            let compact = flushes % COMPACT_EVERY == 1;
             let (batch_host, batch_sessions) =
                 (std::mem::take(&mut host), std::mem::take(&mut sessions));
             let store = store.clone();

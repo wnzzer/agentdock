@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import type { Session } from '@agentdock/protocol';
 import { ApiError, providerLabel, request } from './api';
 import ProviderIcon from './ProviderIcon.vue';
+import HostHistory from './HostHistory.vue';
 import { useI18n } from '../i18n';
 
 /**
@@ -13,7 +14,10 @@ import { useI18n } from '../i18n';
  * that has no such route rather than asking again every few seconds.
  */
 interface SessionUsage { session_id: string; cpu_percent: number; memory_bytes: number }
-interface HostUsage { cpu_percent: number; cpu_count: number; memory_used_bytes: number; memory_total_bytes: number; sessions: SessionUsage[] }
+interface Fan { label: string; rpm: number; min_rpm: number | null; max_rpm: number | null }
+interface Temperature { label: string; celsius: number; critical_celsius: number | null }
+/** Fans and temperatures are absent on an older backend and empty where unreadable. */
+interface HostUsage { cpu_percent: number; cpu_count: number; memory_used_bytes: number; memory_total_bytes: number; fans?: Fan[]; temperatures?: Temperature[]; sessions: SessionUsage[] }
 const props = defineProps<{ sessions: Session[] }>();
 const { t } = useI18n();
 const usage = ref<HostUsage>(), open = ref(false), unsupported = ref(false);
@@ -42,6 +46,16 @@ const sessionRows = computed(() => {
   return (usage.value?.sessions ?? []).map(entry => ({ ...entry, session: props.sessions.find(item => item.id === entry.session_id), share: entry.cpu_percent / cores }))
     .sort((a, b) => b.memory_bytes - a.memory_bytes);
 });
+/** The fastest fan and the hottest sensor, which is what a person feels and hears. */
+const sensors = computed(() => {
+  const fans = usage.value?.fans ?? [], temperatures = usage.value?.temperatures ?? [];
+  const fan = fans.reduce<Fan | undefined>((best, item) => !best || item.rpm > best.rpm ? item : best, undefined);
+  const hottest = temperatures.length ? Math.max(...temperatures.map(item => item.celsius)) : undefined;
+  return {
+    text: [fan ? t('Fan {rpm} rpm', { rpm: fan.rpm }) : '', hottest !== undefined ? `${Math.round(hottest)} °C` : ''].filter(Boolean).join(' · '),
+    fanMax: Math.max(0, ...fans.map(item => item.max_rpm ?? 0)) || undefined,
+  };
+});
 function toggle() { open.value = !open.value; if (open.value) { if (timer) clearTimeout(timer); void poll(); } }
 </script>
 
@@ -53,6 +67,7 @@ function toggle() { open.value = !open.value; if (open.value) { if (timer) clear
     </button>
     <div v-if="open" class="host-usage-panel" role="dialog" :aria-label="t('CPU and memory on this host')">
       <header><strong>{{ t('This host') }}</strong><small>{{ t('{count} cores', { count: usage.cpu_count }) }} · {{ bytes(usage.memory_used_bytes) }} / {{ bytes(usage.memory_total_bytes) }}</small></header>
+      <p v-if="sensors.text" class="host-usage-sensors">{{ sensors.text }}</p>
       <p v-if="!sessionRows.length" class="host-usage-empty">{{ t('No session is running.') }}</p>
       <ul v-else>
         <li v-for="row in sessionRows" :key="row.session_id">
@@ -63,6 +78,7 @@ function toggle() { open.value = !open.value; if (open.value) { if (timer) clear
         </li>
       </ul>
       <small class="host-usage-note">{{ t('Each session counts its client and everything it started.') }}</small>
+      <HostHistory :sessions="sessions" :cores="usage.cpu_count" :fan-max-rpm="sensors.fanMax" />
     </div>
   </div>
 </template>
@@ -77,7 +93,7 @@ function toggle() { open.value = !open.value; if (open.value) { if (timer) clear
 .host-meter i::after{content:"";position:absolute;inset:0 auto 0 0;width:var(--fill);background:var(--bar);border-radius:3px;transition:width .6s ease}
 .host-meter.warn i{--bar:#c88a1c}.host-meter.danger i{--bar:#c2415a}
 .host-meter.danger{color:#c2415a}
-.host-usage-panel{position:absolute;right:0;bottom:calc(100% + 8px);z-index:60;width:300px;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:0 12px 32px #243b4c24;font-size:11.5px;color:var(--ink)}
+.host-usage-panel{position:absolute;right:0;bottom:calc(100% + 8px);z-index:60;width:340px;max-width:calc(100vw - 24px);max-height:calc(100vh - 80px);overflow:auto;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:0 12px 32px #243b4c24;font-size:11.5px;color:var(--ink)}
 .host-usage-panel header{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:8px}
 .host-usage-panel header strong{font-size:12.5px}
 .host-usage-panel header small{color:var(--muted);font-size:10.5px}
@@ -86,6 +102,9 @@ function toggle() { open.value = !open.value; if (open.value) { if (timer) clear
 .host-usage-panel li:hover{background:var(--sunken)}
 .host-usage-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .host-usage-figure{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink-soft)}
+/* In the phone drawer the chip sits at the left edge, so the panel opens rightwards. */
+:global(.drawer-host .host-usage .host-usage-panel){left:0;right:auto}
+.host-usage-sensors{margin:-4px 0 8px;color:var(--ink-soft);font-size:10.5px;font-variant-numeric:tabular-nums}
 .host-usage-empty{margin:6px 0;color:var(--muted)}
 .host-usage-note{display:block;margin-top:8px;font-size:10px;color:var(--muted)}
 @media(max-width:520px){.host-usage-chip{gap:8px}.host-meter i{display:none}.host-meter{white-space:nowrap}}
