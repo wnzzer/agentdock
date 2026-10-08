@@ -929,6 +929,7 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Your messages": "用户消息数",
   "{tokens} tokens on unpriced models are not included": "未计入 {tokens} 个未定价模型的 token",
   "At API list prices": "按 API 官方价格估算",
+  "At API list prices, updated {date}": "按 API 官方价格估算，价格更新于 {date}",
   "Input the cache did not serve": "未命中缓存的输入",
   "{rate}% hit rate, about {cost} saved": "命中率 {rate}%，约省下 {cost}",
   "Five-minute stretches with any activity": "有任何活动的 5 分钟时段累计",

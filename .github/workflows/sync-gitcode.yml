@@ -1,0 +1,39 @@
+name: Sync to GitCode
+
+# Mirror main and the release tags to GitCode, so data/prices.json (and the
+# source) can be reached from mainland China. GitHub is the source of truth;
+# GitCode is only a mirror and is overwritten.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+# One at a time: a push to main and a tag push must not force-push at once.
+concurrency:
+  group: sync-gitcode
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Push main and tags to GitCode
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push to GitCode
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          set -e
+          if [ -z "$GITCODE_TOKEN" ]; then
+            echo "GITCODE_TOKEN is not set; skipping the mirror"
+            exit 0
+          fi
+          REMOTE="https://wnzzer:${GITCODE_TOKEN}@gitcode.com/wnzzer/agentdock.git"
+          git fetch origin main --quiet
+          git push "$REMOTE" "refs/remotes/origin/main:refs/heads/main" --force
+          git push "$REMOTE" --tags --force

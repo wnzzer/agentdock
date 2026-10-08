@@ -77,45 +77,18 @@ impl Tokens {
     }
 }
 
-/// API list price in dollars per million tokens: input, output, cache read.
-/// Cache writes are 1.25x input for five minutes and 2x for an hour. Only
-/// models with a published price get one; the rest show tokens without a cost.
-pub fn price(model: &str) -> Option<(f64, f64, f64)> {
-    let m = model.to_ascii_lowercase();
-    let m = m.strip_prefix("anthropic.").unwrap_or(&m);
-    let has = |needle: &str| m.contains(needle);
-    Some(if has("fable") || has("mythos") {
-        (10.0, 50.0, 0.25)
-    } else if has("opus-5-5") {
-        (4.0, 20.0, 0.20)
-    } else if has("opus-5")
-        || has("opus-4-8")
-        || has("opus-4-7")
-        || has("opus-4-6")
-        || has("opus-4-5")
-    {
-        (5.0, 25.0, 0.50)
-    } else if has("opus-4") {
-        (15.0, 75.0, 1.50)
-    } else if has("sonnet-5") {
-        (2.0, 10.0, 0.20)
-    } else if has("sonnet-4") || has("sonnet-3-7") {
-        (3.0, 15.0, 0.30)
-    } else if has("haiku-4-5") {
-        (1.0, 5.0, 0.10)
-    } else if has("haiku-3-5") {
-        (0.8, 4.0, 0.08)
-    } else {
-        return None;
-    })
-}
-
-/// A price per million tokens, as the user set it for a model.
+/// A price per million tokens: the published one (price_list.rs), or one
+/// the user set for a model. A cache write is priced only where the provider
+/// charges for one; otherwise see `tokens_cost`.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Price {
     pub input: f64,
     pub output: f64,
     pub cache_read: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_1h: Option<f64>,
 }
 
 /// The one price list: what the user set, else the published price. A model
@@ -131,19 +104,25 @@ impl Prices {
         if let Some(custom) = self.models.get(&model.to_ascii_lowercase()) {
             return Some((*custom, true));
         }
-        price(model).map(|(input, output, cache_read)| {
+        crate::price_list::list().lookup(model).map(|listed| {
             (
                 Price {
-                    input,
-                    output,
-                    cache_read,
+                    input: listed.input,
+                    output: listed.output,
+                    cache_read: listed.cache_read,
+                    cache_write: listed.cache_write,
+                    cache_write_1h: listed.cache_write_1h,
                 },
                 false,
             )
         })
     }
-    pub fn cost(&self, model: &str, tokens: &Tokens) -> Option<f64> {
-        self.of(model).map(|(price, _)| tokens_cost(price, tokens))
+    fn cost(&self, call: &Call) -> Option<f64> {
+        self.cost_of(call.provider, &call.model, &call.tokens)
+    }
+    pub fn cost_of(&self, provider: Provider, model: &str, tokens: &Tokens) -> Option<f64> {
+        self.of(model)
+            .map(|(price, _)| tokens_cost(price, provider, tokens))
     }
 }
 
@@ -157,15 +136,30 @@ fn load_prices(state_dir: &Path) -> Prices {
         .unwrap_or_default()
 }
 
-fn tokens_cost(price: Price, tokens: &Tokens) -> f64 {
+/// A cache write without a price of its own costs what Anthropic charges,
+/// 1.25x input for five minutes and 2x for an hour, on Claude; on Codex it is
+/// plain input, since OpenAI charges nothing extra to cache.
+fn tokens_cost(price: Price, provider: Provider, tokens: &Tokens) -> f64 {
     let Price {
         input,
         output,
         cache_read: read,
+        cache_write,
+        cache_write_1h,
     } = price;
+    let (write, write_hour) = match provider {
+        Provider::ClaudeCode => (
+            cache_write.unwrap_or(input * 1.25),
+            cache_write_1h.unwrap_or(input * 2.0),
+        ),
+        Provider::Codex => (
+            cache_write.unwrap_or(input),
+            cache_write_1h.unwrap_or(input),
+        ),
+    };
     (tokens.input as f64 * input
-        + tokens.cache_write_5m as f64 * input * 1.25
-        + tokens.cache_write_1h as f64 * input * 2.0
+        + tokens.cache_write_5m as f64 * write
+        + tokens.cache_write_1h as f64 * write_hour
         + tokens.cache_read as f64 * read
         + tokens.output as f64 * output)
         / 1_000_000.0
@@ -538,7 +532,7 @@ impl Bucket {
         }
         self.tokens.add(&call.tokens);
         self.total += call.tokens.total();
-        match prices.cost(&call.model, &call.tokens) {
+        match prices.cost(call) {
             Some(value) => self.cost += value,
             None => self.unpriced += call.tokens.total(),
         }
@@ -599,6 +593,10 @@ pub struct Report {
     pub conversations: Vec<ConversationRow>,
     pub conversation_count: usize,
     pub directories: Vec<(String, u64)>,
+    /// When the published prices in use were last updated, and whether they
+    /// came with this build or were fetched since.
+    pub prices_updated_at: String,
+    pub prices_origin: crate::price_list::Origin,
 }
 
 #[derive(Serialize, Default)]
@@ -733,7 +731,7 @@ fn report(
                 at.hour() as usize,
             );
             heatmap[weekday][hour] += call.tokens.total();
-            heatmap_cost[weekday][hour] += prices.cost(&call.model, &call.tokens).unwrap_or(0.0);
+            heatmap_cost[weekday][hour] += prices.cost(call).unwrap_or(0.0);
             *directories.entry(call.cwd.clone()).or_default() += call.tokens.total();
         }
         providers
@@ -852,6 +850,7 @@ fn report(
         .collect();
     directories.sort_by_key(|entry| std::cmp::Reverse(entry.1));
     directories.truncate(20);
+    let (prices_updated_at, prices_origin) = crate::price_list::status();
     Report {
         from,
         to,
@@ -872,6 +871,8 @@ fn report(
         conversations,
         conversation_count,
         directories,
+        prices_updated_at,
+        prices_origin,
     }
 }
 
@@ -972,6 +973,8 @@ async fn put_prices(
             || model.len() > 200
             || ![price.input, price.output, price.cache_read]
                 .into_iter()
+                .chain(price.cache_write)
+                .chain(price.cache_write_1h)
                 .all(sane)
         {
             return Err(crate::ApiError::bad("Invalid model price"));
@@ -1181,7 +1184,7 @@ async fn allowance(State(state): State<AppState>) -> Result<Json<Vec<Allowance>>
                     .filter(|call| call.provider == provider && call.at >= start)
                 {
                     tokens += call.tokens.total();
-                    cost += prices.cost(&call.model, &call.tokens).unwrap_or(0.0);
+                    cost += prices.cost(call).unwrap_or(0.0);
                 }
                 let (total, remaining, total_cost, remaining_cost, low) =
                     estimate(used_percent, tokens, cost);
@@ -1255,7 +1258,7 @@ mod tests {
             &codex,
             &[
                 serde_json::json!({"timestamp":"2026-10-01T11:00:00Z","type":"session_meta","payload":{"id":"x1","cwd":"/repo"}}),
-                serde_json::json!({"timestamp":"2026-10-01T11:00:00Z","type":"turn_context","payload":{"model":"gpt-6-astra","cwd":"/repo"}}),
+                serde_json::json!({"timestamp":"2026-10-01T11:00:00Z","type":"turn_context","payload":{"model":"house-model-x","cwd":"/repo"}}),
                 count(105, 100),
                 // A repeated running total is a rate-limit update, not a call.
                 count(105, 100),
@@ -1419,6 +1422,8 @@ mod tests {
                 input: 1.0,
                 output: 8.0,
                 cache_read: 0.1,
+                cache_write: None,
+                cache_write_1h: None,
             },
         );
         let tokens = Tokens {
@@ -1427,13 +1432,57 @@ mod tests {
             cache_read: 1_000_000,
             ..Tokens::default()
         };
-        assert_eq!(prices.cost("GPT-6-Astra", &tokens), Some(9.1));
+        assert_eq!(
+            prices.cost_of(Provider::Codex, "GPT-6-Astra", &tokens),
+            Some(9.1)
+        );
         assert!(
             prices
                 .of("claude-opus-5-5")
                 .is_some_and(|(_, custom)| !custom)
         );
-        assert_eq!(prices.cost("mystery-model", &tokens), None);
+        assert_eq!(
+            prices.cost_of(Provider::ClaudeCode, "mystery-model", &tokens),
+            None
+        );
+    }
+
+    #[test]
+    fn gpt_is_priced_and_only_claude_pays_extra_to_cache() {
+        let prices = Prices::default();
+        let writes = Tokens {
+            cache_write_5m: 1_000_000,
+            ..Tokens::default()
+        };
+        let gpt = prices.of("gpt-5.5").expect("GPT has a published price").0;
+        assert_eq!(gpt.cache_write, None);
+        assert_eq!(
+            prices.cost_of(Provider::Codex, "gpt-5.5-codex", &writes),
+            Some(gpt.input),
+            "a Codex cache write costs plain input"
+        );
+        let opus = prices.of("claude-opus-5-5").unwrap().0;
+        assert_eq!(
+            prices.cost_of(Provider::ClaudeCode, "claude-opus-5-5", &writes),
+            opus.cache_write,
+            "Claude pays the listed write price"
+        );
+        // A price the user set without a write price keeps the old rule on Claude.
+        let mut custom = Prices::default();
+        custom.models.insert(
+            "claude-house".into(),
+            Price {
+                input: 2.0,
+                output: 0.0,
+                cache_read: 0.0,
+                cache_write: None,
+                cache_write_1h: None,
+            },
+        );
+        assert_eq!(
+            custom.cost_of(Provider::ClaudeCode, "claude-house", &writes),
+            Some(2.5)
+        );
     }
 
     #[test]
@@ -1451,11 +1500,23 @@ mod tests {
 
     #[test]
     fn prices_exist_only_for_published_models() {
-        assert_eq!(price("claude-opus-5-5"), Some((4.0, 20.0, 0.20)));
-        assert_eq!(price("claude-sonnet-4-5-20250929"), Some((3.0, 15.0, 0.30)));
-        assert_eq!(price("claude-opus-4-1-20250805"), Some((15.0, 75.0, 1.50)));
-        assert_eq!(price("claude-fable-5-1"), Some((10.0, 50.0, 0.25)));
-        assert_eq!(price("gpt-6-astra"), None);
+        let prices = Prices::default();
+        let listed = |model: &str| {
+            prices
+                .of(model)
+                .map(|(price, _)| (price.input, price.output, price.cache_read))
+        };
+        assert_eq!(listed("claude-opus-5-5"), Some((4.0, 20.0, 0.20)));
+        assert_eq!(listed("claude-fable-5-1"), Some((10.0, 50.0, 0.25)));
+        assert_eq!(
+            listed("claude-sonnet-4-5-20250929"),
+            Some((3.0, 15.0, 0.30))
+        );
+        // Retired models LiteLLM no longer lists keep their published price.
+        assert_eq!(listed("claude-opus-4-1-20250805"), Some((15.0, 75.0, 1.50)));
+        assert_eq!(listed("claude-3-5-haiku-20241022"), Some((0.8, 4.0, 0.08)));
+        assert_eq!(listed("gpt-5.5"), Some((5.0, 30.0, 0.5)));
+        assert_eq!(listed("house-model-x"), None, "no published price");
     }
 
     #[test]

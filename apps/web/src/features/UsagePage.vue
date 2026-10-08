@@ -66,8 +66,12 @@ const tiles = computed(() => {
   const now = data.totals, before = data.previous;
   const cache = (bucket: UsageBucket) => bucket.cache_read + bucket.cache_write_5m + bucket.cache_write_1h;
   const messages = (bucket: UsageBucket) => bucket.calls + bucket.user_messages;
+  const pricedAt = data.prices_updated_at ? new Date(data.prices_updated_at) : undefined;
+  const listPrices = pricedAt && !Number.isNaN(pricedAt.getTime())
+    ? t('At API list prices, updated {date}', { date: pricedAt.toLocaleDateString() })
+    : t('At API list prices');
   return [
-    { key: 'cost', label: 'Estimated cost', value: formatCost(now.cost), change: trend(now.cost, before.cost), tone: 'cost', hint: now.unpriced ? t('{tokens} tokens on unpriced models are not included', { tokens: formatTokens(now.unpriced) }) : t('At API list prices') },
+    { key: 'cost', label: 'Estimated cost', value: formatCost(now.cost), change: trend(now.cost, before.cost), tone: 'cost', hint: now.unpriced ? t('{tokens} tokens on unpriced models are not included', { tokens: formatTokens(now.unpriced) }) : listPrices },
     { key: 'total', label: 'Total tokens', value: formatTokens(now.total), change: trend(now.total, before.total) },
     { key: 'input', label: 'Input tokens', value: formatTokens(now.input), change: trend(now.input, before.input), hint: t('Input the cache did not serve') },
     { key: 'output', label: 'Output tokens', value: formatTokens(now.output), change: trend(now.output, before.output) },

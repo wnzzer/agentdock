@@ -43,6 +43,8 @@ export interface UsageReport {
   conversations: UsageConversation[];
   conversation_count: number;
   directories: Array<[string, number]>;
+  /** When the published prices were last updated; absent from an older backend. */
+  prices_updated_at?: string;
 }
 export interface Allowance {
   account_id: string;

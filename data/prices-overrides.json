@@ -1,0 +1,48 @@
+{
+  "//": "Prices that win over LiteLLM's, in dollars per million tokens, and the models a generated list must contain. Add a model here when LiteLLM lacks it or has it wrong. The Claude 4 and 3.x entries are retired models LiteLLM no longer lists, at their published prices, so older usage keeps a cost.",
+  "required": [
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+    "claude-haiku-4-5",
+    "claude-fable-5-1",
+    "gpt-5.5",
+    "gpt-5"
+  ],
+  "models": {
+    "claude-opus-4": {
+      "input": 15,
+      "output": 75,
+      "cacheRead": 1.5,
+      "cacheWrite": 18.75,
+      "cacheWrite1h": 30
+    },
+    "claude-opus-4-1": {
+      "input": 15,
+      "output": 75,
+      "cacheRead": 1.5,
+      "cacheWrite": 18.75,
+      "cacheWrite1h": 30
+    },
+    "claude-sonnet-4": {
+      "input": 3,
+      "output": 15,
+      "cacheRead": 0.3,
+      "cacheWrite": 3.75,
+      "cacheWrite1h": 6
+    },
+    "claude-3-7-sonnet": {
+      "input": 3,
+      "output": 15,
+      "cacheRead": 0.3,
+      "cacheWrite": 3.75,
+      "cacheWrite1h": 6
+    },
+    "claude-3-5-haiku": {
+      "input": 0.8,
+      "output": 4,
+      "cacheRead": 0.08,
+      "cacheWrite": 1,
+      "cacheWrite1h": 1.6
+    }
+  }
+}

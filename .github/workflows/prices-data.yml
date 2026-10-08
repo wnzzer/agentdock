@@ -1,0 +1,67 @@
+name: Prices Data
+
+# LiteLLM's community price list -> data/prices.json, the published price of
+# each model Claude Code and Codex call. The server fetches that file from a
+# CDN or the GitCode mirror (crates/server/src/price_list.rs), so a price
+# changes without a release. Nothing is committed when the prices are
+# unchanged, or when the new list fails the checks in scripts/prices/lib.mjs.
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: prices-data
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history, or the GitCode mirror push below would lack commits.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Test the generator
+        run: node --test scripts/prices/*.test.mjs
+
+      - name: Generate prices
+        run: node scripts/prices/generate.mjs
+
+      # Only from main: a dispatch from another branch must never push.
+      - name: Commit and push if changed
+        id: commit
+        if: github.ref == 'refs/heads/main'
+        run: |
+          if [ -z "$(git status --porcelain -- data/prices.json)" ]; then
+            echo "prices unchanged"
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/prices.json
+          git commit -m "Update model prices"
+          git push origin HEAD:main
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      # A push made with GITHUB_TOKEN does not start sync-gitcode.yml, so the
+      # mirror is updated here.
+      - name: Mirror to GitCode
+        if: steps.commit.outputs.pushed == 'true'
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          if [ -z "$GITCODE_TOKEN" ]; then
+            echo "GITCODE_TOKEN is not set; skipping the mirror"
+            exit 0
+          fi
+          git push "https://wnzzer:${GITCODE_TOKEN}@gitcode.com/wnzzer/agentdock.git" HEAD:main --force
