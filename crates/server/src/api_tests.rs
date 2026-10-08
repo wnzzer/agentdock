@@ -1075,7 +1075,7 @@ async fn a_key_saved_in_agentdock_reaches_the_client_and_never_comes_back() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(saved, json!({"name":name,"source":"agentdock"}));
+    assert_eq!(saved, json!({"name":name,"source":"agentdock","stored":true}));
     let (status, listed) = call(f.app(), "GET", "/api/secrets", Value::Null).await;
     assert_eq!(status, StatusCode::OK);
     assert!(

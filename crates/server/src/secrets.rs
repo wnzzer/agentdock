@@ -153,13 +153,17 @@ pub struct SecretName {
     /// `environment` when the server's environment sets it (and so wins),
     /// otherwise `agentdock`.
     pub source: &'static str,
+    /// Whether AgentDock keeps a value of its own under this name: the one
+    /// used once the server's environment no longer sets it.
+    pub stored: bool,
 }
 
 /// Every name that resolves, and from where. Never the values.
 pub fn list(state_dir: &Path) -> Vec<SecretName> {
-    let mut names: BTreeMap<String, &'static str> = read(state_dir)
-        .into_keys()
-        .map(|name| (name, "agentdock"))
+    let stored: std::collections::BTreeSet<String> = read(state_dir).into_keys().collect();
+    let mut names: BTreeMap<String, &'static str> = stored
+        .iter()
+        .map(|name| (name.clone(), "agentdock"))
         .collect();
     for (name, value) in std::env::vars() {
         if valid_name(&name) && !value.is_empty() {
@@ -168,8 +172,27 @@ pub fn list(state_dir: &Path) -> Vec<SecretName> {
     }
     names
         .into_iter()
-        .map(|(name, source)| SecretName { name, source })
+        .map(|(name, source)| SecretName {
+            stored: stored.contains(&name),
+            name,
+            source,
+        })
         .collect()
+}
+
+/// Keep in AgentDock the value the server's environment gives `name`, so a
+/// profile that read the key from there goes on working once it is gone.
+/// The value is read and written here; it never travels to the browser.
+pub fn adopt(state_dir: &Path, name: &str, value: Option<String>) -> Result<SecretName, ApiError> {
+    let value = value
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::bad(format!("{name} is not set in the server's environment")))?;
+    store(state_dir, name, &value)?;
+    Ok(SecretName {
+        name: name.to_owned(),
+        source: "environment",
+        stored: true,
+    })
 }
 
 #[derive(serde::Deserialize)]
@@ -179,10 +202,11 @@ struct SecretValue {
 }
 
 pub fn routes() -> axum::Router<crate::AppState> {
-    use axum::routing::{get, put};
+    use axum::routing::{get, post, put};
     axum::Router::new()
         .route("/api/secrets", get(list_secrets))
         .route("/api/secrets/{name}", put(put_secret).delete(delete_secret))
+        .route("/api/secrets/{name}/adopt", post(adopt_secret))
 }
 
 async fn list_secrets(
@@ -205,7 +229,21 @@ async fn put_secret(
         } else {
             "agentdock"
         },
+        stored: true,
     }))
+}
+
+async fn adopt_secret(
+    axum::extract::State(state): axum::extract::State<crate::AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> Result<axum::Json<SecretName>, ApiError> {
+    if !valid_name(&name) {
+        return Err(ApiError::bad(
+            "Secret names are AGENTDOCK_SECRET_ followed by capitals, digits or _",
+        ));
+    }
+    let value = std::env::var(&name).ok();
+    Ok(axum::Json(adopt(&state.state_dir, &name, value)?))
 }
 
 async fn delete_secret(
@@ -251,7 +289,8 @@ mod tests {
         let names = list(&dir);
         assert!(names.contains(&SecretName {
             name: "AGENTDOCK_SECRET_FILE_ONLY_B".into(),
-            source: "agentdock"
+            source: "agentdock",
+            stored: true,
         }));
         assert!(!fs::read_dir(&dir).unwrap().any(|entry| {
             entry
@@ -260,6 +299,25 @@ mod tests {
                 .to_string_lossy()
                 .starts_with('.')
         }));
+    }
+
+    #[test]
+    fn a_key_from_the_environment_is_kept_once_adopted() {
+        let dir = directory();
+        let name = "AGENTDOCK_SECRET_ADOPTED_ONLY";
+        assert!(adopt(&dir, name, None).is_err(), "nothing to keep");
+        assert!(adopt(&dir, name, Some(String::new())).is_err());
+        let adopted = adopt(&dir, name, Some("sk-from-env".into())).unwrap();
+        assert!(adopted.stored);
+        assert_eq!(
+            read(&dir).get(name).map(String::as_str),
+            Some("sk-from-env")
+        );
+        assert!(
+            list(&dir)
+                .iter()
+                .any(|entry| entry.name == name && entry.stored)
+        );
     }
 
     #[test]

@@ -14,7 +14,7 @@ import ModalDialog from "./ModalDialog.vue";
 import Icon from "./Icon.vue";
 import ProviderIcon from "./ProviderIcon.vue";
 import ModelPicker from "./ModelPicker.vue";
-import { ownStoredSecret, referencedSecret, secretNameFor, type SecretName } from "./secret-names";
+import { isStored, ownStoredSecret, referencedSecret, secretNameFor, type SecretName } from "./secret-names";
 const { t } = useI18n();
 const props = defineProps<{ profiles: EndpointProfile[]; embedded?: boolean }>();
 const embedded = computed(() => props.embedded === true);
@@ -45,14 +45,34 @@ const secretMode = ref<"stored" | "env">("stored"), apiKey = ref("");
 const storedSecrets = ref<SecretName[]>([]);
 const otherReferences = computed(() => props.profiles.filter(profile => profile.id !== editing.value).map(profile => profile.secret_ref));
 /** The stored key this profile uses now, shown as "saved". */
-const storedKey = computed(() => { const name = referencedSecret(form.secret_ref); return name && storedSecrets.value.some(entry => entry.name === name && entry.source === "agentdock") ? name : undefined; });
+const storedKey = computed(() => { const name = referencedSecret(form.secret_ref); return name && isStored(storedSecrets.value, name) ? name : undefined; });
+/** The variable the server sets that this profile reads, while AgentDock has no copy of it. */
+const adoptable = computed(() => { const name = referencedSecret(form.secret_ref); return name && !isStored(storedSecrets.value, name) && storedSecrets.value.some(entry => entry.name === name && entry.source === "environment") ? name : undefined; });
+/** The server also sets the stored key's name, and wins while it does. */
+const shadowed = computed(() => !!storedKey.value && storedSecrets.value.some(entry => entry.name === storedKey.value && entry.source === "environment"));
+const adopting = ref(false);
+/** Keep the server's value in AgentDock: read and written on the server, never sent here. */
+async function adoptKey() {
+  const name = adoptable.value;
+  if (!name || adopting.value) return;
+  adopting.value = true; error.value = "";
+  try { await request<SecretName>(`/secrets/${encodeURIComponent(name)}/adopt`, json("POST")); await loadSecrets(); secretMode.value = "stored"; }
+  catch (cause) { error.value = errorMessage(cause); }
+  finally { adopting.value = false; }
+}
 async function loadSecrets() {
   if (!backendCapabilities.storedSecrets) return;
   try { storedSecrets.value = await request<SecretName[]>("/secrets"); } catch { /* The form still works with references. */ }
 }
+// The backend's capabilities can arrive after this page opens (a reload
+// straight onto Settings); until they do, no key list is read, and the form
+// would think every key lives only on the server.
+watch(() => backendCapabilities.storedSecrets, available => {
+  if (available) void loadSecrets().then(() => { if (!apiKey.value) chooseSecretMode(form.secret_ref); });
+});
 function chooseSecretMode(reference: string | null | undefined) {
   const name = referencedSecret(reference);
-  secretMode.value = !backendCapabilities.storedSecrets || (name && !storedSecrets.value.some(entry => entry.name === name && entry.source === "agentdock")) ? "env" : "stored";
+  secretMode.value = !backendCapabilities.storedSecrets || (name && !isStored(storedSecrets.value, name)) ? "env" : "stored";
 }
 /** Store a pasted key and point the form at it. Its own key is replaced in
  * place; otherwise a fresh name, so no other profile's key is overwritten. */
@@ -68,7 +88,7 @@ async function storePastedKey() {
 /** A stored key no profile points at any more is deleted with it. */
 async function releaseSecret(reference: string | null | undefined, remaining: Array<string | null | undefined>) {
   const name = referencedSecret(reference);
-  if (!name || !storedSecrets.value.some(entry => entry.name === name && entry.source === "agentdock") || remaining.some(other => referencedSecret(other) === name)) return;
+  if (!name || !isStored(storedSecrets.value, name) || remaining.some(other => referencedSecret(other) === name)) return;
   try { await request("/secrets/" + encodeURIComponent(name), json("DELETE")); } catch { /* An orphaned key is harmless. */ }
   await loadSecrets();
 }
@@ -215,17 +235,17 @@ onBeforeUnmount(()=>{discoveryRevision++;});
           <label>{{ t('Endpoint URL') }}<input v-model="form.endpoint_url" type="url" :placeholder="t('Official endpoint when empty')" autocomplete="off" /></label>
           <label>{{ t('Proxy URL') }}<input v-model="form.proxy_url" type="url" placeholder="http://127.0.0.1:7890" autocomplete="off" /></label>
           <p class="form-help">{{ t('Applied on the server. Empty uses the host network.') }}<template v-if="form.provider==='claude_code'"> {{ t('Claude Code does not support SOCKS.') }}</template></p>
-          <div v-if="backendCapabilities.storedSecrets" class="secret-mode" role="radiogroup" :aria-label="t('Where the API key is kept')">
-            <label><input v-model="secretMode" type="radio" value="stored" />{{ t('Save the key in AgentDock') }}</label>
-            <label><input v-model="secretMode" type="radio" value="env" />{{ t('Server environment variable') }}</label>
-          </div>
           <template v-if="secretMode==='stored'">
             <label>{{ t('API key') }}<input v-model="apiKey" type="password" autocomplete="new-password" spellcheck="false" :placeholder="storedKey ? t('Saved · leave empty to keep it') : t('Empty for an endpoint without a key')" /></label>
             <p class="form-help">{{ storedKey ? t('Kept as {name} in the state directory, readable only by you. It never returns to the browser.', { name: storedKey }) : t('Kept in the state directory, readable only by you, and usable at once. It never returns to the browser.') }}<button v-if="storedKey" type="button" class="text-button danger-text secret-clear" @click="form.secret_ref=''">{{ t('Stop using this key') }}</button></p>
+            <p v-if="shadowed" class="form-help">{{ t("The server's environment also sets {name}, and that value is used until it is removed there.", { name: storedKey ?? '' }) }}</p>
+            <button v-if="backendCapabilities.storedSecrets" type="button" class="text-button secret-switch" @click="secretMode='env'">{{ t('Use a server environment variable instead') }}</button>
           </template>
           <template v-else>
+            <div v-if="adoptable && backendCapabilities.storedSecrets" class="inline-notice secret-adopt"><span>{{ t("This profile reads its key from {name} in the server's environment.", { name: adoptable }) }}</span><button type="button" class="small-button" :disabled="adopting" @click="adoptKey">{{ t('Keep it in AgentDock') }}</button></div>
             <label>{{ t('Secret reference') }} <small>{{ t('never an API key') }}</small><input v-model="form.secret_ref" placeholder="env:AGENTDOCK_SECRET_PROVIDER_KEY" autocomplete="off" spellcheck="false" /></label>
             <p :class="secretValid?'form-help':'inline-error'">{{ secretValid?t('Name a server environment variable such as env:AGENTDOCK_SECRET_WORK. Its value never reaches the browser.'):t('Enter an environment reference, not the secret itself.') }}</p>
+            <button v-if="backendCapabilities.storedSecrets" type="button" class="text-button secret-switch" @click="secretMode='stored'">{{ t('Save the key in AgentDock instead') }}</button>
           </template>
           <div class="model-fetch"><strong>{{ t('Model selection') }}</strong><button type="button" class="small-button" :disabled="discovering||!backendCapabilities.models||!secretValid||!!aliases.error" :title="!backendCapabilities.models?t('Backend upgrade required'):t('Reads the endpoint\'s model list. No model is run.')" @click="discover"><Icon name="refresh" :size="14" />{{ discovering?t('Loading models…'):t('Load models from endpoint') }}</button></div>
           <div v-if="modelError" class="inline-error" role="alert">{{ modelError }}<p>{{ t('You can still enter a model ID or alias manually.') }}</p></div>
@@ -267,6 +287,8 @@ onBeforeUnmount(()=>{discoveryRevision++;});
   </ModalDialog>
 </template>
 <style scoped>
+.secret-switch{align-self:flex-start;margin-top:-6px}
+.secret-adopt{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}
 .model-slots{display:flex;flex-direction:column;gap:6px;margin-top:-4px}
 .model-slots .text-button{display:inline;margin-left:4px}
 .model-slot{display:grid;grid-template-columns:64px minmax(0,190px) minmax(0,1fr);align-items:center;gap:8px}

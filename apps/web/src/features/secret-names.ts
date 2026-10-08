@@ -7,7 +7,13 @@
  * never under one another profile already uses: that would silently change
  * the key behind someone else's endpoint.
  */
-export interface SecretName { name: string; source: "agentdock" | "environment" }
+/** `stored`: AgentDock keeps a value under the name (absent from an older server, where `source` says it). */
+export interface SecretName { name: string; source: "agentdock" | "environment"; stored?: boolean }
+
+/** Whether AgentDock itself keeps the key `name`, whichever source wins now. */
+export function isStored(entries: readonly SecretName[], name: string): boolean {
+  return entries.some(entry => entry.name === name && (entry.stored ?? entry.source === "agentdock"));
+}
 
 export const SECRET_PREFIX = "AGENTDOCK_SECRET_";
 const REFERENCE = /^env:(AGENTDOCK_SECRET_[A-Z0-9_]+)$/;
@@ -31,6 +37,6 @@ export function secretNameFor(label: string, taken: Iterable<string>): string {
  */
 export function ownStoredSecret(reference: string | null | undefined, stored: SecretName[], otherReferences: Array<string | null | undefined>): string | undefined {
   const name = referencedSecret(reference);
-  if (!name || !stored.some(entry => entry.name === name && entry.source === "agentdock")) return undefined;
+  if (!name || !isStored(stored, name)) return undefined;
   return otherReferences.some(other => referencedSecret(other) === name) ? undefined : name;
 }
