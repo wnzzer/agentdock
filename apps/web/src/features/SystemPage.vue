@@ -5,6 +5,8 @@ import { ApiError, errorMessage, providerLabel, request } from './api';
 import PageShell from './PageShell.vue';
 import ProviderIcon from './ProviderIcon.vue';
 import Icon from './Icon.vue';
+import HostHistory from './HostHistory.vue';
+import { gigahertz } from './host-history';
 import { useI18n } from '../i18n';
 import { formatBytes, formatDuration, formatRate, levelFor, pushSample, sparkPath } from './system-format';
 
@@ -21,9 +23,14 @@ interface SystemDetail {
   disks: Array<{ name: string; mount_point: string; file_system: string; kind: string; total_bytes: number; available_bytes: number; removable: boolean; read_only: boolean }>;
   networks: Array<{ name: string; received_per_second: number; transmitted_per_second: number; total_received_bytes: number; total_transmitted_bytes: number }>;
   temperatures: Array<{ label: string; celsius: number; critical_celsius: number | null }>;
+  /** Absent on an older backend; empty where the machine reports none. */
+  fans?: Array<{ label: string; rpm: number; min_rpm: number | null; max_rpm: number | null }>;
+  /** Each cluster's clock while running, null when it sat idle; live only where the platform says. */
+  cpu_frequencies?: CpuFrequency[];
   processes: Array<{ pid: number; name: string; cpu_percent: number; memory_bytes: number }>;
   sessions: Array<{ session_id: string; cpu_percent: number; memory_bytes: number }>;
 }
+interface CpuFrequency { label: string; kind: 'efficiency' | 'performance' | null; mhz: number | null; max_mhz: number | null }
 const props = defineProps<{ sessions: Session[] }>();
 const emit = defineEmits<{ back: []; openSession: [session: Session] }>();
 const { t } = useI18n();
@@ -66,6 +73,20 @@ const sessionRows = computed(() => {
   return (detail.value?.sessions ?? []).map(entry => ({ ...entry, session: props.sessions.find(item => item.id === entry.session_id), share: entry.cpu_percent / cores }))
     .sort((a, b) => b.memory_bytes - a.memory_bytes);
 });
+/** Performance clusters first, numbered only when a chip has more than one of a kind. */
+const clocks = computed(() => {
+  const all = detail.value?.cpu_frequencies ?? [];
+  const rank = (item: CpuFrequency) => item.kind === 'performance' ? 0 : item.kind === 'efficiency' ? 1 : 2;
+  const name = (item: CpuFrequency) => {
+    if (!item.kind) return t('CPU');
+    const same = all.filter(other => other.kind === item.kind);
+    const base = t(item.kind === 'performance' ? 'P-cores' : 'E-cores');
+    return same.length > 1 ? `${base} ${same.indexOf(item) + 1}` : base;
+  };
+  return [...all].sort((a, b) => rank(a) - rank(b)).map(item => `${name(item)} ${item.mhz == null ? t('idle') : gigahertz(item.mhz)}`).join(' · ');
+});
+const fanMax = computed(() => Math.max(0, ...(detail.value?.fans ?? []).map(fan => fan.max_rpm ?? 0)) || undefined);
+const clockMax = computed(() => Math.max(0, ...(detail.value?.cpu_frequencies ?? []).map(item => item.max_mhz ?? 0)) || undefined);
 const subtitle = computed(() => {
   const host = detail.value?.host;
   if (!host) return undefined;
@@ -83,7 +104,8 @@ const subtitle = computed(() => {
         <div class="system-facts">
           <span><Icon name="clock" :size="14" />{{ t('Up {time}', { time: formatDuration(detail.host.uptime_seconds) }) }}</span>
           <span><Icon name="spark" :size="14" />AgentDock {{ detail.host.agentdock_version }} · {{ t('running {time}', { time: formatDuration(detail.host.agentdock_uptime_seconds) }) }}</span>
-          <span v-if="detail.cpu.brand"><Icon name="gauge" :size="14" />{{ detail.cpu.brand }}<template v-if="detail.cpu.frequency_mhz"> · {{ (detail.cpu.frequency_mhz / 1000).toFixed(1) }} GHz</template></span>
+          <span v-if="detail.cpu.brand"><Icon name="gauge" :size="14" />{{ detail.cpu.brand }}<template v-if="detail.cpu.frequency_mhz && !clocks"> · {{ (detail.cpu.frequency_mhz / 1000).toFixed(1) }} GHz</template></span>
+          <span v-if="clocks" :title="t('Clock while running, over the last moment')"><Icon name="gauge" :size="14" />{{ clocks }}</span>
         </div>
 
         <div class="system-tiles">
@@ -116,6 +138,8 @@ const subtitle = computed(() => {
           </article>
         </div>
 
+        <HostHistory :sessions="sessions" :cores="detail.cpu.count" :fan-max-rpm="fanMax" :clock-max-mhz="clockMax" @open-session="emit('openSession', $event)" />
+
         <div class="system-grid">
           <section class="system-card">
             <h2>{{ t('CPU cores') }}</h2>
@@ -143,9 +167,10 @@ const subtitle = computed(() => {
             </table>
           </section>
 
-          <section v-if="detail.temperatures.length" class="system-card">
-            <h2>{{ t('Temperatures') }}</h2>
+          <section v-if="detail.temperatures.length || detail.fans?.length" class="system-card">
+            <h2>{{ t(detail.fans?.length ? 'Temperatures and fans' : 'Temperatures') }}</h2>
             <ul class="temps">
+              <li v-for="fan in detail.fans" :key="fan.label" class="ok" :title="fan.max_rpm ? t('up to {rpm} rpm', { rpm: fan.max_rpm }) : undefined"><span>{{ fan.label }}</span><strong>{{ fan.rpm }} rpm</strong></li>
               <li v-for="item in detail.temperatures" :key="item.label" :class="levelFor(item.critical_celsius ? item.celsius / item.critical_celsius * 100 : item.celsius)"><span>{{ item.label }}</span><strong>{{ Math.round(item.celsius) }}°C</strong></li>
             </ul>
           </section>

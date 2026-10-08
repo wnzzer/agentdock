@@ -1106,6 +1106,7 @@ mod tests {
                 operations: Arc::new(tokio::sync::Mutex::new(())),
                 agents: crate::agent::AgentRegistry::default(),
                 activity: crate::activity::Activity::default(),
+                metrics: None,
             };
             Self { state, root }
         }

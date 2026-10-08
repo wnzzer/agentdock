@@ -1,16 +1,27 @@
-//! Host and per-session CPU and memory, for the status bar, and the fuller
-//! picture of the machine (disks, network, load, temperatures) for the
-//! system page.
+//! Host and per-session CPU and memory for the status bar, and the fuller
+//! picture of the machine (disks, network, load, temperatures, fans and CPU
+//! clocks where they can be read) for the system page.
 //!
 //! Read-only and cheap: one sampler shared by every request, refreshed at most
 //! once a second, so several open browsers polling it do not multiply the
 //! work. CPU is a rate, so the first reading after start is only a baseline.
-use crate::{AppState, Result};
-use axum::{Json, Router, extract::State, routing::get};
-use serde::Serialize;
+//!
+//! A background recorder also samples on its own clock, whether or not a
+//! browser is open, and keeps the history in a separate metrics database.
+use crate::{
+    ApiError, AppState, Result,
+    sensors::{self, CpuClock, CpuFrequency, Fan, Temperature},
+};
+use agentdock_persistence::metrics::{self, HostPoint, MetricsStore, SessionPoint};
+use axum::{
+    Json, Router,
+    extract::{Query, State},
+    routing::get,
+};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 use sysinfo::{Components, DiskKind, Disks, Networks, Pid, ProcessesToUpdate, System};
@@ -30,15 +41,20 @@ pub struct HostUsage {
     pub cpu_count: usize,
     pub memory_used_bytes: u64,
     pub memory_total_bytes: u64,
+    /// Empty where the platform does not report them.
+    pub cpu_frequencies: Vec<CpuFrequency>,
+    pub fans: Vec<Fan>,
+    pub temperatures: Vec<Temperature>,
     pub sessions: Vec<SessionUsage>,
 }
 
 struct Sampler {
     system: System,
+    components: Components,
+    clock: CpuClock,
     sampled: Option<(Instant, HostUsage)>,
     disks: Disks,
     networks: Networks,
-    components: Components,
     /// When the network counters were last read, to turn bytes into a rate.
     networks_at: Instant,
     detail: Option<(Instant, SystemDetail)>,
@@ -51,10 +67,11 @@ fn sampler() -> &'static Mutex<Sampler> {
         system.refresh_cpu_usage();
         Mutex::new(Sampler {
             system,
+            components: Components::new_with_refreshed_list(),
+            clock: CpuClock::new(),
             sampled: None,
             disks: Disks::new_with_refreshed_list(),
             networks: Networks::new_with_refreshed_list(),
-            components: Components::new_with_refreshed_list(),
             networks_at: Instant::now(),
             detail: None,
         })
@@ -95,7 +112,12 @@ pub fn sample(roots: Vec<(String, u32)>) -> HostUsage {
     {
         return usage.clone();
     }
-    let system = &mut guard.system;
+    let Sampler {
+        system,
+        components,
+        clock,
+        ..
+    } = &mut *guard;
     system.refresh_cpu_usage();
     system.refresh_memory();
     system.refresh_processes(ProcessesToUpdate::All, true);
@@ -115,6 +137,9 @@ pub fn sample(roots: Vec<(String, u32)>) -> HostUsage {
         cpu_count: system.cpus().len(),
         memory_used_bytes: system.used_memory(),
         memory_total_bytes: system.total_memory(),
+        cpu_frequencies: clock.sample(system),
+        fans: sensors::fans(),
+        temperatures: sensors::temperatures(components),
         sessions,
     };
     guard.sampled = Some((Instant::now(), usage.clone()));
@@ -181,13 +206,6 @@ pub struct NetworkDetail {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Temperature {
-    pub label: String,
-    pub celsius: f32,
-    pub critical_celsius: Option<f32>,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct ProcessDetail {
     pub pid: u32,
     pub name: String,
@@ -205,7 +223,10 @@ pub struct SystemDetail {
     pub memory: MemoryDetail,
     pub disks: Vec<DiskDetail>,
     pub networks: Vec<NetworkDetail>,
+    /// The hottest sensors first.
     pub temperatures: Vec<Temperature>,
+    pub fans: Vec<Fan>,
+    pub cpu_frequencies: Vec<CpuFrequency>,
     /// The busiest processes on the machine, by CPU then memory.
     pub processes: Vec<ProcessDetail>,
     pub sessions: Vec<SessionUsage>,
@@ -240,8 +261,11 @@ fn real_disk(disk: &sysinfo::Disk) -> bool {
         && !mount.starts_with("/boot/efi")
 }
 
+/// Temperatures, fans, clocks and sessions come from the status bar's sample,
+/// taken first, so the hardware is read once however both are asked for.
 pub fn detail(roots: Vec<(String, u32)>) -> SystemDetail {
-    let sessions = sample(roots).sessions;
+    let usage = sample(roots);
+    let sessions = usage.sessions;
     let mut guard = sampler().lock().expect("resource sampler");
     if let Some((at, detail)) = &guard.detail
         && at.elapsed() < Duration::from_secs(1)
@@ -253,7 +277,6 @@ pub fn detail(roots: Vec<(String, u32)>) -> SystemDetail {
     let guard = &mut *guard;
     let system = &guard.system;
     guard.disks.refresh(true);
-    guard.components.refresh(true);
     let elapsed = guard.networks_at.elapsed().as_secs_f64().max(0.001);
     guard.networks.refresh(true);
     guard.networks_at = Instant::now();
@@ -308,19 +331,7 @@ pub fn detail(roots: Vec<(String, u32)>) -> SystemDetail {
         std::cmp::Reverse(network.total_received_bytes + network.total_transmitted_bytes)
     });
 
-    let mut temperatures: Vec<Temperature> = guard
-        .components
-        .list()
-        .iter()
-        .filter_map(|component| {
-            let celsius = component.temperature()?;
-            (celsius.is_finite() && celsius > 0.0).then(|| Temperature {
-                label: component.label().to_string(),
-                celsius,
-                critical_celsius: component.critical(),
-            })
-        })
-        .collect();
+    let mut temperatures = usage.temperatures;
     temperatures.sort_by(|a, b| b.celsius.total_cmp(&a.celsius));
     temperatures.truncate(8);
 
@@ -381,6 +392,8 @@ pub fn detail(roots: Vec<(String, u32)>) -> SystemDetail {
         disks,
         networks,
         temperatures,
+        fans: usage.fans,
+        cpu_frequencies: usage.cpu_frequencies,
         processes,
         sessions,
     };
@@ -411,14 +424,204 @@ async fn usage(State(state): State<AppState>) -> Result<Json<HostUsage>> {
     let roots = session_roots(&state);
     let usage = tokio::task::spawn_blocking(move || sample(roots))
         .await
-        .map_err(crate::ApiError::internal)?;
+        .map_err(ApiError::internal)?;
     Ok(Json(usage))
+}
+
+/// Raw samples are buffered and written once a minute; the rollups run on the
+/// first write and every fifth after, always straight after one, so no sample
+/// still in the buffer belongs to a bucket being rolled up. The first write
+/// catches up on whatever a short earlier run left unrolled.
+const FLUSH_EVERY: u32 = 12;
+const COMPACT_EVERY: u32 = 5;
+
+fn now() -> i64 {
+    chrono::Utc::now().timestamp()
+}
+
+/// Sample every [`metrics::RAW`] seconds into `store` for as long as the
+/// server runs. Failures are logged and the recorder carries on: losing a
+/// minute of charts is not worth stopping anything for.
+pub fn spawn_recorder(state: AppState, store: Arc<MetricsStore>) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(metrics::RAW as u64));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let (mut host, mut sessions) = (Vec::new(), Vec::new());
+        let (mut samples, mut flushes) = (0u32, 0u32);
+        loop {
+            tick.tick().await;
+            let roots = session_roots(&state);
+            let Ok(usage) = tokio::task::spawn_blocking(move || sample(roots)).await else {
+                continue;
+            };
+            let ts = now();
+            let rpm = usage.fans.iter().map(|fan| fan.rpm).max();
+            let celsius = usage
+                .temperatures
+                .iter()
+                .map(|t| t.celsius)
+                .reduce(f32::max);
+            let mhz = usage.cpu_frequencies.iter().filter_map(|c| c.mhz).max();
+            host.push(HostPoint {
+                ts,
+                cpu_avg: usage.cpu_percent,
+                cpu_max: usage.cpu_percent,
+                memory_used_avg: usage.memory_used_bytes,
+                memory_used_max: usage.memory_used_bytes,
+                memory_total: usage.memory_total_bytes,
+                fan_rpm_avg: rpm,
+                fan_rpm_max: rpm,
+                temperature_avg: celsius,
+                temperature_max: celsius,
+                cpu_mhz_avg: mhz,
+                cpu_mhz_max: mhz,
+            });
+            sessions.extend(usage.sessions.into_iter().map(|session| SessionPoint {
+                ts,
+                session_id: session.session_id,
+                cpu_avg: session.cpu_percent,
+                cpu_max: session.cpu_percent,
+                memory_avg: session.memory_bytes,
+                memory_max: session.memory_bytes,
+            }));
+            samples += 1;
+            if samples < FLUSH_EVERY {
+                continue;
+            }
+            samples = 0;
+            flushes += 1;
+            let compact = flushes % COMPACT_EVERY == 1;
+            let (batch_host, batch_sessions) =
+                (std::mem::take(&mut host), std::mem::take(&mut sessions));
+            let store = store.clone();
+            let written = tokio::task::spawn_blocking(move || {
+                store.record(&batch_host, &batch_sessions)?;
+                if compact {
+                    store.compact(now())?;
+                }
+                Ok::<_, agentdock_persistence::DbError>(())
+            })
+            .await;
+            match written {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => tracing::warn!(%error, "could not record resource history"),
+                Err(error) => tracing::warn!(%error, "resource history writer failed"),
+            }
+        }
+    });
+}
+
+#[derive(Debug, Deserialize)]
+struct HistoryQuery {
+    /// Unix seconds; defaults to an hour before `to`.
+    from: Option<i64>,
+    /// Unix seconds; defaults to now.
+    to: Option<i64>,
+    session_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct HostHistoryPoint {
+    ts: i64,
+    cpu_avg: f32,
+    cpu_max: f32,
+    memory_used_avg: u64,
+    memory_used_max: u64,
+    memory_total: u64,
+    /// The fastest fan and the hottest sensor; null where never read.
+    fan_rpm_avg: Option<u32>,
+    fan_rpm_max: Option<u32>,
+    temperature_avg: Option<f32>,
+    temperature_max: Option<f32>,
+    /// The fastest CPU cluster's clock; null where never read.
+    cpu_mhz_avg: Option<u32>,
+    cpu_mhz_max: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+struct SessionHistoryPoint {
+    ts: i64,
+    session_id: String,
+    cpu_avg: f32,
+    cpu_max: f32,
+    memory_avg: u64,
+    memory_max: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct History {
+    /// Seconds each point covers.
+    resolution: i64,
+    host: Vec<HostHistoryPoint>,
+    sessions: Vec<SessionHistoryPoint>,
+}
+
+/// Enough points for a chart across a wide screen without shipping every raw
+/// sample of a long range.
+const MAX_POINTS: i64 = 1_500;
+
+async fn history(
+    State(state): State<AppState>,
+    Query(query): Query<HistoryQuery>,
+) -> Result<Json<History>> {
+    let store = state
+        .metrics
+        .clone()
+        .ok_or_else(|| ApiError::missing("Resource history"))?;
+    let now = now();
+    let to = query.to.unwrap_or(now);
+    let from = query.from.unwrap_or(to - 3_600);
+    if from > to {
+        return Err(ApiError::bad("from must not be after to"));
+    }
+    let resolution = metrics::resolution_for(now, from, to, MAX_POINTS);
+    let (host, sessions) = tokio::task::spawn_blocking(move || {
+        Ok::<_, agentdock_persistence::DbError>((
+            store.host_history(resolution, from, to)?,
+            store.session_history(resolution, from, to, query.session_id.as_deref())?,
+        ))
+    })
+    .await
+    .map_err(ApiError::internal)?
+    .map_err(ApiError::internal)?;
+    Ok(Json(History {
+        resolution,
+        host: host
+            .into_iter()
+            .map(|p| HostHistoryPoint {
+                ts: p.ts,
+                cpu_avg: p.cpu_avg,
+                cpu_max: p.cpu_max,
+                memory_used_avg: p.memory_used_avg,
+                memory_used_max: p.memory_used_max,
+                memory_total: p.memory_total,
+                fan_rpm_avg: p.fan_rpm_avg,
+                fan_rpm_max: p.fan_rpm_max,
+                temperature_avg: p.temperature_avg,
+                temperature_max: p.temperature_max,
+                cpu_mhz_avg: p.cpu_mhz_avg,
+                cpu_mhz_max: p.cpu_mhz_max,
+            })
+            .collect(),
+        sessions: sessions
+            .into_iter()
+            .map(|p| SessionHistoryPoint {
+                ts: p.ts,
+                session_id: p.session_id,
+                cpu_avg: p.cpu_avg,
+                cpu_max: p.cpu_max,
+                memory_avg: p.memory_avg,
+                memory_max: p.memory_max,
+            })
+            .collect(),
+    }))
 }
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/host/resources", get(usage))
         .route("/api/host/system", get(system))
+        .route("/api/host/resources/history", get(history))
 }
 
 #[cfg(test)]
