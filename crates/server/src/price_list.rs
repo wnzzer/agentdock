@@ -80,9 +80,10 @@ impl PriceList {
         at(self) > at(other)
     }
 
-    /// The price of a model as a client names it in its logs: the longest
-    /// listed name it starts with, so `gpt-5.5-codex` falls back to `gpt-5.5`
-    /// and a dated or `[1m]` variant to its family.
+    /// The price of a model as a client names it in its logs: its own entry,
+    /// or the entry it is a dated or rebuilt variant of (`gpt-5.5-codex` is
+    /// `gpt-5.5`, `claude-opus-4-1-20250805` is `claude-opus-4-1`). Anything
+    /// else after a listed name makes it another model, which has no price.
     pub fn lookup(&self, model: &str) -> Option<ListPrice> {
         let model = normalize(model);
         let mut name = model.as_str();
@@ -90,9 +91,29 @@ impl PriceList {
             if let Some(price) = self.models.get(name) {
                 return Some(*price);
             }
-            name = &name[..name.rfind('-')?];
+            let cut = name.rfind('-')?;
+            // Only a variant of the same model is priced as it. A gateway
+            // that prefixes every model it serves with a Claude name
+            // (`claude-fable-5-dd-…`) is not serving Fable 5.
+            if !variant_suffix(&model[cut + 1..]) {
+                return None;
+            }
+            name = &name[..cut];
         }
     }
+}
+
+/// A tail that names a dated or rebuilt release of the same model, at the
+/// same price: `20260901`, `2025-08-07`, `v2`, `latest`, `preview`, `codex`.
+/// `mini`, `nano`, `pro` and the rest are other models, priced differently.
+fn variant_suffix(tail: &str) -> bool {
+    tail.split('-').all(|segment| {
+        !segment.is_empty() && segment.bytes().all(|b| b.is_ascii_digit())
+            || segment
+                .strip_prefix('v')
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+            || matches!(segment, "latest" | "preview" | "codex")
+    })
 }
 
 /// `us.anthropic.claude-opus-5-5-20260901-v1:0` and `claude-opus-5-5[1m]`
@@ -275,6 +296,20 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_list_prices_variants_but_not_a_gateways_own_models() {
+        let built = PriceList::parse(EMBEDDED.as_bytes()).expect("data/prices.json");
+        assert!(built.lookup("claude-sonnet-4-5-20250929").is_some());
+        assert!(built.lookup("claude-3-5-haiku-20241022").is_some());
+        for gateway in [
+            "claude-fable-5-dd-lacol-b9-5.3newq",
+            "claude-fable-5-dd-lacol-inim-gnil",
+            "claude-fable-5-dd-3.5-MLG/gro-iaz",
+        ] {
+            assert_eq!(built.lookup(gateway), None, "{gateway}");
+        }
+    }
+
+    #[test]
     fn a_model_finds_its_family_however_a_client_spells_it() {
         let prices = list(
             "2026-10-08T00:00:00Z",
@@ -286,7 +321,13 @@ mod tests {
             ("Claude-Opus-5-5-20260901", true),
             ("us.anthropic.claude-opus-5-5-20260901-v1:0", true),
             ("gpt-5.5-codex", true),
-            ("gpt-5-mini", true),
+            ("gpt-5-2025-08-07", true),
+            ("gpt-5.5-latest", true),
+            // A smaller or larger model is not priced as its family.
+            ("gpt-5-mini", false),
+            ("gpt-5.5-pro", false),
+            // A gateway's own models behind a Claude-looking prefix.
+            ("claude-opus-5-5-dd-lacol-b9-5.3newq", false),
             // A different family is not the nearest one.
             ("claude-opus-5", false),
             ("gpt-6", false),
