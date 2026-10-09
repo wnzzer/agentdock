@@ -1988,13 +1988,13 @@ fn native_history_resume_preserves_original_configuration_and_rejects_source_cha
             "CLAUDE_CONFIG_DIR",
         ),
     ] {
-        let (source_id, config) = f.native_source(provider.clone(), Vec::new());
+        let (source_id, config) = f.native_source(provider, Vec::new());
         let session = f
             .state
             .store
             .import_native_session(
                 workspace.id,
-                provider.clone(),
+                provider,
                 "Resume fixture",
                 &source_id,
                 "fixture-id",
@@ -2330,7 +2330,7 @@ async fn imported_native_profiles_create_new_sessions_without_copying_or_overrid
             "settings.json",
         ),
     ] {
-        let (source_id, config) = f.native_source(provider.clone(), Vec::new());
+        let (source_id, config) = f.native_source(provider, Vec::new());
         let original = b"Fixture config is intentionally not parsed: preserve these exact bytes";
         fs::write(config.join(config_file), original).unwrap();
         #[cfg(unix)]
@@ -2347,7 +2347,7 @@ async fn imported_native_profiles_create_new_sessions_without_copying_or_overrid
         assert_eq!(status, StatusCode::OK);
         assert_eq!(p["native_config"]["source_id"], source_id);
         assert_eq!(p["native_config"]["config_dir"], config.to_str().unwrap());
-        assert_eq!(p["provider"], serde_json::to_value(&provider).unwrap());
+        assert_eq!(p["provider"], serde_json::to_value(provider).unwrap());
         assert_eq!(p["permission_mode"], "native");
         let (_, again) = call(
             f.app(),
@@ -2623,7 +2623,7 @@ fn native_config_keeps_default_and_explicit_login_contexts_distinct() {
         (ProviderKind::Codex, "CODEX_HOME"),
     ] {
         let mut f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
-        let (source_id, config) = f.native_source(provider.clone(), Vec::new());
+        let (source_id, config) = f.native_source(provider, Vec::new());
         let cwd = dunce::canonicalize(f.path.join("repo")).unwrap();
         f.state.native_sources[0].config_env = None;
         let (_, reference) = native_config::pin(&f.state, &source_id).unwrap();

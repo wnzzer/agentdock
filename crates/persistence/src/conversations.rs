@@ -107,7 +107,7 @@ impl Store {
         if model.is_some() || effort.is_some() {
             let p = snapshot.get_or_insert_with(|| EndpointProfile {
                 id: Uuid::new_v4(),
-                provider: session.provider.clone(),
+                provider: session.provider,
                 name: "Session configuration".into(),
                 endpoint_url: None,
                 model: None,

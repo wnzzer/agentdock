@@ -70,10 +70,11 @@ pub fn validate_profile(p: &EndpointProfile) -> Result<(), ApiError> {
         }
         return Ok(());
     }
-    if p.provider == ProviderKind::Codex && p.permission_mode == "plan" {
-        return Err(ApiError::bad(
-            "Plan mode is provided by Claude Code; Codex keeps its native approval model",
-        ));
+    if p.permission_mode == "plan" && !crate::adapters::agent(p.provider)?.plan_mode() {
+        return Err(ApiError::bad(format!(
+            "{} keeps its native approval model; plan mode is not one of its modes",
+            p.provider.label()
+        )));
     }
     if !matches!(
         p.permission_mode.as_str(),
@@ -179,7 +180,7 @@ pub fn resolve_model(profile: &EndpointProfile) -> Option<String> {
         .map(|model| profile.model_aliases.get(model).unwrap_or(model).clone())
 }
 
-fn write_private(path: &Path, content: &str) -> Result<(), ApiError> {
+pub(crate) fn write_private(path: &Path, content: &str) -> Result<(), ApiError> {
     use std::io::Write;
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -197,10 +198,6 @@ fn write_private(path: &Path, content: &str) -> Result<(), ApiError> {
     }
 }
 
-fn encode(value: &str) -> String {
-    serde_json::to_string(value).expect("string serialization")
-}
-
 /// No profile/snapshot means native defaults in a fresh, persistent config dir.
 pub fn build(state: &AppState, session: &Session, cwd: PathBuf) -> Result<SpawnSpec, ApiError> {
     crate::environment::validate(&session.environment)?;
@@ -208,10 +205,10 @@ pub fn build(state: &AppState, session: &Session, cwd: PathBuf) -> Result<SpawnS
     if let Some(args) = resume_args(session)? {
         spec.args = args;
     }
-    // Claude Code owns the native session title. Pass the AgentDock title on
-    // every new/reopened Claude process; renaming a live process remains a
+    // A client that keeps a native session title gets the AgentDock title on
+    // every new or reopened process; renaming a live process remains a
     // display-only change until its next explicit reopen.
-    else if session.provider == ProviderKind::ClaudeCode
+    else if let Some(client) = crate::adapters::adapter(session.provider)
         && session.native_source_id.is_none()
         && session
             .endpoint_snapshot
@@ -219,7 +216,7 @@ pub fn build(state: &AppState, session: &Session, cwd: PathBuf) -> Result<SpawnS
             .is_none_or(|profile| profile.native_config.is_none())
         && !session.title.trim().is_empty()
     {
-        spec.args.extend(["--name".into(), session.title.clone()]);
+        spec.args.extend(client.title_args(&session.title));
     }
     let main_model = session.endpoint_snapshot.as_ref().and_then(resolve_model);
     let main_context = main_model
@@ -262,13 +259,9 @@ fn resume_args(session: &Session) -> Result<Option<Vec<String>>, ApiError> {
         .ok_or_else(|| {
             ApiError::bad("The conversation this terminal reopens has no native session ID yet")
         })?;
-    Ok(Some(match session.provider {
-        ProviderKind::Codex => vec!["resume".into(), native_id.to_owned()],
-        ProviderKind::ClaudeCode => vec!["--resume".into(), native_id.to_owned()],
-        ProviderKind::Terminal => {
-            return Err(ApiError::bad("Terminal has no structured conversation"));
-        }
-    }))
+    let client = crate::adapters::adapter(session.provider)
+        .ok_or_else(|| ApiError::bad("Terminal has no structured conversation"))?;
+    Ok(Some(client.resume_args(native_id)))
 }
 
 /// The structured session an escape-hatch terminal reopens.
@@ -306,13 +299,8 @@ fn build_base(state: &AppState, session: &Session, cwd: PathBuf) -> Result<Spawn
             spec.args.extend(["--model".into(), model]);
         }
         if let Some(effort) = profile.effort.as_deref() {
-            match session.provider {
-                ProviderKind::Codex => spec.args.extend([
-                    "-c".into(),
-                    format!("model_reasoning_effort={}", encode(effort)),
-                ]),
-                _ => spec.args.extend(["--effort".into(), effort.to_owned()]),
-            }
+            spec.args
+                .extend(crate::adapters::agent(session.provider)?.effort_args(effort));
         }
         return Ok(spec);
     }
@@ -328,29 +316,20 @@ fn build_base(state: &AppState, session: &Session, cwd: PathBuf) -> Result<Spawn
     let mut remove: Vec<String> = crate::bridge::agentdock_secrets()
         .chain(env::var_os("CLAUDECODE").map(|_| "CLAUDECODE".to_owned()))
         .collect();
-    let (program, config_key) = match session.provider {
-        ProviderKind::Terminal => (
-            env::var("AGENTDOCK_SHELL")
-                .ok()
-                .filter(|shell| !shell.is_empty())
-                .unwrap_or_else(agentdock_runtime::default_shell),
-            None,
-        ),
-        ProviderKind::ClaudeCode => (
-            crate::clients::program(&state.state_dir, &session.provider),
-            Some("CLAUDE_CONFIG_DIR"),
-        ),
-        ProviderKind::Codex => (
-            crate::clients::program(&state.state_dir, &session.provider),
-            Some("CODEX_HOME"),
-        ),
+    let client = crate::adapters::adapter(session.provider);
+    let program = match client {
+        Some(_) => crate::clients::program(&state.state_dir, &session.provider),
+        None => env::var("AGENTDOCK_SHELL")
+            .ok()
+            .filter(|shell| !shell.is_empty())
+            .unwrap_or_else(agentdock_runtime::default_shell),
     };
     // POSIX shells need `-i` to stay interactive on a pipe-like PTY; neither
     // PowerShell nor cmd.exe accepts it.
-    if matches!(session.provider, ProviderKind::Terminal) && cfg!(unix) {
+    if client.is_none() && cfg!(unix) {
         args.push("-i".into());
     }
-    if let Some(config_key) = config_key {
+    if let Some(client) = client {
         // An escape-hatch terminal reopens a structured session's conversation,
         // whose transcript lives under that session's own home. Resolving this
         // one's id instead would point `--resume` at an empty directory.
@@ -367,28 +346,16 @@ fn build_base(state: &AppState, session: &Session, cwd: PathBuf) -> Result<Spawn
             base.join("configurations").join(revision.to_string())
         };
         let dir = private_dir(&path)?;
-        environment.insert(config_key.into(), dir.to_string_lossy().into_owned());
-        // Avoid inherited endpoint/auth overrides from the AgentDock host.
+        environment.insert(
+            client.config_key().into(),
+            dir.to_string_lossy().into_owned(),
+        );
+        // Avoid inherited endpoint/auth overrides from the AgentDock host,
+        // every client's: a variable meant for one can still steer another.
         remove.extend(
-            [
-                "ANTHROPIC_API_KEY",
-                "ANTHROPIC_AUTH_TOKEN",
-                "ANTHROPIC_BASE_URL",
-                "CLAUDE_CODE_OAUTH_TOKEN",
-                "OPENAI_API_KEY",
-                "OPENAI_BASE_URL",
-                "CODEX_API_KEY",
-                // Which model each of Claude Code's slots runs comes from the
-                // session's environment, where it is shown, never from the
-                // host's shell.
-                "ANTHROPIC_MODEL",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-                "ANTHROPIC_SMALL_FAST_MODEL",
-            ]
-            .into_iter()
-            .map(str::to_owned),
+            crate::adapters::all()
+                .flat_map(|client| client.inherited_keys())
+                .map(|key| (*key).to_owned()),
         );
         let secret = p
             .and_then(|p| p.secret_ref.as_deref())
@@ -413,81 +380,15 @@ fn build_base(state: &AppState, session: &Session, cwd: PathBuf) -> Result<Spawn
                 environment.insert(key.into(), String::new());
             }
         }
-        let mode = p.map_or("native", |p| p.permission_mode.as_str());
-        match session.provider {
-            ProviderKind::ClaudeCode => {
-                if let Some(url) = p.and_then(|p| p.endpoint_url.as_ref()) {
-                    environment.insert("ANTHROPIC_BASE_URL".into(), url.clone());
-                }
-                if let Some(secret) = secret {
-                    environment.insert("ANTHROPIC_API_KEY".into(), secret);
-                }
-                if mode == "trusted" {
-                    args.extend(["--permission-mode".into(), "acceptEdits".into()]);
-                }
-                if mode == "plan" {
-                    args.extend(["--permission-mode".into(), "plan".into()]);
-                }
-                // Current CLI uses "manual"; older clients called it "default".
-                // Native mode omits this flag entirely.
-                if mode == "interactive" {
-                    let manual = state.claude_manual_mode;
-                    args.extend([
-                        "--permission-mode".into(),
-                        if manual { "manual" } else { "default" }.into(),
-                    ]);
-                }
-                if let Some(effort) = p.and_then(|p| p.effort.as_deref()) {
-                    args.extend(["--effort".into(), effort.to_owned()]);
-                }
-                // Record this session's own usage payload locally so the account
-                // page can answer an explicit usage check later.
-                let config_env = environment.get("CLAUDE_CONFIG_DIR").cloned();
-                let (overlay, capture) =
-                    crate::native_config::claude_statusline(state, config_env.as_deref());
-                args.extend(overlay);
-                environment.extend(capture);
-            }
-            ProviderKind::Codex => {
-                let mut config = "cli_auth_credentials_store = \"file\"\n".to_owned();
-                if mode == "interactive" || mode == "trusted" {
-                    // Same sandbox for both intents; no bypass or fictitious mapping.
-                    args.extend([
-                        "-c".into(),
-                        "approval_policy=\"on-request\"".into(),
-                        "-c".into(),
-                        "sandbox_mode=\"workspace-write\"".into(),
-                    ]);
-                }
-                if let Some(effort) = p.and_then(|p| p.effort.as_deref()) {
-                    args.extend([
-                        "-c".into(),
-                        format!("model_reasoning_effort={}", encode(effort)),
-                    ]);
-                }
-                // Only a window the user set (model_limits.rs): a published
-                // one may exceed what the account has.
-                if let Some(window) = p.and_then(resolve_model).and_then(|model| {
-                    crate::model_limits::context_override(&state.state_dir, &model)
-                }) {
-                    args.extend(["-c".into(), format!("model_context_window={window}")]);
-                }
-                if p.is_some_and(|p| p.endpoint_url.is_some() || p.secret_ref.is_some()) {
-                    config.push_str("model_provider = \"agentdock\"\n\n[model_providers.agentdock]\nname = \"AgentDock\"\nwire_api = \"responses\"\nrequires_openai_auth = false\n");
-                    let base = p
-                        .and_then(|p| p.endpoint_url.as_deref())
-                        .unwrap_or("https://api.openai.com/v1");
-                    config.push_str(&format!("base_url = {}\n", encode(base)));
-                    if let Some(secret) = secret {
-                        config.push_str("env_key = \"OPENAI_API_KEY\"\n");
-                        environment.insert("OPENAI_API_KEY".into(), secret);
-                    }
-                }
-                // Immutable generated config. CLI auth/history/settings remain its own.
-                write_private(&dir.join("config.toml"), &config)?;
-            }
-            ProviderKind::Terminal => {}
-        }
+        client.configure(crate::adapters::EndpointLaunch {
+            state,
+            profile: p,
+            mode: p.map_or("native", |p| p.permission_mode.as_str()),
+            secret,
+            home: &dir,
+            args: &mut args,
+            environment: &mut environment,
+        })?;
     }
     // Runtime removes inherited vars first, then injects only this session's config.
     remove.retain(|key| !environment.contains_key(key));

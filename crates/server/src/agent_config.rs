@@ -31,7 +31,7 @@ pub fn tools() -> Vec<Value> {
                     "action": { "type": "string", "enum": ["create", "update", "delete", "test", "host_configurations", "import_host"] },
                     "id": { "type": "string", "description": "Profile id, for update, delete and test." },
                     "name": { "type": "string" },
-                    "provider": { "type": "string", "enum": ["claude_code", "codex"], "description": "For create." },
+                    "provider": { "type": "string", "enum": ProviderKind::AGENTS.map(|kind| kind.as_str()), "description": "For create." },
                     "endpoint_url": { "type": ["string", "null"], "description": "API base URL; empty or null for the official endpoint." },
                     "model": { "type": ["string", "null"] },
                     "effort": { "type": ["string", "null"], "description": "Default reasoning effort, e.g. low, medium, high." },
@@ -49,7 +49,7 @@ pub fn tools() -> Vec<Value> {
             object(
                 json!({
                     "action": { "type": "string", "enum": ["get", "set"] },
-                    "provider": { "type": "string", "enum": ["claude_code", "codex"] },
+                    "provider": { "type": "string", "enum": ProviderKind::AGENTS.map(|kind| kind.as_str()) },
                     "endpoint_id": { "type": ["string", "null"], "description": "Profile id, or null for the last used." },
                     "effort": { "type": ["string", "null"] },
                     "permission": { "type": ["string", "null"], "enum": ["ask", "plan", "accept_edits", "danger", null] }
@@ -82,7 +82,7 @@ pub(crate) async fn who(state: &AppState, caller: Caller) -> Value {
                 "kind": "session",
                 "session_id": id,
                 "title": session.as_ref().map(|s| s.title.clone()),
-                "provider": session.as_ref().map(|s| s.provider.clone()),
+                "provider": session.as_ref().map(|s| s.provider),
             })
         }
     }
@@ -99,19 +99,13 @@ fn field(arguments: &Value, key: &str) -> Result<Option<Option<String>>, ApiErro
 }
 
 fn provider_of(arguments: &Value) -> Result<ProviderKind, ApiError> {
-    match text(arguments, "provider") {
-        Some("claude_code") => Ok(ProviderKind::ClaudeCode),
-        Some("codex") => Ok(ProviderKind::Codex),
-        _ => Err(ApiError::bad("provider must be claude_code or codex")),
-    }
+    text(arguments, "provider")
+        .and_then(ProviderKind::parse_agent)
+        .ok_or_else(|| ApiError::bad(format!("provider must be {}", ProviderKind::agent_names())))
 }
 
 fn provider_label(provider: &ProviderKind) -> &'static str {
-    match provider {
-        ProviderKind::ClaudeCode => "Claude Code",
-        ProviderKind::Codex => "Codex",
-        ProviderKind::Terminal => "Terminal",
-    }
+    provider.label()
 }
 
 const TRUSTED_NOTE: &str = "Trusted: file edits will not ask first.";
@@ -449,10 +443,8 @@ pub async fn endpoint(
             })
             .await
             .map_err(ApiError::internal)??;
-            let name = crate::bounded_name(text(arguments, "name").unwrap_or(match provider {
-                ProviderKind::Codex => "Host Codex configuration",
-                _ => "Host Claude Code configuration",
-            }))?;
+            let host = format!("Host {} configuration", provider.label());
+            let name = crate::bounded_name(text(arguments, "name").unwrap_or(&host))?;
             let answer = state
                 .activity
                 .ask(
@@ -501,7 +493,13 @@ fn preference_view(
             "permission": p.permission,
         })
     };
-    json!({ "claude_code": one(&preferences.claude_code), "codex": one(&preferences.codex) })
+    Value::Object(
+        preferences
+            .clients
+            .iter()
+            .map(|(kind, preference)| (kind.as_str().to_owned(), one(preference)))
+            .collect(),
+    )
 }
 
 pub async fn preferences(
@@ -516,10 +514,7 @@ pub async fn preferences(
         Some("set") => {
             let provider = provider_of(arguments)?;
             let mut next = current.clone();
-            let entry = match provider {
-                ProviderKind::ClaudeCode => &mut next.claude_code,
-                _ => &mut next.codex,
-            };
+            let entry = next.clients.entry(provider).or_default();
             if let Some(value) = field(arguments, "endpoint_id")? {
                 entry.endpoint_profile_id = value
                     .map(|id| {

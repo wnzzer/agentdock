@@ -384,7 +384,7 @@ impl Store {
             let profile = snapshot.get_or_insert_with(|| EndpointProfile {
                 id: Uuid::new_v4(),
                 name: "Native session".into(),
-                provider: provider.clone(),
+                provider,
                 endpoint_url: None,
                 model: None,
                 permission_mode: "native".into(),
@@ -902,19 +902,10 @@ fn parse_time(value: String) -> Result<DateTime<Utc>> {
         .map_err(conversion_error)
 }
 fn parse_provider(value: String) -> Result<ProviderKind> {
-    match value.as_str() {
-        "claude_code" => Ok(ProviderKind::ClaudeCode),
-        "codex" => Ok(ProviderKind::Codex),
-        "terminal" => Ok(ProviderKind::Terminal),
-        _ => Err(rusqlite::Error::InvalidQuery),
-    }
+    ProviderKind::parse(&value).ok_or(rusqlite::Error::InvalidQuery)
 }
 fn provider_name(p: &ProviderKind) -> &'static str {
-    match p {
-        ProviderKind::ClaudeCode => "claude_code",
-        ProviderKind::Codex => "codex",
-        ProviderKind::Terminal => "terminal",
-    }
+    p.as_str()
 }
 fn status_name(s: &SessionStatus) -> &'static str {
     match s {

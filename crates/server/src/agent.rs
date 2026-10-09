@@ -142,48 +142,8 @@ pub fn equip(
         .map_err(ApiError::internal)?
         .to_string_lossy()
         .into_owned();
-    let environment: serde_json::Map<String, Value> = identity
-        .iter()
-        .map(|(key, value)| (key.clone(), json!(value)))
-        .collect();
-    match session.provider {
-        agentdock_domain::ProviderKind::ClaudeCode => {
-            let directory = crate::providers::private_dir(&state.state_dir.join("agent-mcp"))?;
-            let path = directory.join(format!("{}.json", session.id));
-            let config = json!({ "mcpServers": { "agentdock": {
-                "type": "stdio", "command": program, "args": ["mcp"], "env": environment,
-            } } });
-            crate::security::write_owner_only(&path, &config.to_string())
-                .map_err(ApiError::internal)?;
-            // `=` form: both flags take several values and would swallow the
-            // argument after them.
-            spec.args
-                .push(format!("--mcp-config={}", path.to_string_lossy()));
-            spec.args.push("--allowedTools=mcp__agentdock".into());
-        }
-        agentdock_domain::ProviderKind::Codex => {
-            let string = |value: &str| serde_json::to_string(value).expect("string");
-            let table = identity
-                .iter()
-                .map(|(key, value)| format!("{key}={}", string(value)))
-                .collect::<Vec<_>>()
-                .join(",");
-            // First, so they are global options before any subcommand.
-            let overrides = [
-                format!("mcp_servers.agentdock.command={}", string(&program)),
-                r#"mcp_servers.agentdock.args=["mcp"]"#.to_owned(),
-                format!("mcp_servers.agentdock.env={{{table}}}"),
-                // A call waiting on the person's confirmation outlasts the default.
-                "mcp_servers.agentdock.tool_timeout_sec=600".to_owned(),
-            ];
-            let mut args: Vec<String> = overrides
-                .into_iter()
-                .flat_map(|value| ["-c".to_owned(), value])
-                .collect();
-            args.append(&mut spec.args);
-            spec.args = args;
-        }
-        agentdock_domain::ProviderKind::Terminal => {}
+    if let Some(client) = crate::adapters::adapter(session.provider) {
+        client.equip_tools(state, session.id, &program, &identity, &mut spec.args)?;
     }
     Ok(())
 }
@@ -470,11 +430,8 @@ async fn list(state: &AppState, _caller: Caller, arguments: &Value) -> Result<Va
         }
         Some("clients") => {
             let mut clients = Vec::new();
-            for provider in [
-                agentdock_domain::ProviderKind::ClaudeCode,
-                agentdock_domain::ProviderKind::Codex,
-            ] {
-                if let Some(view) = crate::clients::view(state, provider).await {
+            for client in crate::adapters::all() {
+                if let Some(view) = crate::clients::view(state, client.kind()).await {
                     clients.push(json!({ "provider": view.provider, "installed": view.installed, "version": view.version }));
                 }
             }

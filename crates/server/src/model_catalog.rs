@@ -1,6 +1,6 @@
 //! Read-only model discovery. Explicit UI action only; never runs inference.
 use crate::{ApiError, providers};
-use agentdock_domain::{EndpointProfile, ProviderKind};
+use agentdock_domain::EndpointProfile;
 use serde::Serialize;
 use serde_json::Value;
 use std::{collections::BTreeSet, time::Duration};
@@ -29,13 +29,15 @@ pub struct ModelCatalog {
 }
 
 pub fn list_url(profile: &EndpointProfile) -> Result<Url, ApiError> {
-    let default = match profile.provider {
-        ProviderKind::ClaudeCode => "https://api.anthropic.com",
-        ProviderKind::Codex => "https://api.openai.com/v1",
-        ProviderKind::Terminal => return Err(ApiError::bad("Terminal has no model list")),
-    };
-    let mut url = Url::parse(profile.endpoint_url.as_deref().unwrap_or(default))
-        .map_err(|_| ApiError::bad("Invalid endpoint URL"))?;
+    let client = crate::adapters::adapter(profile.provider)
+        .ok_or_else(|| ApiError::bad("Terminal has no model list"))?;
+    let mut url = Url::parse(
+        profile
+            .endpoint_url
+            .as_deref()
+            .unwrap_or(client.default_endpoint()),
+    )
+    .map_err(|_| ApiError::bad("Invalid endpoint URL"))?;
     if matches!(
         url.host_str(),
         Some("169.254.169.254" | "metadata.google.internal")
@@ -45,9 +47,7 @@ pub fn list_url(profile: &EndpointProfile) -> Result<Url, ApiError> {
         ));
     }
     let path = url.path().trim_end_matches('/');
-    let suffix = if path.is_empty()
-        || (profile.provider == ProviderKind::ClaudeCode && !path.ends_with("/v1"))
-    {
+    let suffix = if path.is_empty() || (client.versioned_api() && !path.ends_with("/v1")) {
         "/v1/models"
     } else {
         "/models"
@@ -55,7 +55,7 @@ pub fn list_url(profile: &EndpointProfile) -> Result<Url, ApiError> {
     url.set_path(&format!("{path}{suffix}"));
     Ok(url)
 }
-fn parse_models(value: Value, source_url: String) -> Result<ModelCatalog, ApiError> {
+pub(crate) fn parse_models(value: Value, source_url: String) -> Result<ModelCatalog, ApiError> {
     let rows = value
         .get("data")
         .or_else(|| value.get("models"))
@@ -146,11 +146,12 @@ pub async fn discover(
     if let Some(reference) = &profile.native_config {
         return native_models(state, profile, reference).await;
     }
-    if profile.provider == ProviderKind::Codex
+    let client = crate::adapters::agent(profile.provider)?;
+    if client.lists_models_unconfigured()
         && profile.endpoint_url.is_none()
         && profile.secret_ref.is_none()
     {
-        return native_codex_models(state_dir, profile).await;
+        return unconfigured_models(state_dir, client, profile).await;
     }
     let secret = profile
         .secret_ref
@@ -160,32 +161,32 @@ pub async fn discover(
     fetch(profile, secret.as_deref()).await
 }
 
-async fn native_codex_models(
+/// The models a client lists for its default account, asked in a scratch
+/// home with no credential of the host's: what it offers anyone.
+async fn unconfigured_models(
     state_dir: &std::path::Path,
+    client: &'static dyn crate::adapters::ClientAdapter,
     profile: &EndpointProfile,
 ) -> Result<ModelCatalog, ApiError> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let directory = providers::private_dir(
         &std::env::temp_dir().join(format!("agentdock-models-{}", uuid::Uuid::new_v4())),
     )?;
     let mut command =
-        tokio::process::Command::new(crate::clients::program(state_dir, &ProviderKind::Codex));
+        tokio::process::Command::new(crate::clients::program(state_dir, &profile.provider));
     command
-        .args(["app-server", "-c", "cli_auth_credentials_store=\"file\""])
-        .current_dir(&directory)
-        .kill_on_drop(true)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null());
+        .args(client.catalog_args())
+        .args(client.unconfigured_catalog_args())
+        .current_dir(&directory);
+    let prefixes: Vec<&str> = crate::adapters::all()
+        .flat_map(|client| client.account_prefixes())
+        .copied()
+        .collect();
     for (key, _) in std::env::vars().filter(|(k, _)| {
-        k.starts_with("OPENAI_")
-            || k.starts_with("CODEX_")
-            || k.starts_with("ANTHROPIC_")
-            || crate::bridge::is_agentdock_secret(k)
+        prefixes.iter().any(|prefix| k.starts_with(prefix)) || crate::bridge::is_agentdock_secret(k)
     }) {
         command.env_remove(key);
     }
-    command.env("CODEX_HOME", &directory);
+    command.env(client.config_key(), &directory);
     if let Some(proxy) = &profile.proxy_url {
         for key in [
             "HTTP_PROXY",
@@ -199,37 +200,74 @@ async fn native_codex_models(
         }
         command.env("NO_PROXY", "").env("no_proxy", "");
     }
-    let result=async {
-        let mut child=command.spawn().map_err(|_|ApiError::bad("Codex is not installed on the server; enter a model ID manually"))?;
-        let mut input=child.stdin.take().ok_or_else(||ApiError::bad("Unable to open Codex input"))?;
-        let mut output=child.stdout.take().ok_or_else(||ApiError::bad("Unable to open Codex output"))?;
-        let query=async {
-            input.write_all(b"{\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"agentdock_models\",\"version\":\"0.1.0\"}}}\n").await.map_err(ApiError::internal)?;
-            let mut buffered=Vec::new();let mut chunk=[0u8;8192];let mut initialized=false;
-            loop {
-                let n=output.read(&mut chunk).await.map_err(ApiError::internal)?;
-                if n==0{return Err(ApiError::bad("Codex model discovery ended without a model list"));}
-                buffered.extend_from_slice(&chunk[..n]);if buffered.len()>MAX_BYTES{return Err(ApiError::bad("Native model list exceeds limit"));}
-                while let Some(index)=buffered.iter().position(|b|*b==b'\n') {
-                    let line:Vec<_>=buffered.drain(..=index).collect();let Ok(packet)=serde_json::from_slice::<Value>(&line)else{continue;};
-                    if packet.get("id")==Some(&Value::from(1)) && !initialized {
-                        if packet.get("error").is_some(){return Err(ApiError::bad("Codex app-server initialization failed"));}
-                        input.write_all(b"{\"method\":\"initialized\",\"params\":{}}\n{\"id\":2,\"method\":\"model/list\",\"params\":{\"limit\":100,\"includeHidden\":false}}\n").await.map_err(ApiError::internal)?;initialized=true;
-                    }
-                    if packet.get("id")==Some(&Value::from(2)) {
-                        let result=packet.get("result").ok_or_else(||ApiError::bad("This Codex version cannot list models"))?;
-                        let mut catalog=parse_models(result.clone(),"codex://model/list".into())?;
-                        catalog.has_more=result.get("nextCursor").is_some_and(|c|!c.is_null());
-                        return Ok(catalog);
-                    }
-                }
-            }
-        };
-        let result=match tokio::time::timeout(Duration::from_secs(8),query).await { Ok(result)=>result, Err(_)=>Err(ApiError::bad("Codex model discovery timed out")) };
-        let _=child.kill().await;let _=child.wait().await;result
-    }.await;
+    let result = ask_client(client, command, Duration::from_secs(8)).await;
     // This directory was created solely for read-only discovery; never remove real session state.
     let _ = tokio::fs::remove_dir_all(&directory).await;
+    result
+}
+
+/// Run the client's read-only model-list handshake: its opening line, then
+/// each reply handed to its adapter until one completes the list. No prompt
+/// is ever sent, so no turn runs against the account.
+async fn ask_client(
+    client: &'static dyn crate::adapters::ClientAdapter,
+    mut command: tokio::process::Command,
+    timeout: Duration,
+) -> Result<ModelCatalog, ApiError> {
+    use crate::adapters::CatalogStep;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    command
+        .kill_on_drop(true)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    let label = client.kind().label();
+    let mut child = command.spawn().map_err(|_| {
+        ApiError::bad(format!(
+            "{label} is not installed on the server; enter a model ID manually"
+        ))
+    })?;
+    let mut input = child
+        .stdin
+        .take()
+        .ok_or_else(|| ApiError::bad("Unable to open the client input"))?;
+    let output = child
+        .stdout
+        .take()
+        .ok_or_else(|| ApiError::bad("Unable to open the client output"))?;
+    let query = async {
+        input
+            .write_all(client.catalog_opening().as_bytes())
+            .await
+            .map_err(ApiError::internal)?;
+        let mut lines = BufReader::new(output).lines();
+        let mut bytes = 0usize;
+        let mut stage = 0u8;
+        while let Some(line) = lines.next_line().await.map_err(ApiError::internal)? {
+            bytes += line.len();
+            if bytes > MAX_BYTES {
+                return Err(ApiError::bad("Native model list exceeds limit"));
+            }
+            let Ok(packet) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            match client.catalog_step(&packet, &mut stage) {
+                CatalogStep::Wait => {}
+                CatalogStep::Send(reply) => input
+                    .write_all(reply.as_bytes())
+                    .await
+                    .map_err(ApiError::internal)?,
+                CatalogStep::Done(result) => return result,
+            }
+        }
+        Err(ApiError::bad("The client ended without listing its models"))
+    };
+    let result = match tokio::time::timeout(timeout, query).await {
+        Ok(result) => result,
+        Err(_) => Err(ApiError::bad("Native model discovery timed out")),
+    };
+    let _ = child.kill().await;
+    let _ = child.wait().await;
     result
 }
 async fn fetch(profile: &EndpointProfile, secret: Option<&str>) -> Result<ModelCatalog, ApiError> {
@@ -246,15 +284,10 @@ async fn fetch(profile: &EndpointProfile, secret: Option<&str>) -> Result<ModelC
     let client = builder
         .build()
         .map_err(|_| ApiError::bad("Unable to configure the model-list connection"))?;
-    let mut request = client.get(url.clone()).header("Accept", "application/json");
-    if profile.provider == ProviderKind::ClaudeCode {
-        request = request.header("anthropic-version", "2023-06-01");
-        if let Some(key) = secret {
-            request = request.header("x-api-key", key);
-        }
-    } else if let Some(key) = secret {
-        request = request.bearer_auth(key);
-    }
+    let request = crate::adapters::agent(profile.provider)?.authorize(
+        client.get(url.clone()).header("Accept", "application/json"),
+        secret,
+    );
     // Never return upstream error bodies: they may include echoed credentials.
     let mut response = request.send().await.map_err(|_| {
         ApiError::bad("Cannot connect to the endpoint. Check the URL, proxy and server network.")
@@ -305,117 +338,20 @@ async fn native_models(
     profile: &EndpointProfile,
     reference: &agentdock_domain::NativeConfigReference,
 ) -> Result<ModelCatalog, ApiError> {
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     let directory = providers::private_dir(
         &std::env::temp_dir().join(format!("agentdock-models-{}", uuid::Uuid::new_v4())),
     )?;
     let spec = crate::native_config::build(state, &profile.provider, reference, directory.clone())?;
-    let claude = profile.provider == ProviderKind::ClaudeCode;
+    let client = crate::adapters::agent(profile.provider)?;
     let mut command = tokio::process::Command::new(&spec.program);
-    if claude {
-        // The same read-only handshake a chat session performs. No prompt is
-        // ever sent, so no turn runs against the account.
-        command.args([
-            "--print",
-            "--verbose",
-            "--input-format",
-            "stream-json",
-            "--output-format",
-            "stream-json",
-            "--permission-prompt-tool",
-            "stdio",
-        ]);
-    } else {
-        command.args(["app-server"]);
-    }
-    command
-        .current_dir(&directory)
-        .kill_on_drop(true)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null());
+    command.args(client.catalog_args()).current_dir(&directory);
     for key in &spec.env_remove {
         command.env_remove(key);
     }
     for (key, value) in &spec.env {
         command.env(key, value);
     }
-    let result = async {
-        let mut child = command.spawn().map_err(|_| {
-            ApiError::bad("That client is not installed on the server; enter a model ID manually")
-        })?;
-        let mut input = child
-            .stdin
-            .take()
-            .ok_or_else(|| ApiError::bad("Unable to open the client input"))?;
-        let output = child
-            .stdout
-            .take()
-            .ok_or_else(|| ApiError::bad("Unable to open the client output"))?;
-        let query = async {
-            let opening = if claude {
-                "{\"type\":\"control_request\",\"request_id\":\"agentdock-models\",\"request\":{\"subtype\":\"initialize\"}}\n".to_string()
-            } else {
-                "{\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"agentdock_models\",\"version\":\"0.1.0\"}}}\n".to_string()
-            };
-            input
-                .write_all(opening.as_bytes())
-                .await
-                .map_err(ApiError::internal)?;
-            let mut lines = BufReader::new(output).lines();
-            let mut bytes = 0usize;
-            let mut initialized = false;
-            while let Some(line) = lines.next_line().await.map_err(ApiError::internal)? {
-                bytes += line.len();
-                if bytes > MAX_BYTES {
-                    return Err(ApiError::bad("Native model list exceeds limit"));
-                }
-                let Ok(packet) = serde_json::from_str::<Value>(&line) else {
-                    continue;
-                };
-                if claude {
-                    let Some(response) = packet.get("response") else {
-                        continue;
-                    };
-                    if response.get("request_id").and_then(Value::as_str) != Some("agentdock-models")
-                    {
-                        continue;
-                    }
-                    let models = response
-                        .get("response")
-                        .and_then(|body| body.get("models"))
-                        .ok_or_else(|| {
-                            ApiError::bad("This Claude Code version does not publish its models")
-                        })?;
-                    return parse_claude_models(models.clone());
-                }
-                if packet.get("id") == Some(&Value::from(1)) && !initialized {
-                    if packet.get("error").is_some() {
-                        return Err(ApiError::bad("Codex app-server initialization failed"));
-                    }
-                    input.write_all(b"{\"method\":\"initialized\",\"params\":{}}\n{\"id\":2,\"method\":\"model/list\",\"params\":{\"limit\":100,\"includeHidden\":false}}\n").await.map_err(ApiError::internal)?;
-                    initialized = true;
-                }
-                if packet.get("id") == Some(&Value::from(2)) {
-                    let body = packet
-                        .get("result")
-                        .ok_or_else(|| ApiError::bad("This Codex version cannot list models"))?;
-                    let mut catalog = parse_models(body.clone(), "codex://model/list".into())?;
-                    catalog.has_more = body.get("nextCursor").is_some_and(|c| !c.is_null());
-                    return Ok(catalog);
-                }
-            }
-            Err(ApiError::bad("The client ended without listing its models"))
-        };
-        let result = match tokio::time::timeout(Duration::from_secs(12), query).await {
-            Ok(result) => result,
-            Err(_) => Err(ApiError::bad("Native model discovery timed out")),
-        };
-        let _ = child.kill().await;
-        let _ = child.wait().await;
-        result
-    }
-    .await;
+    let result = ask_client(client, command, Duration::from_secs(12)).await;
     // This directory existed only for a read-only handshake; real account state
     // lives elsewhere and is never touched here.
     let _ = tokio::fs::remove_dir_all(&directory).await;
@@ -425,7 +361,7 @@ async fn native_models(
 /// Claude publishes `{value, displayName, description, supportedEffortLevels}`,
 /// including entries an operator remapped or added through its own environment
 /// variables. A model that states no effort levels genuinely supports none.
-fn parse_claude_models(value: Value) -> Result<ModelCatalog, ApiError> {
+pub(crate) fn parse_claude_models(value: Value) -> Result<ModelCatalog, ApiError> {
     let rows = value
         .as_array()
         .ok_or_else(|| ApiError::bad("The client did not return a supported model list"))?;
@@ -515,6 +451,7 @@ mod tests {
     }
 
     use super::*;
+    use agentdock_domain::ProviderKind;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,

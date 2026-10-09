@@ -1,5 +1,6 @@
 mod accounts;
 mod activity;
+mod adapters;
 mod agent;
 mod agent_canvas;
 mod agent_config;
@@ -1147,7 +1148,7 @@ async fn create_session(
             // They select what the client runs and never rewrite the shared
             // native configuration, so they stay available here.
             let config_state = state.clone();
-            let provider = p.provider.clone();
+            let provider = p.provider;
             let reference = reference.clone();
             tokio::task::spawn_blocking(move || {
                 native_config::validate_reference(&config_state, &provider, &reference)
@@ -1219,7 +1220,7 @@ async fn open_session_in_terminal(
     // The reopen shares the structured session's account and endpoint: it is the
     // same conversation, so it must reach the same place under the same terms.
     let (provider, profile_id, environment) = (
-        source.provider.clone(),
+        source.provider,
         source.endpoint_profile_id,
         source.environment.clone(),
     );
@@ -1758,13 +1759,7 @@ async fn update_profile(
                 p.permission_mode = text.ok_or_else(|| ApiError::bad("Permission mode required"))?
             }
             "provider" => {
-                if text.as_deref()
-                    != Some(match p.provider {
-                        ProviderKind::ClaudeCode => "claude_code",
-                        ProviderKind::Codex => "codex",
-                        ProviderKind::Terminal => "terminal",
-                    })
-                {
+                if text.as_deref() != Some(p.provider.as_str()) {
                     return Err(ApiError::bad("Create a new profile to change provider"));
                 }
             }

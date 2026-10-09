@@ -42,24 +42,14 @@ pub fn sources() -> Vec<NativeSource> {
         .or_else(|| env::var_os("USERPROFILE"))
         .map(PathBuf::from);
     let mut sources = Vec::new();
-    for (id, provider, label, override_key, native_key, subdir) in [
-        (
-            "codex-default",
-            ProviderKind::Codex,
-            "Codex",
-            "AGENTDOCK_CODEX_HISTORY_DIR",
-            "CODEX_HOME",
-            ".codex",
-        ),
-        (
-            "claude-default",
-            ProviderKind::ClaudeCode,
-            "Claude Code",
-            "AGENTDOCK_CLAUDE_HISTORY_DIR",
-            "CLAUDE_CONFIG_DIR",
-            ".claude",
-        ),
-    ] {
+    for client in crate::adapters::all() {
+        let (id, override_key) = client.history_source();
+        let (provider, label, native_key, subdir) = (
+            client.kind(),
+            client.kind().label(),
+            client.config_key(),
+            client.home_dir(),
+        );
         let explicit = env::var_os(override_key)
             .filter(|value| !value.is_empty())
             .or_else(|| env::var_os(native_key))
@@ -85,7 +75,7 @@ pub fn source_views(sources: &[NativeSource]) -> Vec<SourceView> {
         .iter()
         .map(|s| SourceView {
             id: s.id.clone(),
-            provider: s.provider.clone(),
+            provider: s.provider,
             label: s.label.clone(),
             path: s.config_dir.to_string_lossy().into_owned(),
             available: s.config_dir.is_dir(),
@@ -277,19 +267,13 @@ pub fn resume_spec(
         .as_ref()
         .filter(|id| valid_id(id))
         .ok_or_else(|| ApiError::bad("Missing native session ID"))?;
-    let (program, args, key) = match session.provider {
-        ProviderKind::Codex => (
-            crate::clients::program(&state.state_dir, &session.provider),
-            vec!["resume".into(), native_id.clone()],
-            "CODEX_HOME",
-        ),
-        ProviderKind::ClaudeCode => (
-            crate::clients::program(&state.state_dir, &session.provider),
-            vec!["--resume".into(), native_id.clone()],
-            "CLAUDE_CONFIG_DIR",
-        ),
-        _ => return Err(ApiError::bad("Terminal has no imported history")),
-    };
+    let client = crate::adapters::adapter(session.provider)
+        .ok_or_else(|| ApiError::bad("Terminal has no imported history"))?;
+    let (program, args, key) = (
+        crate::clients::program(&state.state_dir, &session.provider),
+        client.resume_args(native_id),
+        client.config_key(),
+    );
     let config_env = source
         .config_env
         .as_ref()

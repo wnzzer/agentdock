@@ -55,25 +55,13 @@ pub struct ClientView {
 }
 
 pub fn npm_package(provider: &ProviderKind) -> Option<&'static str> {
-    match provider {
-        ProviderKind::ClaudeCode => Some("@anthropic-ai/claude-code"),
-        ProviderKind::Codex => Some("@openai/codex"),
-        ProviderKind::Terminal => None,
-    }
+    crate::adapters::adapter(*provider).map(|client| client.npm_package())
 }
 pub fn command(provider: &ProviderKind) -> Option<&'static str> {
-    match provider {
-        ProviderKind::ClaudeCode => Some("claude"),
-        ProviderKind::Codex => Some("codex"),
-        ProviderKind::Terminal => None,
-    }
+    crate::adapters::adapter(*provider).map(|client| client.command())
 }
 fn override_key(provider: &ProviderKind) -> Option<&'static str> {
-    match provider {
-        ProviderKind::ClaudeCode => Some("AGENTDOCK_CLAUDE_BIN"),
-        ProviderKind::Codex => Some("AGENTDOCK_CODEX_BIN"),
-        ProviderKind::Terminal => None,
-    }
+    crate::adapters::adapter(*provider).map(|client| client.bin_override())
 }
 
 pub fn managed_root(state_dir: &Path) -> PathBuf {
@@ -188,8 +176,8 @@ pub fn routes() -> Router<AppState> {
 
 async fn list(State(state): State<AppState>) -> Result<Json<Vec<ClientView>>> {
     let mut views = Vec::new();
-    for provider in [ProviderKind::ClaudeCode, ProviderKind::Codex] {
-        if let Some(view) = view(&state, provider).await {
+    for client in crate::adapters::all() {
+        if let Some(view) = view(&state, client.kind()).await {
             views.push(view);
         }
     }
@@ -212,11 +200,8 @@ async fn install(
             "Installing a native client downloads and runs package code; explicit confirmation is required",
         ));
     }
-    let provider = match provider.as_str() {
-        "claude_code" => ProviderKind::ClaudeCode,
-        "codex" => ProviderKind::Codex,
-        _ => return Err(ApiError::bad("Only Claude Code and Codex can be installed")),
-    };
+    let provider = ProviderKind::parse_agent(&provider)
+        .ok_or_else(|| ApiError::bad("Only an agent client can be installed"))?;
     let package =
         npm_package(&provider).ok_or_else(|| ApiError::bad("No package for this client"))?;
     let npm = on_path("npm").ok_or_else(|| {

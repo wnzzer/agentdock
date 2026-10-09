@@ -293,8 +293,6 @@ fn protected(path: &Path) -> bool {
         ".azure",
         ".config",
         ".kube",
-        ".claude",
-        ".codex",
         ".agentdock",
         ".docker",
         "credentials",
@@ -308,6 +306,7 @@ fn protected(path: &Path) -> bool {
         let name = name.to_string_lossy();
         PROTECTED
             .iter()
+            .chain(crate::adapters::all().flat_map(|client| client.protected_names()))
             .any(|protected| name.eq_ignore_ascii_case(protected))
     })
 }

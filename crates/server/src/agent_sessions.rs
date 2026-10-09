@@ -35,7 +35,7 @@ pub fn tools() -> Vec<Value> {
             "Start another Claude Code or Codex session in your workspace, with a first message, optionally on its own Git branch (a separate worktree). It runs on its own; follow it with agentdock_session. Use it for independent work worth doing in parallel, not for quick questions. The first start is confirmed by the person; a started session cannot start more.",
             object(
                 json!({
-                    "provider": { "type": "string", "enum": ["claude_code", "codex"] },
+                    "provider": { "type": "string", "enum": ProviderKind::AGENTS.map(|kind| kind.as_str()) },
                     "prompt": { "type": "string", "description": "The first message: a complete, self-contained task." },
                     "title": { "type": "string" },
                     "branch": { "type": "string", "description": "Work on this branch in its own worktree, creating it if needed. Omit to share your directory." },
@@ -174,11 +174,9 @@ async fn summary(state: &AppState, session: &Session) -> Result<Value, ApiError>
 }
 
 fn provider_of(arguments: &Value) -> Result<ProviderKind, ApiError> {
-    match text(arguments, "provider") {
-        Some("claude_code") => Ok(ProviderKind::ClaudeCode),
-        Some("codex") => Ok(ProviderKind::Codex),
-        _ => Err(ApiError::bad("provider must be claude_code or codex")),
-    }
+    text(arguments, "provider")
+        .and_then(ProviderKind::parse_agent)
+        .ok_or_else(|| ApiError::bad(format!("provider must be {}", ProviderKind::agent_names())))
 }
 
 pub async fn spawn(state: &AppState, caller: Caller, arguments: &Value) -> Result<Value, ApiError> {
@@ -228,10 +226,7 @@ pub async fn spawn(state: &AppState, caller: Caller, arguments: &Value) -> Resul
         .unwrap_or(false);
     let who = who(state, caller).await;
     if !state.agents.may_spawn(parent_id) {
-        let label = match provider {
-            ProviderKind::Codex => "Codex",
-            _ => "Claude Code",
-        };
+        let label = provider.label();
         let excerpt: String = prompt.chars().take(300).collect();
         let mut rows = vec![("Task", excerpt)];
         if let Some(branch) = &branch {

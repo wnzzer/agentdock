@@ -598,31 +598,26 @@ fn isolated_environment(
     provider: &ProviderKind,
     reference: &NativeConfigReference,
 ) -> (BTreeMap<String, String>, Vec<String>) {
-    let key = if *provider == ProviderKind::Codex {
-        "CODEX_HOME"
-    } else {
-        "CLAUDE_CONFIG_DIR"
-    };
+    let key = crate::adapters::adapter(*provider).map_or("", |client| client.config_key());
     let environment = reference
         .config_env
         .as_ref()
         .map(|config_env| [(key.into(), config_env.clone())].into())
         .unwrap_or_default();
+    // Every client's variables, not only this one's: a key meant for one can
+    // still reach another through a shared gateway or SDK.
+    let prefixes: Vec<&str> = std::iter::once("AGENTDOCK_")
+        .chain(
+            crate::adapters::all()
+                .flat_map(|client| client.account_prefixes())
+                .copied(),
+        )
+        .collect();
     let remove = env::vars_os()
         .filter_map(|(key, _)| {
             let text = key.to_string_lossy().into_owned();
             let upper = text.to_ascii_uppercase();
-            ([
-                "AGENTDOCK_",
-                "OPENAI_",
-                "ANTHROPIC_",
-                "CLAUDE_",
-                "CODEX_",
-                "AZURE_OPENAI_",
-            ]
-            .iter()
-            .any(|prefix| upper.starts_with(prefix))
-                || upper == "CLAUDECODE")
+            (prefixes.iter().any(|prefix| upper.starts_with(prefix)) || upper == "CLAUDECODE")
                 .then_some(text)
         })
         .filter(|existing| existing != key)
@@ -646,16 +641,13 @@ pub fn build(
     }
     drop(inner);
     let mut spec = account_spec(&state.state_dir, provider, reference, cwd);
-    if *provider == ProviderKind::ClaudeCode {
-        // Let this session record its own usage payload locally as an opt-in
-        // fallback. The account page still prefers the official OAuth usage
-        // query when the user explicitly asks for it.
-        let (overlay, capture) =
-            crate::native_config::claude_statusline(state, reference.config_env.as_deref());
-        spec.args.extend(overlay);
-        spec.env.extend(capture);
-        spec.env_remove.retain(|key| !spec.env.contains_key(key));
-    }
+    // What the client adds to every launch: for Claude Code, its opt-in usage
+    // capture, a fallback to the explicit usage query the account page prefers.
+    let (args, extras) =
+        crate::adapters::agent(*provider)?.launch_extras(state, reference.config_env.as_deref());
+    spec.args.extend(args);
+    spec.env.extend(extras);
+    spec.env_remove.retain(|key| !spec.env.contains_key(key));
     Ok(spec)
 }
 fn account_spec(
@@ -682,37 +674,20 @@ fn initial_view(state: &AppState, record: &AccountRecord) -> Result<AccountView>
         .as_ref()
         .map(|reference| PathBuf::from(&reference.config_dir))
         .unwrap_or_else(|| metadata_directory.clone());
-    let codex = record.provider == ProviderKind::Codex;
-    let guidance = if codex {
-        None
-    } else {
-        // Where this account's sign-in has to land.
-        //
-        // A linked account signs in wherever the configuration it references
-        // already points, which for the host default is no override at all. An
-        // account that owns its directory has to be told to sign in *there*:
-        // without the override the command writes the credentials into the
-        // host's own configuration, the account's directory stays empty, and
-        // the account never works while appearing to exist.
-        let login_home = match record.native_config.as_ref() {
-            Some(reference) => reference.config_env.clone(),
-            None => Some(metadata_directory.to_string_lossy().into_owned()),
-        };
-        let config_prefix = login_home
-            .map(|value| format!(" CLAUDE_CONFIG_DIR='{}'", value.replace('\'', "'\\''")))
-            .unwrap_or_default();
-        // The command is the part a user has to act on; everything else this
-        // used to say about token handling belongs in the README, not in a
-        // panel read every time an account is opened.
-        Some(format!(
-            "env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN{} claude auth login",
-            config_prefix
-        ))
+    let client = crate::adapters::agent(record.provider)?;
+    let operations = client.account_operations();
+    // Where this account's sign-in has to land: wherever the configuration it
+    // references already points (for the host default, no override at all),
+    // or else the directory the account owns.
+    let login_home = match record.native_config.as_ref() {
+        Some(reference) => reference.config_env.clone(),
+        None => Some(metadata_directory.to_string_lossy().into_owned()),
     };
+    let guidance = client.login_guidance(login_home.as_deref());
     Ok(AccountView {
         id: record.id,
         name: record.name.clone(),
-        provider: record.provider.clone(),
+        provider: record.provider,
         profile_id: record.profile_id,
         native_source_id: record
             .native_config
@@ -731,10 +706,10 @@ fn initial_view(state: &AppState, record: &AccountRecord) -> Result<AccountView>
         login: None,
         limits: None,
         capabilities: Capabilities {
-            login: codex,
-            refresh_token: codex,
-            logout: codex,
-            usage: !codex,
+            login: operations.managed_login,
+            refresh_token: operations.managed_login,
+            logout: operations.managed_login,
+            usage: operations.usage,
             ..Default::default()
         },
         guidance,
@@ -868,10 +843,10 @@ async fn create(
     tokio::task::spawn_blocking(move || {
         if input.name.trim().is_empty()
             || input.name.trim().len() > 120
-            || input.provider == ProviderKind::Terminal
+            || !input.provider.is_agent()
         {
             return Err(ApiError::bad(
-                "Choose Claude Code or Codex and a name of 1–120 bytes",
+                "Choose an agent client and a name of 1–120 bytes",
             ));
         }
         let _guard = state
@@ -896,17 +871,14 @@ async fn create(
             &metadata_path,
             &serde_json::to_vec(&record).map_err(ApiError::internal)?,
         )?;
-        if record.provider == ProviderKind::Codex {
-            write_new(
-                &directory.join("config.toml"),
-                b"cli_auth_credentials_store = \"file\"\n",
-            )?;
+        for (name, contents) in crate::adapters::agent(record.provider)?.account_files() {
+            write_new(&directory.join(name), contents)?;
         }
         let (_, reference) = pin(&state, &format!("account:{}", record.id))?;
         let profile = EndpointProfile {
             id: record.profile_id,
             name: record.name.clone(),
-            provider: record.provider.clone(),
+            provider: record.provider,
             endpoint_url: None,
             model: None,
             permission_mode: "native".into(),
@@ -988,15 +960,12 @@ async fn import_native(
                 }
             }
         }
-        let name = bounded_account_name(input.name.as_deref().unwrap_or(match provider {
-            ProviderKind::Codex => "Imported Codex account",
-            ProviderKind::ClaudeCode => "Imported Claude Code account",
-            ProviderKind::Terminal => unreachable!(),
-        }))?;
+        let imported = format!("Imported {} account", provider.label());
+        let name = bounded_account_name(input.name.as_deref().unwrap_or(&imported))?;
         let record = AccountRecord {
             id: Uuid::new_v4(),
             name: name.clone(),
-            provider: provider.clone(),
+            provider,
             profile_id: Uuid::new_v4(),
             native_config: Some(reference.clone()),
             proxy_url: None,
@@ -1013,7 +982,7 @@ async fn import_native(
         let profile = EndpointProfile {
             id: record.profile_id,
             name,
-            provider: provider.clone(),
+            provider,
             endpoint_url: None,
             model: None,
             permission_mode: "native".into(),
@@ -1978,10 +1947,15 @@ async fn refresh(
     let operation = state.accounts.operation(id);
     let _guard = operation.lock().await;
     let record = record(&state, id)?;
-    if record.provider == ProviderKind::ClaudeCode && input.refresh_token {
-        return Err(ApiError::bad(
-            "Claude token refresh is managed by its official CLI; this operation is unsupported",
-        ));
+    if input.refresh_token
+        && !crate::adapters::agent(record.provider)?
+            .account_operations()
+            .managed_login
+    {
+        return Err(ApiError::bad(format!(
+            "{} token refresh is managed by its official CLI; this operation is unsupported",
+            record.provider.label()
+        )));
     }
     ensure_not_pending(&state, id)?;
     let _maintenance = if input.refresh_token {
@@ -2155,10 +2129,14 @@ async fn usage(
     let operation = state.accounts.operation(id);
     let _guard = operation.lock().await;
     let record = record(&state, id)?;
-    if record.provider == ProviderKind::Codex {
-        return Err(ApiError::bad(
-            "Codex usage comes from the official app-server; refresh the account instead",
-        ));
+    if !crate::adapters::agent(record.provider)?
+        .account_operations()
+        .usage
+    {
+        return Err(ApiError::bad(format!(
+            "{} usage comes with the account itself; refresh the account instead",
+            record.provider.label()
+        )));
     }
     ensure_not_pending(&state, id)?;
     let previous = view(&state, id).ok();
@@ -2266,7 +2244,7 @@ async fn logout(
     let operation = state.accounts.operation(id);
     let _guard = operation.lock().await;
     let record = record(&state, id)?;
-    ensure_codex(&record)?;
+    ensure_managed_login(&record)?;
     ensure_not_pending(&state, id)?;
     let _maintenance = begin_maintenance(&state, id).await?;
     run_operation(&state, record, json!({"action":"logout","confirmed":true})).await?;
@@ -2292,7 +2270,7 @@ async fn reset_quota(
     let operation = state.accounts.operation(id);
     let _guard = operation.lock().await;
     let record = record(&state, id)?;
-    ensure_codex(&record)?;
+    ensure_managed_login(&record)?;
     ensure_not_pending(&state, id)?;
     let _maintenance = begin_maintenance(&state, id).await?;
     let retry_authorized = reset_keys(&state, id)?.contains(&input.idempotency_key);
@@ -2301,13 +2279,19 @@ async fn reset_quota(
     run_operation(&state, record, json!({"action":"reset_quota","confirmed":true,"idempotency_key":input.idempotency_key,"credit_id":input.credit_id,"retry_authorized":retry_authorized})).await?;
     Ok(Json(view(&state, id)?))
 }
-fn ensure_codex(record: &AccountRecord) -> Result<()> {
-    if record.provider != ProviderKind::Codex {
-        Err(ApiError::bad(
-            "This managed account operation is unsupported for Claude; use its official CLI directly",
-        ))
-    } else {
+/// Sign-in, token refresh and sign-out run through AgentDock only for a
+/// client whose own tooling offers them.
+fn ensure_managed_login(record: &AccountRecord) -> Result<()> {
+    if crate::adapters::agent(record.provider)?
+        .account_operations()
+        .managed_login
+    {
         Ok(())
+    } else {
+        Err(ApiError::bad(format!(
+            "This managed account operation is unsupported for {}; use its official CLI directly",
+            record.provider.label()
+        )))
     }
 }
 fn ensure_not_pending(state: &AppState, id: Uuid) -> Result<()> {
@@ -2331,7 +2315,7 @@ async fn login(
     let operation = state.accounts.operation(id);
     let _guard = operation.lock().await;
     let record = record(&state, id)?;
-    ensure_codex(&record)?;
+    ensure_managed_login(&record)?;
     ensure_not_pending(&state, id)?;
     let _maintenance = begin_maintenance(&state, id).await?;
     if state
@@ -2476,7 +2460,7 @@ async fn bridge(
             &reference,
             reference.config_dir.clone().into(),
         );
-        job["provider"] = serde_json::to_value(&record.provider).map_err(ApiError::internal)?;
+        job["provider"] = serde_json::to_value(record.provider).map_err(ApiError::internal)?;
         job["config_dir"] = json!(reference.config_dir);
         job["config_env"] = json!(reference.config_env);
         job["program"] = json!(spec.program);

@@ -184,13 +184,10 @@ pub(crate) fn is_protected_path(relative: &Path) -> bool {
     const PROTECTED: &[&str] = &[
         ".git",
         ".agentdock",
-        ".claude.json",
         ".ssh",
         ".aws",
         ".azure",
         ".config",
-        ".claude",
-        ".codex",
         "credentials",
         "credential",
         "secrets",
@@ -200,7 +197,10 @@ pub(crate) fn is_protected_path(relative: &Path) -> bool {
             return false;
         };
         let value = part.to_string_lossy();
-        PROTECTED.iter().any(|name| value == *name)
+        PROTECTED
+            .iter()
+            .chain(crate::adapters::all().flat_map(|client| client.protected_names()))
+            .any(|name| value == *name)
     })
 }
 

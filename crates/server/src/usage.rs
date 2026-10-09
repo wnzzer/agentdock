@@ -9,6 +9,7 @@
 //! Files are parsed once and then only from where they were last read, since a
 //! transcript only ever grows; a request after the first costs the new lines.
 use crate::{AppState, Result};
+use agentdock_domain::ProviderKind;
 use axum::{
     Json, Router,
     extract::{Query, State},
@@ -26,30 +27,23 @@ use std::{
     time::SystemTime,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Provider {
-    ClaudeCode,
-    Codex,
-}
-
 /// One model call, with its tokens split the way prices are.
 #[derive(Debug, Clone)]
-struct Call {
-    at: i64,
-    provider: Provider,
-    model: Arc<str>,
+pub(crate) struct Call {
+    pub(crate) at: i64,
+    pub(crate) provider: ProviderKind,
+    pub(crate) model: Arc<str>,
     /// The client's own conversation id.
-    conversation: Arc<str>,
-    cwd: Arc<str>,
+    pub(crate) conversation: Arc<str>,
+    pub(crate) cwd: Arc<str>,
     /// Set when the file sits in an AgentDock session's own client home.
-    home_session: Option<Arc<str>>,
+    pub(crate) home_session: Option<Arc<str>>,
     /// Claude logs a reply more than once; one key per real call.
-    dedupe: Option<Arc<str>>,
-    tokens: Tokens,
+    pub(crate) dedupe: Option<Arc<str>>,
+    pub(crate) tokens: Tokens,
     /// A message the person sent, rather than a model call: it counts toward
     /// messages and activity, never tokens.
-    user: bool,
+    pub(crate) user: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize)]
@@ -120,7 +114,7 @@ impl Prices {
     fn cost(&self, call: &Call) -> Option<f64> {
         self.cost_of(call.provider, &call.model, &call.tokens)
     }
-    pub fn cost_of(&self, provider: Provider, model: &str, tokens: &Tokens) -> Option<f64> {
+    pub fn cost_of(&self, provider: ProviderKind, model: &str, tokens: &Tokens) -> Option<f64> {
         self.of(model)
             .map(|(price, _)| tokens_cost(price, provider, tokens))
     }
@@ -136,10 +130,9 @@ fn load_prices(state_dir: &Path) -> Prices {
         .unwrap_or_default()
 }
 
-/// A cache write without a price of its own costs what Anthropic charges,
-/// 1.25x input for five minutes and 2x for an hour, on Claude; on Codex it is
-/// plain input, since OpenAI charges nothing extra to cache.
-fn tokens_cost(price: Price, provider: Provider, tokens: &Tokens) -> f64 {
+/// A cache write without a price of its own costs what its client's vendor
+/// charges (adapters' `cache_write_rates`).
+fn tokens_cost(price: Price, provider: ProviderKind, tokens: &Tokens) -> f64 {
     let Price {
         input,
         output,
@@ -147,16 +140,9 @@ fn tokens_cost(price: Price, provider: Provider, tokens: &Tokens) -> f64 {
         cache_write,
         cache_write_1h,
     } = price;
-    let (write, write_hour) = match provider {
-        Provider::ClaudeCode => (
-            cache_write.unwrap_or(input * 1.25),
-            cache_write_1h.unwrap_or(input * 2.0),
-        ),
-        Provider::Codex => (
-            cache_write.unwrap_or(input),
-            cache_write_1h.unwrap_or(input),
-        ),
-    };
+    let (five, hour) = crate::adapters::adapter(provider)
+        .map_or((input, input), |client| client.cache_write_rates(input));
+    let (write, write_hour) = (cache_write.unwrap_or(five), cache_write_1h.unwrap_or(hour));
     (tokens.input as f64 * input
         + tokens.cache_write_5m as f64 * write
         + tokens.cache_write_1h as f64 * write_hour
@@ -165,228 +151,38 @@ fn tokens_cost(price: Price, provider: Provider, tokens: &Tokens) -> f64 {
         / 1_000_000.0
 }
 
-fn number(value: &Value, key: &str) -> u64 {
+pub(crate) fn number(value: &Value, key: &str) -> u64 {
     value.get(key).and_then(Value::as_u64).unwrap_or(0)
 }
 
-fn timestamp(value: &Value) -> Option<i64> {
+pub(crate) fn timestamp(value: &Value) -> Option<i64> {
     DateTime::parse_from_rfc3339(value.get("timestamp")?.as_str()?)
         .ok()
         .map(|at| at.timestamp())
 }
 
 /// What a file has given so far, and where to continue.
-struct FileState {
+pub(crate) struct FileState {
     len: u64,
     modified: Option<SystemTime>,
     offset: u64,
-    calls: Vec<Call>,
-    /// Codex states its model, conversation and directory once, then counts.
-    codex_model: Arc<str>,
-    codex_conversation: Arc<str>,
-    codex_cwd: Arc<str>,
-    codex_total: u64,
+    pub(crate) calls: Vec<Call>,
+    /// For a client that states its model, conversation and directory once,
+    /// then counts: what it stated, and its running total.
+    pub(crate) stated_model: Arc<str>,
+    pub(crate) stated_conversation: Arc<str>,
+    pub(crate) stated_cwd: Arc<str>,
+    pub(crate) stated_total: u64,
 }
 
-struct Source {
-    provider: Provider,
+pub(crate) struct Source {
+    provider: ProviderKind,
     file: PathBuf,
-    home_session: Option<Arc<str>>,
+    pub(crate) home_session: Option<Arc<str>>,
 }
 
-fn empty() -> Arc<str> {
+pub(crate) fn empty() -> Arc<str> {
     Arc::from("")
-}
-
-/// A message the person typed: text, not a tool result passed back, not a
-/// note the client wrote into the conversation itself.
-fn claude_user_message(line: &str, source: &Source, state: &mut FileState) {
-    let Ok(value) = serde_json::from_str::<Value>(line) else {
-        return;
-    };
-    if value.get("type").and_then(Value::as_str) != Some("user")
-        || value.get("isMeta").and_then(Value::as_bool) == Some(true)
-    {
-        return;
-    }
-    let typed = match value
-        .get("message")
-        .and_then(|message| message.get("content"))
-    {
-        Some(Value::String(text)) => !text.trim().is_empty(),
-        Some(Value::Array(blocks)) => {
-            blocks
-                .iter()
-                .any(|block| block.get("type").and_then(Value::as_str) == Some("text"))
-                && !blocks
-                    .iter()
-                    .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_result"))
-        }
-        _ => false,
-    };
-    let Some(at) = timestamp(&value).filter(|_| typed) else {
-        return;
-    };
-    state.calls.push(Call {
-        at,
-        provider: Provider::ClaudeCode,
-        model: empty(),
-        conversation: Arc::from(value.get("sessionId").and_then(Value::as_str).unwrap_or("")),
-        cwd: Arc::from(value.get("cwd").and_then(Value::as_str).unwrap_or("")),
-        home_session: source.home_session.clone(),
-        dedupe: value
-            .get("uuid")
-            .and_then(Value::as_str)
-            .map(|id| Arc::from(format!("user:{id}"))),
-        user: true,
-        tokens: Tokens::default(),
-    });
-}
-
-fn parse_claude(line: &str, source: &Source, state: &mut FileState) {
-    if line.contains("\"type\":\"user\"") {
-        claude_user_message(line, source, state);
-        return;
-    }
-    if !line.contains("\"usage\"") {
-        return;
-    }
-    let Ok(value) = serde_json::from_str::<Value>(line) else {
-        return;
-    };
-    let Some(message) = value.get("message") else {
-        return;
-    };
-    let Some(usage) = message.get("usage") else {
-        return;
-    };
-    let model = message.get("model").and_then(Value::as_str).unwrap_or("");
-    if model.is_empty() || model == "<synthetic>" {
-        return;
-    }
-    let Some(at) = timestamp(&value) else { return };
-    let (write_5m, write_1h) = match usage.get("cache_creation") {
-        Some(split) => (
-            number(split, "ephemeral_5m_input_tokens"),
-            number(split, "ephemeral_1h_input_tokens"),
-        ),
-        None => (number(usage, "cache_creation_input_tokens"), 0),
-    };
-    let dedupe = message.get("id").and_then(Value::as_str).map(|id| {
-        Arc::from(format!(
-            "{id}:{}",
-            value.get("requestId").and_then(Value::as_str).unwrap_or("")
-        ))
-    });
-    state.calls.push(Call {
-        at,
-        provider: Provider::ClaudeCode,
-        model: Arc::from(model),
-        conversation: Arc::from(value.get("sessionId").and_then(Value::as_str).unwrap_or("")),
-        cwd: Arc::from(value.get("cwd").and_then(Value::as_str).unwrap_or("")),
-        home_session: source.home_session.clone(),
-        dedupe,
-        user: false,
-        tokens: Tokens {
-            input: number(usage, "input_tokens"),
-            cache_read: number(usage, "cache_read_input_tokens"),
-            cache_write_5m: write_5m,
-            cache_write_1h: write_1h,
-            output: number(usage, "output_tokens"),
-            reasoning: usage
-                .get("output_tokens_details")
-                .map(|details| number(details, "thinking_tokens"))
-                .unwrap_or(0),
-        },
-    });
-}
-
-fn parse_codex(line: &str, source: &Source, state: &mut FileState) {
-    let interesting = line.contains("\"token_count\"")
-        || line.contains("\"task_started\"")
-        || line.contains("\"turn_context\"")
-        || line.contains("\"session_meta\"");
-    if !interesting {
-        return;
-    }
-    let Ok(value) = serde_json::from_str::<Value>(line) else {
-        return;
-    };
-    let payload = value.get("payload").unwrap_or(&Value::Null);
-    match value.get("type").and_then(Value::as_str) {
-        Some("session_meta") => {
-            if let Some(id) = payload.get("id").and_then(Value::as_str) {
-                state.codex_conversation = Arc::from(id);
-            }
-            if let Some(cwd) = payload.get("cwd").and_then(Value::as_str) {
-                state.codex_cwd = Arc::from(cwd);
-            }
-        }
-        Some("turn_context") => {
-            if let Some(model) = payload.get("model").and_then(Value::as_str) {
-                state.codex_model = Arc::from(model);
-            }
-            if let Some(cwd) = payload.get("cwd").and_then(Value::as_str) {
-                state.codex_cwd = Arc::from(cwd);
-            }
-        }
-        // Codex starts a task for each message the person sends.
-        Some("event_msg")
-            if payload.get("type").and_then(Value::as_str) == Some("task_started") =>
-        {
-            let Some(at) = timestamp(&value) else { return };
-            state.calls.push(Call {
-                at,
-                provider: Provider::Codex,
-                model: state.codex_model.clone(),
-                conversation: state.codex_conversation.clone(),
-                cwd: state.codex_cwd.clone(),
-                home_session: source.home_session.clone(),
-                dedupe: None,
-                user: true,
-                tokens: Tokens::default(),
-            });
-        }
-        Some("event_msg") if payload.get("type").and_then(Value::as_str) == Some("token_count") => {
-            let Some(info) = payload.get("info").filter(|info| !info.is_null()) else {
-                return;
-            };
-            // The same running total is reported again with a rate-limit update.
-            let total = info
-                .get("total_token_usage")
-                .map(|t| number(t, "total_tokens"))
-                .unwrap_or(0);
-            if total != 0 && total == state.codex_total {
-                return;
-            }
-            state.codex_total = total;
-            let Some(last) = info.get("last_token_usage") else {
-                return;
-            };
-            let Some(at) = timestamp(&value) else { return };
-            let cached = number(last, "cached_input_tokens");
-            state.calls.push(Call {
-                at,
-                provider: Provider::Codex,
-                model: state.codex_model.clone(),
-                conversation: state.codex_conversation.clone(),
-                cwd: state.codex_cwd.clone(),
-                home_session: source.home_session.clone(),
-                dedupe: None,
-                user: false,
-                tokens: Tokens {
-                    // OpenAI counts cached input inside input; split it out.
-                    input: number(last, "input_tokens").saturating_sub(cached),
-                    cache_read: cached,
-                    cache_write_5m: number(last, "cache_write_input_tokens"),
-                    cache_write_1h: 0,
-                    output: number(last, "output_tokens"),
-                    reasoning: number(last, "reasoning_output_tokens"),
-                },
-            });
-        }
-        _ => {}
-    }
 }
 
 /// Read what the file has gained since last time; start over if it shrank.
@@ -419,9 +215,8 @@ fn refresh(source: &Source, state: &mut FileState) {
             break;
         }
         state.offset += read as u64;
-        match source.provider {
-            Provider::ClaudeCode => parse_claude(&line, source, state),
-            Provider::Codex => parse_codex(&line, source, state),
+        if let Some(client) = crate::adapters::adapter(source.provider) {
+            client.read_transcript_line(&line, source, state);
         }
     }
     state.len = metadata.len();
@@ -434,14 +229,14 @@ fn new_state() -> FileState {
         modified: None,
         offset: 0,
         calls: Vec::new(),
-        codex_model: empty(),
-        codex_conversation: empty(),
-        codex_cwd: empty(),
-        codex_total: 0,
+        stated_model: empty(),
+        stated_conversation: empty(),
+        stated_cwd: empty(),
+        stated_total: 0,
     }
 }
 
-fn jsonl_files(root: &Path, out: &mut Vec<PathBuf>, depth: usize) {
+pub(crate) fn jsonl_files(root: &Path, out: &mut Vec<PathBuf>, depth: usize) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
@@ -468,11 +263,13 @@ fn sources(homes: &[Home]) -> Vec<Source> {
         if !seen.insert(home.clone()) {
             continue;
         }
-        for (provider, subdir, depth) in [
-            (Provider::ClaudeCode, "projects", 3),
-            (Provider::Codex, "sessions", 4),
-            (Provider::Codex, "archived_sessions", 4),
-        ] {
+        let transcripts = crate::adapters::all().flat_map(|client| {
+            client
+                .transcripts()
+                .iter()
+                .map(move |(subdir, depth)| (client.kind(), *subdir, *depth))
+        });
+        for (provider, subdir, depth) in transcripts {
             let mut files = Vec::new();
             jsonl_files(&home.join(subdir), &mut files, depth);
             sources.extend(files.into_iter().map(|file| Source {
@@ -549,7 +346,7 @@ pub struct DayRow {
 #[derive(Serialize)]
 pub struct ModelRow {
     pub model: String,
-    pub provider: Provider,
+    pub provider: ProviderKind,
     /// The price this model is costed at, and whether the user set it.
     pub price: Option<Price>,
     pub custom_price: bool,
@@ -559,7 +356,7 @@ pub struct ModelRow {
 #[derive(Serialize)]
 pub struct ConversationRow {
     pub conversation: String,
-    pub provider: Provider,
+    pub provider: ProviderKind,
     /// The AgentDock session this conversation belongs to, when known.
     pub session_id: Option<String>,
     pub title: Option<String>,
@@ -601,7 +398,7 @@ pub struct Report {
 
 #[derive(Serialize, Default)]
 pub struct Options {
-    pub providers: Vec<Provider>,
+    pub providers: Vec<ProviderKind>,
     pub models: Vec<String>,
     pub projects: Vec<String>,
 }
@@ -609,7 +406,7 @@ pub struct Options {
 /// Narrow the report to one client, one model or one project directory.
 #[derive(Default, Clone)]
 pub struct Filter {
-    pub provider: Option<Provider>,
+    pub provider: Option<ProviderKind>,
     pub model: Option<String>,
     pub project: Option<String>,
 }
@@ -640,7 +437,7 @@ pub struct UsageQuery {
 type Home = (PathBuf, Option<Arc<str>>);
 
 /// Conversations met while reading, with the models each used.
-type Conversations = HashMap<(Provider, Arc<str>), (ConversationRow, HashSet<Arc<str>>)>;
+type Conversations = HashMap<(ProviderKind, Arc<str>), (ConversationRow, HashSet<Arc<str>>)>;
 
 pub struct SessionLink {
     pub id: String,
@@ -667,16 +464,16 @@ fn report(
     let mut totals = Bucket::default();
     let mut previous = Bucket::default();
     let mut days: BTreeMap<String, Bucket> = BTreeMap::new();
-    let mut models: HashMap<(String, Provider), Bucket> = HashMap::new();
-    let mut providers: HashMap<Provider, Bucket> = HashMap::new();
+    let mut models: HashMap<(String, ProviderKind), Bucket> = HashMap::new();
+    let mut providers: HashMap<ProviderKind, Bucket> = HashMap::new();
     let mut heatmap = vec![vec![0u64; 24]; 7];
     let mut heatmap_cost = vec![vec![0f64; 24]; 7];
     // Activity is counted in five-minute slots, so a burst of calls is one slot.
     let slot = |at: i64| at.div_euclid(300);
     let mut active: HashSet<i64> = HashSet::new();
     let mut previous_active: HashSet<i64> = HashSet::new();
-    let mut previous_spans: HashMap<(Provider, Arc<str>), (i64, i64)> = HashMap::new();
-    let mut options_providers: HashSet<Provider> = HashSet::new();
+    let mut previous_spans: HashMap<(ProviderKind, Arc<str>), (i64, i64)> = HashMap::new();
+    let mut options_providers: HashSet<ProviderKind> = HashSet::new();
     let mut options_models: HashMap<String, u64> = HashMap::new();
     let mut options_projects: HashMap<Arc<str>, u64> = HashMap::new();
     let mut conversations: Conversations = HashMap::new();
@@ -799,7 +596,7 @@ fn report(
     let mut options_projects: Vec<(Arc<str>, u64)> = options_projects.into_iter().collect();
     options_projects.sort_by_key(|entry| std::cmp::Reverse(entry.1));
     let options = Options {
-        providers: [Provider::ClaudeCode, Provider::Codex]
+        providers: ProviderKind::AGENTS
             .into_iter()
             .filter(|provider| options_providers.contains(provider))
             .collect(),
@@ -933,11 +730,10 @@ async fn usage(
     let from = query.from.unwrap_or(to - 30 * 86_400).min(to);
     let tz = query.tz.unwrap_or(0);
     let filter = Filter {
-        provider: match query.provider.as_deref() {
-            Some("claude_code") => Some(Provider::ClaudeCode),
-            Some("codex") => Some(Provider::Codex),
-            _ => None,
-        },
+        provider: query
+            .provider
+            .as_deref()
+            .and_then(ProviderKind::parse_agent),
         model: query.model.filter(|model| !model.is_empty()),
         project: query.project.filter(|project| !project.is_empty()),
     };
@@ -997,7 +793,7 @@ async fn put_prices(
 pub struct Allowance {
     pub account_id: String,
     pub account: String,
-    pub provider: Provider,
+    pub provider: ProviderKind,
     /// The subscription, as the provider names it (Max, Pro, Plus…).
     pub plan: Option<String>,
     pub window: &'static str,
@@ -1019,67 +815,10 @@ pub struct Allowance {
     pub observed_at: Option<i64>,
 }
 
-struct LoggedLimits {
-    limits: crate::accounts::Limits,
-    plan: Option<String>,
-    observed_at: i64,
-}
-
-/// The newest rate-limit reading Codex wrote under `home`. Every token count
-/// it logs carries one, so a Codex account has figures without a query.
-fn codex_logged_limits(home: &Path) -> Option<LoggedLimits> {
-    let mut files = Vec::new();
-    jsonl_files(&home.join("sessions"), &mut files, 4);
-    let modified = |file: &PathBuf| std::fs::metadata(file).and_then(|m| m.modified()).ok();
-    files.sort_by_key(|file| std::cmp::Reverse(modified(file)));
-    // The newest few: a session that never reached a model call has none.
-    for file in files.iter().take(5) {
-        let Ok(text) = std::fs::read_to_string(file) else {
-            continue;
-        };
-        for line in text.lines().rev() {
-            if !line.contains("\"rate_limits\"") {
-                continue;
-            }
-            let Ok(value) = serde_json::from_str::<Value>(line) else {
-                continue;
-            };
-            let Some(limits) = value
-                .pointer("/payload/rate_limits")
-                .filter(|v| v.is_object())
-            else {
-                continue;
-            };
-            let window = |key: &str| {
-                let entry = limits.get(key).filter(|v| v.is_object())?;
-                Some(crate::accounts::LimitWindow {
-                    used_percent: entry.get("used_percent")?.as_f64()?,
-                    window_minutes: entry.get("window_minutes").and_then(Value::as_f64),
-                    resets_at: entry.get("resets_at").cloned().filter(|v| !v.is_null()),
-                    window_kind: None,
-                    mapping_basis: None,
-                })
-            };
-            let (primary, secondary) = (window("primary"), window("secondary"));
-            if primary.is_none() && secondary.is_none() {
-                continue;
-            }
-            return Some(LoggedLimits {
-                limits: crate::accounts::Limits {
-                    primary,
-                    secondary,
-                    reset_credits: None,
-                    reset_credits_source: None,
-                },
-                plan: limits
-                    .get("plan_type")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-                observed_at: timestamp(&value)?,
-            });
-        }
-    }
-    None
+pub(crate) struct LoggedLimits {
+    pub(crate) limits: crate::accounts::Limits,
+    pub(crate) plan: Option<String>,
+    pub(crate) observed_at: i64,
 }
 
 fn epoch(value: &Value) -> Option<i64> {
@@ -1127,25 +866,21 @@ async fn allowance(State(state): State<AppState>) -> Result<Json<Vec<Allowance>>
     let rows = tokio::task::spawn_blocking(move || {
         let mut rows = Vec::new();
         for account in accounts {
-            let provider = match account.provider {
-                agentdock_domain::ProviderKind::Codex => Provider::Codex,
-                _ => Provider::ClaudeCode,
-            };
+            let provider = account.provider;
             let checked = account
                 .limits
                 .clone()
                 .filter(|limits| limits.primary.is_some() || limits.secondary.is_some());
-            // Nobody pressed Check usage for a Codex account: its own session
-            // logs carry the reading Codex last received.
+            // Nobody pressed Check usage: a client whose own session logs
+            // carry the reading it last received (Codex) still has figures.
             let (limits, observed_at, logged_plan) = match checked {
                 Some(limits) => (limits, None, None),
-                None if provider == Provider::Codex => {
-                    match codex_logged_limits(Path::new(&account.storage_path)) {
-                        Some(logged) => (logged.limits, Some(logged.observed_at), logged.plan),
-                        None => continue,
-                    }
-                }
-                None => continue,
+                None => match crate::adapters::adapter(provider)
+                    .and_then(|client| client.logged_limits(Path::new(&account.storage_path)))
+                {
+                    Some(logged) => (logged.limits, Some(logged.observed_at), logged.plan),
+                    None => continue,
+                },
             };
             let limits = &limits;
             let calls = collect(&[(PathBuf::from(&account.storage_path), None)]);
@@ -1433,7 +1168,7 @@ mod tests {
             ..Tokens::default()
         };
         assert_eq!(
-            prices.cost_of(Provider::Codex, "GPT-6-Astra", &tokens),
+            prices.cost_of(ProviderKind::Codex, "GPT-6-Astra", &tokens),
             Some(9.1)
         );
         assert!(
@@ -1442,7 +1177,7 @@ mod tests {
                 .is_some_and(|(_, custom)| !custom)
         );
         assert_eq!(
-            prices.cost_of(Provider::ClaudeCode, "mystery-model", &tokens),
+            prices.cost_of(ProviderKind::ClaudeCode, "mystery-model", &tokens),
             None
         );
     }
@@ -1457,13 +1192,13 @@ mod tests {
         let gpt = prices.of("gpt-5.5").expect("GPT has a published price").0;
         assert_eq!(gpt.cache_write, None);
         assert_eq!(
-            prices.cost_of(Provider::Codex, "gpt-5.5-codex", &writes),
+            prices.cost_of(ProviderKind::Codex, "gpt-5.5-codex", &writes),
             Some(gpt.input),
             "a Codex cache write costs plain input"
         );
         let opus = prices.of("claude-opus-5-5").unwrap().0;
         assert_eq!(
-            prices.cost_of(Provider::ClaudeCode, "claude-opus-5-5", &writes),
+            prices.cost_of(ProviderKind::ClaudeCode, "claude-opus-5-5", &writes),
             opus.cache_write,
             "Claude pays the listed write price"
         );
@@ -1480,7 +1215,7 @@ mod tests {
             },
         );
         assert_eq!(
-            custom.cost_of(Provider::ClaudeCode, "claude-house", &writes),
+            custom.cost_of(ProviderKind::ClaudeCode, "claude-house", &writes),
             Some(2.5)
         );
     }
@@ -1540,14 +1275,22 @@ mod tests {
             .join("\n"),
         )
         .unwrap();
-        let logged = codex_logged_limits(&home).expect("a reading");
+        let logged = crate::adapters::adapter(ProviderKind::Codex)
+            .unwrap()
+            .logged_limits(&home)
+            .expect("a reading");
         let primary = logged.limits.primary.unwrap();
         assert_eq!(primary.used_percent, 11.0, "the last reading wins");
         assert_eq!(primary.window_minutes, Some(10080.0));
         assert!(logged.limits.secondary.is_none());
         assert_eq!(logged.plan.as_deref(), Some("plus"));
         assert_eq!(logged.observed_at, 1791111600);
-        assert!(codex_logged_limits(&home.join("missing")).is_none());
+        assert!(
+            crate::adapters::adapter(ProviderKind::Codex)
+                .unwrap()
+                .logged_limits(&home.join("missing"))
+                .is_none()
+        );
         std::fs::remove_dir_all(home).ok();
     }
 }

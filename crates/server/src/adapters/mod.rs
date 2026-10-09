@@ -1,0 +1,216 @@
+//! What differs between the agent clients AgentDock drives, in one place.
+//!
+//! Everything the server does with a client goes through its adapter: where
+//! its binary comes from, how a launch reaches an endpoint, which permission
+//! modes it offers, how its model list is read, how its account signs in, and
+//! where its transcripts are and how they read. The rest of the server asks
+//! the adapter and never names a client, so adding one is a file here and an
+//! entry in `adapter`.
+use crate::{ApiError, AppState};
+use agentdock_domain::{EndpointProfile, ProviderKind};
+use std::{collections::BTreeMap, path::Path};
+
+mod claude_code;
+mod codex;
+
+/// A launch AgentDock configures itself, as opposed to one that defers to a
+/// native configuration: the endpoint, credential and permission choices of a
+/// profile, turned into this client's flags, variables and files.
+pub struct EndpointLaunch<'a> {
+    pub state: &'a AppState,
+    pub profile: Option<&'a EndpointProfile>,
+    /// The profile's permission mode, `native` without a profile.
+    pub mode: &'a str,
+    /// The resolved credential, never the reference.
+    pub secret: Option<String>,
+    /// The session's private configuration home.
+    pub home: &'a Path,
+    pub args: &'a mut Vec<String>,
+    pub environment: &'a mut BTreeMap<String, String>,
+}
+
+/// One reply in a client's model-list handshake, and what it calls for.
+pub enum CatalogStep {
+    /// Not the reply that matters; keep reading.
+    Wait,
+    /// Write this to the client, then keep reading.
+    Send(&'static str),
+    /// The handshake is over, with the list or why there is none.
+    Done(Result<crate::model_catalog::ModelCatalog, ApiError>),
+}
+
+/// Which account operations a client's own tooling supports.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AccountOperations {
+    /// Sign in, refresh the token and sign out through AgentDock.
+    pub managed_login: bool,
+    /// Read subscription usage on request.
+    pub usage: bool,
+}
+
+pub trait ClientAdapter: Sync {
+    fn kind(&self) -> ProviderKind;
+
+    /// The npm package that installs it, and the command it installs.
+    fn npm_package(&self) -> &'static str;
+    fn command(&self) -> &'static str;
+    /// The server variable that names a binary to use instead.
+    fn bin_override(&self) -> &'static str;
+    /// The variable that points it at a configuration home.
+    fn config_key(&self) -> &'static str;
+    /// Its configuration home under the user's own home directory.
+    fn home_dir(&self) -> &'static str;
+    /// Its default history source: the id sessions record, and the server
+    /// variable that names a different directory to read.
+    fn history_source(&self) -> (&'static str, &'static str);
+    /// Names in a workspace that hold its configuration, kept out of listings.
+    fn protected_names(&self) -> &'static [&'static str];
+    /// Host variables that would route a launch AgentDock configures to some
+    /// other endpoint, account or model; removed before its own are set.
+    fn inherited_keys(&self) -> &'static [&'static str];
+    /// Prefixes of every host variable an isolated account launch drops.
+    fn account_prefixes(&self) -> &'static [&'static str];
+
+    /// The flags that reopen one of its conversations.
+    fn resume_args(&self, native_id: &str) -> Vec<String>;
+    /// The flags that name a new conversation, where it keeps a title.
+    fn title_args(&self, _title: &str) -> Vec<String> {
+        Vec::new()
+    }
+    /// The flags that set a reasoning effort.
+    fn effort_args(&self, effort: &str) -> Vec<String>;
+    /// Whether a profile may launch it in plan mode.
+    fn plan_mode(&self) -> bool;
+    /// The permission modes a chat session can switch between.
+    fn permission_modes(&self) -> &'static [&'static str];
+    /// What every launch adds for this client, given the configuration home
+    /// it reads (`None` for the host default).
+    fn launch_extras(
+        &self,
+        _state: &AppState,
+        _config_env: Option<&str>,
+    ) -> (Vec<String>, BTreeMap<String, String>) {
+        (Vec::new(), BTreeMap::new())
+    }
+    /// A launch AgentDock configures: endpoint, credential, permission mode,
+    /// effort and context window, as this client takes them.
+    fn configure(&self, launch: EndpointLaunch<'_>) -> Result<(), ApiError>;
+
+    /// Its vendor's API, for a profile that names no endpoint.
+    fn default_endpoint(&self) -> &'static str;
+    /// Whether its API's base URL leaves out the `/v1` the model list is under.
+    fn versioned_api(&self) -> bool {
+        false
+    }
+    /// A model-list request with this API's credential and headers.
+    fn authorize(
+        &self,
+        request: reqwest::RequestBuilder,
+        secret: Option<&str>,
+    ) -> reqwest::RequestBuilder;
+    /// Whether, with neither endpoint nor key, the client itself is asked
+    /// which models its default account offers.
+    fn lists_models_unconfigured(&self) -> bool {
+        false
+    }
+    /// The arguments that start its read-only model-list handshake, the extra
+    /// ones for an unconfigured ask, the line that opens it, and how each
+    /// reply moves it on (`stage` starts at zero and is the adapter's own).
+    fn catalog_args(&self) -> &'static [&'static str];
+    fn unconfigured_catalog_args(&self) -> &'static [&'static str] {
+        &[]
+    }
+    fn catalog_opening(&self) -> &'static str;
+    fn catalog_step(&self, packet: &serde_json::Value, stage: &mut u8) -> CatalogStep;
+
+    /// The account operations its tooling supports.
+    fn account_operations(&self) -> AccountOperations;
+    /// The command a person runs to sign an account in, where AgentDock does
+    /// not sign in for them; `login_home` is where that sign-in must land.
+    fn login_guidance(&self, _login_home: Option<&str>) -> Option<String> {
+        None
+    }
+    /// Files a new account's own directory starts with.
+    fn account_files(&self) -> &'static [(&'static str, &'static [u8])] {
+        &[]
+    }
+
+    /// Where under a configuration home its transcripts are, and how deep.
+    fn transcripts(&self) -> &'static [(&'static str, usize)];
+    /// What one transcript line adds to the calls read from its file.
+    fn read_transcript_line(
+        &self,
+        line: &str,
+        source: &crate::usage::Source,
+        state: &mut crate::usage::FileState,
+    );
+    /// What a cache write costs per million tokens, for five minutes and for
+    /// an hour, when its price lists none: plain input unless its vendor
+    /// charges more to cache.
+    fn cache_write_rates(&self, input: f64) -> (f64, f64) {
+        (input, input)
+    }
+    /// Give a launch AgentDock's MCP server (agent.rs): `program` run as
+    /// `program mcp` with `identity` as its environment, through this launch's
+    /// flags only, never the person's own client configuration.
+    fn equip_tools(
+        &self,
+        state: &AppState,
+        session: agentdock_domain::SessionId,
+        program: &str,
+        identity: &[(String, String)],
+        args: &mut Vec<String>,
+    ) -> Result<(), ApiError>;
+
+    /// The newest rate-limit reading its own logs under `home` carry, for an
+    /// account nobody has asked about.
+    fn logged_limits(&self, _home: &Path) -> Option<crate::usage::LoggedLimits> {
+        None
+    }
+}
+
+static CLAUDE_CODE: claude_code::ClaudeCode = claude_code::ClaudeCode;
+static CODEX: codex::Codex = codex::Codex;
+
+/// The adapter for an agent client; a plain terminal has none.
+pub fn adapter(kind: ProviderKind) -> Option<&'static dyn ClientAdapter> {
+    match kind {
+        ProviderKind::ClaudeCode => Some(&CLAUDE_CODE),
+        ProviderKind::Codex => Some(&CODEX),
+        ProviderKind::Terminal => None,
+    }
+}
+
+/// The adapter, or the error a terminal gets where only a client makes sense.
+pub fn agent(kind: ProviderKind) -> Result<&'static dyn ClientAdapter, ApiError> {
+    adapter(kind).ok_or_else(|| ApiError::bad("A terminal session has no agent client"))
+}
+
+/// Every agent client, in the order the interface offers them.
+pub fn all() -> impl Iterator<Item = &'static dyn ClientAdapter> {
+    ProviderKind::AGENTS.into_iter().filter_map(adapter)
+}
+
+/// Quote a string as TOML and JSON both write one.
+pub(crate) fn encode(value: &str) -> String {
+    serde_json::to_string(value).expect("string serialization")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_agent_has_an_adapter_that_names_itself() {
+        for kind in ProviderKind::AGENTS {
+            assert_eq!(adapter(kind).map(|client| client.kind()), Some(kind));
+        }
+        assert!(adapter(ProviderKind::Terminal).is_none());
+        let keys: std::collections::HashSet<_> = all().map(|client| client.config_key()).collect();
+        assert_eq!(
+            keys.len(),
+            ProviderKind::AGENTS.len(),
+            "each reads its own home"
+        );
+    }
+}

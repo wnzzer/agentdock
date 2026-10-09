@@ -9,6 +9,7 @@ use crate::{ApiError, AppState, Result, db, providers};
 use agentdock_domain::{ProviderKind, Session};
 use axum::{Json, Router, extract::State, routing::get};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq)]
@@ -22,13 +23,12 @@ pub struct ProviderPreference {
     pub permission: Option<String>,
 }
 
-#[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Preferences {
-    #[serde(default)]
-    pub claude_code: ProviderPreference,
-    #[serde(default)]
-    pub codex: ProviderPreference,
+    /// Each agent client's defaults, under its name. Any other name fails to
+    /// parse, as an unknown field did when the clients were fields.
+    #[serde(flatten)]
+    pub clients: BTreeMap<ProviderKind, ProviderPreference>,
     /// Whether sessions get AgentDock's own tools (agent.rs). On unless
     /// turned off: `None` is the default, not a choice to disable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -40,7 +40,27 @@ pub struct Preferences {
     pub resource_monitoring: Option<bool>,
 }
 
+impl Default for Preferences {
+    fn default() -> Self {
+        Preferences {
+            clients: BTreeMap::new(),
+            agent_tools: None,
+            resource_monitoring: None,
+        }
+        .complete()
+    }
+}
+
 impl Preferences {
+    /// Every agent client listed, an empty entry for one without defaults, so
+    /// a reader sees each client whether or not it was ever set.
+    pub fn complete(mut self) -> Self {
+        for kind in ProviderKind::AGENTS {
+            self.clients.entry(kind).or_default();
+        }
+        self
+    }
+
     pub fn resource_monitoring(&self) -> bool {
         self.resource_monitoring != Some(false)
     }
@@ -63,21 +83,13 @@ pub fn for_provider_owned(
 
 impl Preferences {
     pub fn for_provider(&self, provider: &ProviderKind) -> Option<&ProviderPreference> {
-        match provider {
-            ProviderKind::ClaudeCode => Some(&self.claude_code),
-            ProviderKind::Codex => Some(&self.codex),
-            _ => None,
-        }
+        self.clients.get(provider).filter(|_| provider.is_agent())
     }
 }
 
 /// The modes each client offers; Codex has no plan or accept-edits mode.
 fn permission_modes(provider: &ProviderKind) -> &'static [&'static str] {
-    match provider {
-        ProviderKind::ClaudeCode => &["ask", "plan", "accept_edits", "danger"],
-        ProviderKind::Codex => &["ask", "danger"],
-        _ => &[],
-    }
+    crate::adapters::adapter(*provider).map_or(&[], |client| client.permission_modes())
 }
 
 pub fn routes() -> Router<AppState> {
@@ -90,7 +102,8 @@ pub fn load_blocking(state: &AppState) -> Preferences {
         .store
         .preferences()
         .ok()
-        .and_then(|stored| serde_json::from_value(stored).ok())
+        .and_then(|stored| serde_json::from_value::<Preferences>(stored).ok())
+        .map(Preferences::complete)
         .unwrap_or_default()
 }
 
@@ -98,7 +111,9 @@ pub async fn load(state: &AppState) -> Result<Preferences> {
     let stored = db(state, |s| s.preferences()).await?;
     // A document that no longer parses -- written by a later version, say --
     // is treated as no preferences rather than failing every new session.
-    Ok(serde_json::from_value(stored).unwrap_or_default())
+    Ok(serde_json::from_value::<Preferences>(stored)
+        .map(Preferences::complete)
+        .unwrap_or_default())
 }
 
 async fn read(State(state): State<AppState>) -> Result<Json<Preferences>> {
@@ -109,6 +124,7 @@ async fn write(
     State(state): State<AppState>,
     Json(input): Json<Preferences>,
 ) -> Result<Json<Preferences>> {
+    let input = input.complete();
     save(&state, &input).await?;
     Ok(Json(input))
 }
@@ -116,10 +132,10 @@ async fn write(
 /// Check and store a whole preferences document; the agent tools save
 /// through here too, so both follow the same rules.
 pub async fn save(state: &AppState, input: &Preferences) -> Result<()> {
-    for (provider, preference) in [
-        (ProviderKind::ClaudeCode, &input.claude_code),
-        (ProviderKind::Codex, &input.codex),
-    ] {
+    for (&provider, preference) in &input.clients {
+        if !provider.is_agent() {
+            return Err(ApiError::bad("Only an agent client has session defaults."));
+        }
         providers::validate_effort(preference.effort.as_deref())?;
         if let Some(mode) = preference.permission.as_deref()
             && !permission_modes(&provider).contains(&mode)

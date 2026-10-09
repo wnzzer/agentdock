@@ -150,12 +150,60 @@ pub struct Workspace {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKind {
     ClaudeCode,
     Codex,
     Terminal,
+}
+
+impl ProviderKind {
+    /// The agent clients, in the order the interface offers them. A plain
+    /// terminal is a session kind, not a client, so it is not among them.
+    pub const AGENTS: [ProviderKind; 2] = [ProviderKind::ClaudeCode, ProviderKind::Codex];
+
+    /// The name stored and sent on the wire, as serde writes it.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ProviderKind::ClaudeCode => "claude_code",
+            ProviderKind::Codex => "codex",
+            ProviderKind::Terminal => "terminal",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<ProviderKind> {
+        [
+            ProviderKind::ClaudeCode,
+            ProviderKind::Codex,
+            ProviderKind::Terminal,
+        ]
+        .into_iter()
+        .find(|kind| kind.as_str() == name)
+    }
+
+    /// The agent client with this name; a terminal is not one.
+    pub fn parse_agent(name: &str) -> Option<ProviderKind> {
+        Self::parse(name).filter(ProviderKind::is_agent)
+    }
+
+    pub fn is_agent(&self) -> bool {
+        !matches!(self, ProviderKind::Terminal)
+    }
+
+    /// How people name it, in messages the server writes.
+    pub fn label(&self) -> &'static str {
+        match self {
+            ProviderKind::ClaudeCode => "Claude Code",
+            ProviderKind::Codex => "Codex",
+            ProviderKind::Terminal => "Terminal",
+        }
+    }
+
+    /// "claude_code or codex", for an error naming what a field accepts.
+    pub fn agent_names() -> String {
+        Self::AGENTS.map(|kind| kind.as_str()).join(" or ")
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -378,5 +426,28 @@ mod environment_tests {
             )
             .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod provider_tests {
+    use super::ProviderKind;
+
+    #[test]
+    fn a_provider_name_reads_back_as_the_same_kind_and_matches_serde() {
+        for kind in [
+            ProviderKind::ClaudeCode,
+            ProviderKind::Codex,
+            ProviderKind::Terminal,
+        ] {
+            assert_eq!(ProviderKind::parse(kind.as_str()), Some(kind));
+            assert_eq!(
+                serde_json::to_value(kind).unwrap(),
+                serde_json::Value::from(kind.as_str())
+            );
+        }
+        assert_eq!(ProviderKind::parse("pi"), None);
+        assert_eq!(ProviderKind::parse_agent("terminal"), None);
+        assert!(ProviderKind::AGENTS.iter().all(ProviderKind::is_agent));
     }
 }

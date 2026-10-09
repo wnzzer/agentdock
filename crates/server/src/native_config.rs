@@ -13,7 +13,7 @@ pub fn source_views(state: &AppState) -> Vec<crate::native_history::SourceView> 
             let reference = pin(state, &source.id).ok().map(|(_, reference)| reference);
             crate::native_history::SourceView {
                 id: source.id.clone(),
-                provider: source.provider.clone(),
+                provider: source.provider,
                 label: source.label.clone(),
                 available: reference.is_some(),
                 config_env: reference
@@ -66,7 +66,7 @@ pub fn pin(
         .ok_or_else(|| ApiError::bad("Native configuration path must be valid UTF-8"))?
         .to_owned();
     Ok((
-        source.provider.clone(),
+        source.provider,
         NativeConfigReference {
             source_id: source.id.clone(),
             config_dir,
@@ -115,29 +115,14 @@ pub fn build(
         return crate::accounts::build(state, provider, reference, cwd);
     }
     validate_reference(state, provider, reference)?;
-    let (program, key) = match provider {
-        ProviderKind::Codex => (
-            crate::clients::program(&state.state_dir, provider),
-            "CODEX_HOME",
-        ),
-        ProviderKind::ClaudeCode => (
-            crate::clients::program(&state.state_dir, provider),
-            "CLAUDE_CONFIG_DIR",
-        ),
-        ProviderKind::Terminal => {
-            return Err(ApiError::bad(
-                "Terminal has no native account configuration",
-            ));
-        }
-    };
-    let (mut environment, remove) = launch_environment(key, reference.config_env.as_deref());
+    let client = crate::adapters::adapter(*provider)
+        .ok_or_else(|| ApiError::bad("Terminal has no native account configuration"))?;
+    let program = crate::clients::program(&state.state_dir, provider);
+    let (mut environment, remove) =
+        launch_environment(client.config_key(), reference.config_env.as_deref());
     // New native session, not a history resume or login attempt.
-    let mut args = Vec::new();
-    if *provider == ProviderKind::ClaudeCode {
-        let (overlay, capture) = claude_statusline(state, reference.config_env.as_deref());
-        args = overlay;
-        environment.extend(capture);
-    }
+    let (args, extras) = client.launch_extras(state, reference.config_env.as_deref());
+    environment.extend(extras);
     Ok(SpawnSpec {
         program,
         args,
