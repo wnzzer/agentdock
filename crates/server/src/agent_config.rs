@@ -209,6 +209,7 @@ pub async fn endpoint(
                 effort: flat("effort")?,
                 model_aliases: Default::default(),
                 models: Vec::new(),
+                api: None,
                 native_config: None,
                 environment: Default::default(),
                 created_at: chrono::Utc::now(),

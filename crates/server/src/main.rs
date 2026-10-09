@@ -197,6 +197,8 @@ struct CreateProfile {
     model_aliases: std::collections::BTreeMap<String, String>,
     #[serde(default)]
     models: Vec<String>,
+    #[serde(default)]
+    api: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -979,6 +981,7 @@ async fn discover_models(
         effort: optional(input.effort),
         model_aliases: input.model_aliases,
         models: input.models,
+        api: input.api,
         native_config: None,
         environment: input.environment,
         created_at: chrono::Utc::now(),
@@ -1695,6 +1698,7 @@ async fn create_profile(
         effort: optional(input.effort),
         model_aliases: input.model_aliases,
         models: input.models,
+        api: input.api,
         native_config: None,
         environment: input.environment,
         created_at: chrono::Utc::now(),
@@ -1753,6 +1757,7 @@ async fn update_profile(
             "secret_ref" => p.secret_ref = optional(text),
             "proxy_url" => p.proxy_url = optional(text),
             "effort" => p.effort = optional(text),
+            "api" => p.api = optional(text),
             "permission_mode" => {
                 p.permission_mode = text.ok_or_else(|| ApiError::bad("Permission mode required"))?
             }

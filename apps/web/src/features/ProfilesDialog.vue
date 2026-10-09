@@ -37,7 +37,7 @@ const environmentDraft = ref<EnvironmentRow[]>([]), initialEnvironment = ref<Env
 const environmentDirty = computed(() => profileEnvironmentDraftChanged(environmentDraft.value, initialEnvironment.value));
 const environmentError = computed(() => { try { profileEnvironmentPayload(environmentDraft.value, backendCapabilities.environment, initialEnvironment.value); return ""; } catch (cause) { return errorMessage(cause); } });
 const pendingNavigation = ref<(() => void)>();
-const form = reactive({ name: "", provider: DEFAULT_CLIENT as AgentProviderKind, endpoint_url: "", model: "", effort: "", permission_mode: "native" as EndpointProfile["permission_mode"], secret_ref: "", proxy_url: "" });
+const form = reactive({ name: "", provider: DEFAULT_CLIENT as AgentProviderKind, endpoint_url: "", api: "", model: "", effort: "", permission_mode: "native" as EndpointProfile["permission_mode"], secret_ref: "", proxy_url: "" });
 const secretValid = computed(() => secretMode.value === "stored" || !form.secret_ref || /^env:AGENTDOCK_SECRET_[A-Z0-9_]+$/.test(form.secret_ref));
 /**
  * Where the endpoint's key lives. "stored": pasted here and kept by AgentDock
@@ -184,7 +184,9 @@ function payload(includeEnvironment = true) {
     ...(form.proxy_url.trim()||old?.proxy_url!==undefined ? {proxy_url:form.proxy_url.trim()||null}:{}),
     ...(Object.keys(aliases.value.value).length||old?.model_aliases!==undefined ? {model_aliases:aliases.value.value}:{}),
     ...(form.effort.trim()||old?.effort!==undefined ? {effort:form.effort.trim()||null}:{}),
-    ...(chosenModels.value.length||old?.models!==undefined ? {models:chosenModels.value}:{}), ...environment };
+    ...(chosenModels.value.length||old?.models!==undefined ? {models:chosenModels.value}:{}),
+    // Only a client with a choice of API takes one; switching to another client drops it.
+    ...(client.value.apis?.length&&(form.api||old?.api) ? {api:form.api||null}:{}), ...environment };
 }
 function requestLeave(action: () => void) {
   if (busy.value) return;
@@ -199,7 +201,7 @@ function edit(p?: EndpointProfile) {
   initialEnvironment.value = environmentDraft.value.map(row => ({ ...row }));
   resetDiscovery();editingRecord.value=p;
   editing.value=p?.id; formVisible.value=true; error.value=""; notice.value=""; deleteId.value=undefined;
-  Object.assign(form,{name:p?.name??"",provider:p?.provider??DEFAULT_CLIENT,endpoint_url:p?.endpoint_url??"",model:p?.model??"",effort:p?.effort??"",permission_mode:p?.permission_mode??"native",secret_ref:p?.secret_ref??"",proxy_url:p?.proxy_url??""});
+  Object.assign(form,{name:p?.name??"",provider:p?.provider??DEFAULT_CLIENT,endpoint_url:p?.endpoint_url??"",api:p?.api??"",model:p?.model??"",effort:p?.effort??"",permission_mode:p?.permission_mode??"native",secret_ref:p?.secret_ref??"",proxy_url:p?.proxy_url??""});
   apiKey.value = ""; chooseSecretMode(p?.secret_ref);
   aliasesText.value=formatModelAliases(p?.model_aliases); models.value=undefined; modelError.value="";
   chosenModels.value=[...(p?.models??[])]; void loadLimits();
@@ -286,6 +288,7 @@ onBeforeUnmount(()=>{discoveryRevision++;});
           </template>
           <template v-else>
           <label>{{ t('Endpoint URL') }}<input v-model="form.endpoint_url" type="url" :placeholder="t('Official endpoint when empty')" autocomplete="off" /></label>
+          <label v-if="client.apis?.length">{{ t('Endpoint API') }}<select v-model="form.api"><option value="">{{ t('Guess from the URL') }}</option><option v-for="api in client.apis" :key="api.value" :value="api.value">{{ api.label }}</option></select></label>
           <label>{{ t('Proxy URL') }}<input v-model="form.proxy_url" type="url" placeholder="http://127.0.0.1:7890" autocomplete="off" /></label>
           <p class="form-help">{{ t('Applied on the server. Empty uses the host network.') }}<template v-if="client.proxyNote"> {{ t(client.proxyNote) }}</template></p>
           <template v-if="secretMode==='stored'">

@@ -47,7 +47,7 @@ pub fn list_url(profile: &EndpointProfile) -> Result<Url, ApiError> {
         ));
     }
     let path = url.path().trim_end_matches('/');
-    let suffix = if path.is_empty() || (client.versioned_api() && !path.ends_with("/v1")) {
+    let suffix = if path.is_empty() || (client.versioned_api(profile) && !path.ends_with("/v1")) {
         "/v1/models"
     } else {
         "/models"
@@ -74,6 +74,8 @@ pub(crate) fn parse_models(value: Value, source_url: String) -> Result<ModelCata
             .or_else(|| row.get("model"))
             .or_else(|| row.get("name"))
             .and_then(Value::as_str)
+            // Google names a model `models/<id>`; the ID is what runs it.
+            .map(|id| id.strip_prefix("models/").unwrap_or(id))
             .filter(|s| !s.is_empty() && s.len() <= 200 && !s.chars().any(char::is_control))
         else {
             continue;
@@ -285,6 +287,7 @@ async fn fetch(profile: &EndpointProfile, secret: Option<&str>) -> Result<ModelC
         .build()
         .map_err(|_| ApiError::bad("Unable to configure the model-list connection"))?;
     let request = crate::adapters::agent(profile.provider)?.authorize(
+        profile,
         client.get(url.clone()).header("Accept", "application/json"),
         secret,
     );
@@ -469,6 +472,7 @@ mod tests {
             effort: None,
             model_aliases: Default::default(),
             models: Vec::new(),
+            api: None,
             native_config: None,
             environment: Default::default(),
             created_at: chrono::Utc::now(),

@@ -25,10 +25,25 @@ fn configures_endpoint(profile: &EndpointProfile) -> bool {
     profile.endpoint_url.is_some() || profile.secret_ref.is_some()
 }
 
-/// Which API an endpoint speaks. Pi needs to be told; a profile names only a
-/// URL, so an Anthropic endpoint is recognised by its host, and anything else
+/// The APIs Pi speaks to a custom provider (its docs, models.md).
+const APIS: [&str; 4] = [
+    "openai-completions",
+    "openai-responses",
+    "anthropic-messages",
+    "google-generative-ai",
+];
+
+/// Which API a profile's endpoint speaks: the one it names, else a guess from
+/// its URL -- an Anthropic host speaks Anthropic Messages, and anything else
 /// is taken as OpenAI Chat Completions, which nearly every gateway serves.
-fn api_of(url: &str) -> &'static str {
+fn api_of(profile: &EndpointProfile) -> &str {
+    profile
+        .api
+        .as_deref()
+        .unwrap_or_else(|| guess_api(profile.endpoint_url.as_deref().unwrap_or_default()))
+}
+
+fn guess_api(url: &str) -> &'static str {
     let host = url::Url::parse(url)
         .ok()
         .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
@@ -178,22 +193,34 @@ impl ClientAdapter for Pi {
             None => "agentdock".into(),
         };
         let config = json!({ "providers": { PROVIDER: {
-            "baseUrl": url, "api": api_of(url), "apiKey": key, "models": entries,
+            "baseUrl": url, "api": api_of(profile), "apiKey": key, "models": entries,
         } } });
         crate::providers::write_private(&home.join("models.json"), &config.to_string())
     }
 
+    fn apis(&self) -> &'static [&'static str] {
+        &APIS
+    }
     fn default_endpoint(&self) -> &'static str {
         "https://api.openai.com/v1"
     }
+    // Each API lists its models under its own path and credential header.
+    fn versioned_api(&self, profile: &EndpointProfile) -> bool {
+        api_of(profile) == "anthropic-messages"
+    }
     fn authorize(
         &self,
+        profile: &EndpointProfile,
         request: reqwest::RequestBuilder,
         secret: Option<&str>,
     ) -> reqwest::RequestBuilder {
-        match secret {
-            Some(key) => request.bearer_auth(key),
-            None => request,
+        match (api_of(profile), secret) {
+            (_, None) => request,
+            ("anthropic-messages", Some(key)) => request
+                .header("anthropic-version", "2023-06-01")
+                .header("x-api-key", key),
+            ("google-generative-ai", Some(key)) => request.header("x-goog-api-key", key),
+            (_, Some(key)) => request.bearer_auth(key),
         }
     }
     fn catalog_args(&self) -> &'static [&'static str] {
@@ -405,8 +432,12 @@ mod tests {
     }
 
     #[test]
-    fn an_anthropic_endpoint_is_told_apart_and_anything_else_is_chat_completions() {
-        assert_eq!(api_of("https://api.anthropic.com"), "anthropic-messages");
-        assert_eq!(api_of("http://192.168.0.254:8317/v1"), "openai-completions");
+    fn a_profile_names_its_api_or_an_anthropic_host_is_told_apart() {
+        assert_eq!(guess_api("https://api.anthropic.com"), "anthropic-messages");
+        assert_eq!(
+            guess_api("http://192.168.0.254:8317/v1"),
+            "openai-completions"
+        );
+        assert!(APIS.contains(&guess_api("")));
     }
 }

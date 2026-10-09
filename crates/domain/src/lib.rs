@@ -306,6 +306,10 @@ pub struct EndpointProfile {
     /// endpoint serves. Empty offers all of them.
     #[serde(default)]
     pub models: Vec<String>,
+    /// Which API the endpoint speaks, for a client that speaks several
+    /// (adapters' `apis`). Absent leaves it to the client's adapter.
+    #[serde(default)]
+    pub api: Option<String>,
     #[serde(default)]
     pub native_config: Option<NativeConfigReference>,
     pub created_at: DateTime<Utc>,

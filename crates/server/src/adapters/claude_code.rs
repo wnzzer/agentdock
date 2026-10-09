@@ -3,7 +3,7 @@
 use super::{AccountOperations, CatalogStep, ClientAdapter, EndpointLaunch};
 use crate::usage::{Call, FileState, Source, Tokens, empty, number, timestamp};
 use crate::{ApiError, AppState};
-use agentdock_domain::ProviderKind;
+use agentdock_domain::{EndpointProfile, ProviderKind};
 use serde_json::Value;
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -185,11 +185,12 @@ impl ClientAdapter for ClaudeCode {
             config_prefix
         ))
     }
-    fn versioned_api(&self) -> bool {
+    fn versioned_api(&self, _profile: &EndpointProfile) -> bool {
         true
     }
     fn authorize(
         &self,
+        _profile: &EndpointProfile,
         request: reqwest::RequestBuilder,
         secret: Option<&str>,
     ) -> reqwest::RequestBuilder {

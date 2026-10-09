@@ -13,7 +13,7 @@ use uuid::Uuid;
 pub type DbError = rusqlite::Error;
 
 const SESSION_COLUMNS: &str = "id, workspace_id, provider, title, status, created_at, updated_at, endpoint_profile_id, provider_session_id, error, endpoint_snapshot, native_source_id, native_config_dir, environment, interaction_mode, configuration_revision, archived_at, ephemeral, resume_source_id, checkout_path, checkout_branch";
-const PROFILE_COLUMNS: &str = "id, name, provider, endpoint_url, model, permission_mode, secret_ref, created_at, proxy_url, model_aliases, native_source_id, native_config_dir, native_config_env, environment, effort, models";
+const PROFILE_COLUMNS: &str = "id, name, provider, endpoint_url, model, permission_mode, secret_ref, created_at, proxy_url, model_aliases, native_source_id, native_config_dir, native_config_env, environment, effort, models, api";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SharedCanvasLayout {
@@ -32,7 +32,7 @@ impl Store {
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 17 {
+        if version > 18 {
             return Err(rusqlite::Error::InvalidQuery);
         }
         let tx = connection.transaction()?;
@@ -123,6 +123,9 @@ impl Store {
         if version < 17 {
             tx.execute_batch(include_str!("../../../migrations/0017_profile_models.sql"))?;
         }
+        if version < 18 {
+            tx.execute_batch(include_str!("../../../migrations/0018_profile_api.sql"))?;
+        }
         // Capture the endpoint settings for legacy M0 sessions once, before templates change.
         let legacy = {
             let mut stmt = tx.prepare("SELECT s.id,p.id FROM sessions s JOIN endpoint_profiles p ON p.id=s.endpoint_profile_id WHERE s.endpoint_snapshot IS NULL")?;
@@ -141,7 +144,7 @@ impl Store {
                 params![snapshot, id],
             )?;
         }
-        tx.pragma_update(None, "user_version", 17)?;
+        tx.pragma_update(None, "user_version", 18)?;
         tx.commit()?;
         Ok(Self {
             connection: Mutex::new(connection),
@@ -393,6 +396,7 @@ impl Store {
                 effort: None,
                 model_aliases: Default::default(),
                 models: Vec::new(),
+                api: None,
                 native_config: None,
                 environment: Default::default(),
                 created_at: now,
@@ -718,7 +722,7 @@ impl Store {
     pub fn create_endpoint_profile(&self, p: &EndpointProfile) -> Result<()> {
         validate_native_profile(p)?;
         let aliases = serde_json::to_string(&p.model_aliases).map_err(conversion_error)?;
-        self.connection.lock().expect("sqlite lock").execute("INSERT INTO endpoint_profiles (id,name,provider,endpoint_url,model,permission_mode,secret_ref,created_at,proxy_url,model_aliases,native_source_id,native_config_dir,native_config_env,environment,effort,models) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",params![p.id.to_string(),p.name,provider_name(&p.provider),p.endpoint_url,p.model,p.permission_mode,p.secret_ref,p.created_at.to_rfc3339(),p.proxy_url,aliases,p.native_config.as_ref().map(|native| &native.source_id),p.native_config.as_ref().map(|native| &native.config_dir),p.native_config.as_ref().and_then(|native| native.config_env.as_deref()),serde_json::to_string(&p.environment).map_err(conversion_error)?,p.effort,serde_json::to_string(&p.models).map_err(conversion_error)?])?;
+        self.connection.lock().expect("sqlite lock").execute("INSERT INTO endpoint_profiles (id,name,provider,endpoint_url,model,permission_mode,secret_ref,created_at,proxy_url,model_aliases,native_source_id,native_config_dir,native_config_env,environment,effort,models,api) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",params![p.id.to_string(),p.name,provider_name(&p.provider),p.endpoint_url,p.model,p.permission_mode,p.secret_ref,p.created_at.to_rfc3339(),p.proxy_url,aliases,p.native_config.as_ref().map(|native| &native.source_id),p.native_config.as_ref().map(|native| &native.config_dir),p.native_config.as_ref().and_then(|native| native.config_env.as_deref()),serde_json::to_string(&p.environment).map_err(conversion_error)?,p.effort,serde_json::to_string(&p.models).map_err(conversion_error)?,p.api])?;
         Ok(())
     }
 
@@ -745,7 +749,7 @@ impl Store {
             return Err(rusqlite::Error::InvalidQuery);
         }
         let aliases = serde_json::to_string(&p.model_aliases).map_err(conversion_error)?;
-        let updated = tx.execute("UPDATE endpoint_profiles SET name=?1,endpoint_url=?2,model=?3,permission_mode=?4,secret_ref=?5,proxy_url=?6,model_aliases=?7,environment=?9,effort=?10,models=?11 WHERE id=?8",params![p.name,p.endpoint_url,p.model,p.permission_mode,p.secret_ref,p.proxy_url,aliases,p.id.to_string(),serde_json::to_string(&p.environment).map_err(conversion_error)?,p.effort,serde_json::to_string(&p.models).map_err(conversion_error)?])? == 1;
+        let updated = tx.execute("UPDATE endpoint_profiles SET name=?1,endpoint_url=?2,model=?3,permission_mode=?4,secret_ref=?5,proxy_url=?6,model_aliases=?7,environment=?9,effort=?10,models=?11,api=?12 WHERE id=?8",params![p.name,p.endpoint_url,p.model,p.permission_mode,p.secret_ref,p.proxy_url,aliases,p.id.to_string(),serde_json::to_string(&p.environment).map_err(conversion_error)?,p.effort,serde_json::to_string(&p.models).map_err(conversion_error)?,p.api])? == 1;
         tx.commit()?;
         Ok(updated)
     }
@@ -771,6 +775,7 @@ impl Store {
             effort: None,
             model_aliases: Default::default(),
             models: Vec::new(),
+            api: None,
             native_config: Some(reference),
             environment: Default::default(),
             created_at: Utc::now(),
@@ -887,6 +892,7 @@ fn validate_native_profile(profile: &EndpointProfile) -> Result<()> {
         // native configuration, unlike the settings rejected above.
         || !profile.model_aliases.is_empty()
         || !profile.models.is_empty()
+        || profile.api.is_some()
         || profile.permission_mode != "native"
     {
         return Err(rusqlite::Error::InvalidQuery);
@@ -952,6 +958,7 @@ fn profile_row(r: &rusqlite::Row<'_>) -> Result<EndpointProfile> {
         effort: r.get(14)?,
         model_aliases: serde_json::from_str(&r.get::<_, String>(9)?).map_err(conversion_error)?,
         models: serde_json::from_str(&r.get::<_, String>(15)?).map_err(conversion_error)?,
+        api: r.get(16)?,
         native_config,
     })
 }
@@ -1297,6 +1304,7 @@ mod tests {
             effort: None,
             model_aliases: Default::default(),
             models: Vec::new(),
+            api: None,
             native_config: None,
             environment: Default::default(),
             created_at: Utc::now(),
@@ -1328,6 +1336,7 @@ mod tests {
             effort: None,
             model_aliases: Default::default(),
             models: Vec::new(),
+            api: None,
             native_config: None,
             environment: Default::default(),
             created_at: Utc::now(),
@@ -1874,7 +1883,7 @@ mod tests {
                     .unwrap()
                     .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                     .unwrap(),
-                17
+                18
             );
             let current = store.get_endpoint_profile(profile.id).unwrap().unwrap();
             assert!(current.native_config.is_none());
@@ -2264,7 +2273,7 @@ mod tests {
                     .unwrap()
                     .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                     .unwrap(),
-                17
+                18
             );
             assert!(matches!(
                 store.get_session(session_id).unwrap().unwrap().status,

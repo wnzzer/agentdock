@@ -117,6 +117,7 @@ impl Store {
                 effort: None,
                 model_aliases: Default::default(),
                 models: Vec::new(),
+                api: None,
                 native_config: None,
                 environment: Default::default(),
                 created_at: Utc::now(),

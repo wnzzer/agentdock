@@ -102,6 +102,15 @@ pub fn validate_profile(p: &EndpointProfile) -> Result<(), ApiError> {
     // Reasoning effort is a fixed vocabulary both clients share. Anything else
     // would be forwarded to a client that would simply reject it.
     validate_effort(p.effort.as_deref())?;
+    // Only an API the client names as one it speaks.
+    if let Some(api) = p.api.as_deref()
+        && !crate::adapters::agent(p.provider)?.apis().contains(&api)
+    {
+        return Err(ApiError::bad(format!(
+            "{} does not speak the {api} API",
+            p.provider.label()
+        )));
+    }
     if p.models.len() > 500
         || p.models
             .iter()
@@ -421,6 +430,7 @@ mod tests {
             effort: None,
             model_aliases: Default::default(),
             models: Vec::new(),
+            api: None,
             native_config: None,
             environment: Default::default(),
             created_at: chrono::Utc::now(),
@@ -447,6 +457,7 @@ mod tests {
             effort: None,
             model_aliases: Default::default(),
             models: Vec::new(),
+            api: None,
             native_config: Some(agentdock_domain::NativeConfigReference {
                 source_id: "claude-default".into(),
                 config_dir: std::env::temp_dir()
@@ -498,6 +509,7 @@ mod tests {
             effort: None,
             model_aliases: Default::default(),
             models: Vec::new(),
+            api: None,
             native_config: None,
             environment: Default::default(),
             created_at: chrono::Utc::now(),

@@ -168,6 +168,7 @@ impl ClientAdapter for Codex {
     }
     fn authorize(
         &self,
+        _profile: &agentdock_domain::EndpointProfile,
         request: reqwest::RequestBuilder,
         secret: Option<&str>,
     ) -> reqwest::RequestBuilder {

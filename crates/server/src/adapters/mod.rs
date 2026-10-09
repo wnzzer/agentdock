@@ -104,15 +104,22 @@ pub trait ClientAdapter: Sync {
     /// effort and context window, as this client takes them.
     fn configure(&self, launch: EndpointLaunch<'_>) -> Result<(), ApiError>;
 
+    /// The APIs a profile's endpoint can speak to it, for a client that
+    /// speaks more than one; a profile names one of these or none.
+    fn apis(&self) -> &'static [&'static str] {
+        &[]
+    }
     /// Its vendor's API, for a profile that names no endpoint.
     fn default_endpoint(&self) -> &'static str;
-    /// Whether its API's base URL leaves out the `/v1` the model list is under.
-    fn versioned_api(&self) -> bool {
+    /// Whether this profile's API base URL leaves out the `/v1` the model
+    /// list is under.
+    fn versioned_api(&self, _profile: &EndpointProfile) -> bool {
         false
     }
-    /// A model-list request with this API's credential and headers.
+    /// A model-list request with this profile's API credential and headers.
     fn authorize(
         &self,
+        profile: &EndpointProfile,
         request: reqwest::RequestBuilder,
         secret: Option<&str>,
     ) -> reqwest::RequestBuilder;

@@ -58,6 +58,8 @@ export interface EndpointProfile {
   model_aliases?: Record<string, string>;
   /** The endpoint models a session's menu offers; empty or absent offers all it serves. */
   models?: string[];
+  /** Which API the endpoint speaks, for a client that speaks several; absent leaves it to the client. */
+  api?: string | null;
   /** A live reference to native client configuration, not copied configuration contents. */
   native_config?: { source_id: string; config_dir: string; config_env?: string | null } | null;
   created_at: string;

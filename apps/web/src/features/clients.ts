@@ -36,6 +36,8 @@ export interface ClientInfo {
   proxyNote?: string;
   /** Said on an empty chat, where the headless client behaves unlike its terminal. */
   chatNote?: string;
+  /** The APIs a profile's endpoint can speak to it, when there is a choice: the value the server takes, and how to name it. */
+  apis?: readonly { value: string; label: string }[];
   /** How the client names an endpoint's model, when it puts the endpoint's provider in front of the ID. */
   endpointModelPrefix?: string;
   /** A model list the client publishes without a profile: the catalog source it reports, and what to say about it. */
@@ -94,6 +96,12 @@ const CLIENTS: Record<AgentProviderKind, ClientInfo> = {
     colorToken: "pi",
     // The provider AgentDock writes for a profile's endpoint (server adapters/pi.rs).
     endpointModelPrefix: "agentdock/",
+    apis: [
+      { value: "openai-completions", label: "OpenAI Chat Completions" },
+      { value: "openai-responses", label: "OpenAI Responses" },
+      { value: "anthropic-messages", label: "Anthropic Messages" },
+      { value: "google-generative-ai", label: "Google Generative AI" },
+    ],
     permissionModes: [],
     approvals: false,
     profilePlan: false,

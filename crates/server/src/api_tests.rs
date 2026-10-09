@@ -1177,6 +1177,34 @@ async fn a_pi_profile_becomes_a_provider_in_its_own_models_json() {
         json!({"baseUrl":"http://gateway.test/v1","api":"openai-completions","apiKey":"$AGENTDOCK_PI_API_KEY",
             "models":[{"id":"qwen-local"},{"id":"zai-org/GLM-5.3","contextWindow":40000}]})
     );
+
+    // A profile can name the API its endpoint speaks; a client that speaks
+    // only one has no API to name.
+    let (status, _) = call(
+        f.app(),
+        "PATCH",
+        &format!("/api/endpoint-profiles/{}", profile["id"].as_str().unwrap()),
+        json!({"api":"openai-responses"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, created) = call(
+        f.app(),
+        "POST",
+        &format!("/api/workspaces/{id}/sessions"),
+        json!({"title":"pi responses","provider":"pi","endpoint_profile_id":profile["id"]}),
+    )
+    .await;
+    let session: Session = serde_json::from_value(created).unwrap();
+    let spec = providers::build(&f.state, &session, f.path.join("repo")).unwrap();
+    let home = PathBuf::from(spec.env.get("PI_CODING_AGENT_DIR").unwrap());
+    let config: Value =
+        serde_json::from_str(&fs::read_to_string(home.join("models.json")).unwrap()).unwrap();
+    assert_eq!(config["providers"]["agentdock"]["api"], "openai-responses");
+    for (provider, api) in [("pi", "soap"), ("claude_code", "openai-responses")] {
+        let (status, _) = call(f.app(), "POST", "/api/endpoint-profiles", json!({"name":"wrong api","provider":provider,"endpoint_url":"http://gateway.test/v1","api":api})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{provider} {api}");
+    }
 }
 
 #[tokio::test]
