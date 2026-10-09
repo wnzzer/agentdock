@@ -1120,6 +1120,66 @@ async fn a_key_saved_in_agentdock_reaches_the_client_and_never_comes_back() {
 }
 
 #[tokio::test]
+async fn a_pi_profile_becomes_a_provider_in_its_own_models_json() {
+    let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
+    let id = register(&f).await;
+    let name = "AGENTDOCK_SECRET_API_TEST_PI";
+    call(
+        f.app(),
+        "PUT",
+        &format!("/api/secrets/{name}"),
+        json!({"value":"sk-pi-value"}),
+    )
+    .await;
+    let (_, limits) = call(
+        f.app(),
+        "PUT",
+        "/api/models/limits",
+        json!({"models":{"zai-org/glm-5.3":{"context_window":40000}}}),
+    )
+    .await;
+    assert!(limits["models"].is_object());
+    let (status, profile) = call(f.app(), "POST", "/api/endpoint-profiles", json!({"name":"pi gateway","provider":"pi","endpoint_url":"http://gateway.test/v1","secret_ref":format!("env:{name}"),"model":"qwen-local","effort":"high","models":["zai-org/GLM-5.3"]})).await;
+    assert_eq!(status, StatusCode::CREATED, "{profile}");
+    let (_, created) = call(
+        f.app(),
+        "POST",
+        &format!("/api/workspaces/{id}/sessions"),
+        json!({"title":"pi task","provider":"pi","endpoint_profile_id":profile["id"]}),
+    )
+    .await;
+    let session: Session = serde_json::from_value(created).unwrap();
+    let spec = providers::build(&f.state, &session, f.path.join("repo")).unwrap();
+    let args = spec.args.join(" ");
+    assert!(args.contains("--model agentdock/qwen-local"), "{args}");
+    assert!(args.contains("--thinking high"), "{args}");
+    assert!(args.contains("--name pi task"), "{args}");
+    assert!(!args.contains("mcp"), "Pi has no MCP: {args}");
+    assert_eq!(
+        spec.env.get("AGENTDOCK_PI_API_KEY").map(String::as_str),
+        Some("sk-pi-value")
+    );
+    let home = PathBuf::from(spec.env.get("PI_CODING_AGENT_DIR").expect("its own home"));
+    #[cfg(unix)]
+    assert_eq!(
+        fs::read_link(home.join("bin")).unwrap(),
+        f.state.state_dir.join("clients/pi-bin"),
+        "the tools Pi downloads are shared by every session"
+    );
+    let written = fs::read_to_string(home.join("models.json")).unwrap();
+    assert!(
+        !written.contains("sk-pi-value"),
+        "the key stays out of the file"
+    );
+    let config: Value = serde_json::from_str(&written).unwrap();
+    assert_eq!(
+        config["providers"]["agentdock"],
+        json!({"baseUrl":"http://gateway.test/v1","api":"openai-completions","apiKey":"$AGENTDOCK_PI_API_KEY",
+            "models":[{"id":"qwen-local"},{"id":"zai-org/GLM-5.3","contextWindow":40000}]})
+    );
+}
+
+#[tokio::test]
 async fn profiles_validate_snapshot_and_session_states() {
     let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
     let id = register(&f).await;
@@ -3487,16 +3547,16 @@ async fn client_discovery_reports_this_host_and_refuses_an_unconfirmed_install()
     assert_eq!(status, StatusCode::OK);
     let clients = clients.as_array().unwrap();
     // Terminal is a shell, not an installable agent client.
-    assert_eq!(clients.len(), 2);
+    assert_eq!(clients.len(), ProviderKind::AGENTS.len());
     for client in clients {
         let provider = client["provider"].as_str().unwrap();
-        assert!(matches!(provider, "claude_code" | "codex"));
         assert_eq!(
             client["npm_package"],
-            if provider == "codex" {
-                "@openai/codex"
-            } else {
-                "@anthropic-ai/claude-code"
+            match provider {
+                "codex" => "@openai/codex",
+                "claude_code" => "@anthropic-ai/claude-code",
+                "pi" => "@earendil-works/pi-coding-agent",
+                other => panic!("an unexpected client {other}"),
             }
         );
         // An unknown client is never reported as installed, and a program name
@@ -3650,7 +3710,7 @@ async fn preferences_are_validated_per_provider_and_kept() {
     let f = Fixture::new("127.0.0.1:8787".parse().unwrap(), None);
     let (status, empty) = call(f.app(), "GET", "/api/preferences", Value::Null).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(empty, json!({"claude_code":{},"codex":{}}));
+    assert_eq!(empty, json!({"claude_code":{},"codex":{},"pi":{}}));
     // Codex has no plan mode, and a depth must be one the clients know.
     for bad in [
         json!({"codex":{"permission":"plan"}}),
@@ -3689,7 +3749,8 @@ async fn preferences_are_validated_per_provider_and_kept() {
         call(f.app(), "GET", "/api/preferences", Value::Null)
             .await
             .1,
-        chosen
+        json!({"claude_code":chosen["claude_code"],"codex":chosen["codex"],"pi":{}}),
+        "every client is listed, set or not"
     );
     // A new session takes the preferred depth unless it says otherwise; an
     // explicit null is "automatic" and takes none.

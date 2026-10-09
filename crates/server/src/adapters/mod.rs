@@ -12,6 +12,7 @@ use std::{collections::BTreeMap, path::Path};
 
 mod claude_code;
 mod codex;
+mod pi;
 
 /// A launch AgentDock configures itself, as opposed to one that defers to a
 /// native configuration: the endpoint, credential and permission choices of a
@@ -79,6 +80,10 @@ pub trait ClientAdapter: Sync {
     /// The flags that name a new conversation, where it keeps a title.
     fn title_args(&self, _title: &str) -> Vec<String> {
         Vec::new()
+    }
+    /// The flags that choose a model, for a launch with this profile.
+    fn model_args(&self, _profile: &EndpointProfile, model: &str) -> Vec<String> {
+        vec!["--model".into(), model.to_owned()]
     }
     /// The flags that set a reasoning effort.
     fn effort_args(&self, effort: &str) -> Vec<String>;
@@ -174,12 +179,14 @@ pub trait ClientAdapter: Sync {
 
 static CLAUDE_CODE: claude_code::ClaudeCode = claude_code::ClaudeCode;
 static CODEX: codex::Codex = codex::Codex;
+static PI: pi::Pi = pi::Pi;
 
 /// The adapter for an agent client; a plain terminal has none.
 pub fn adapter(kind: ProviderKind) -> Option<&'static dyn ClientAdapter> {
     match kind {
         ProviderKind::ClaudeCode => Some(&CLAUDE_CODE),
         ProviderKind::Codex => Some(&CODEX),
+        ProviderKind::Pi => Some(&PI),
         ProviderKind::Terminal => None,
     }
 }

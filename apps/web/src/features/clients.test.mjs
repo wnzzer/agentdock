@@ -4,11 +4,11 @@ import { ACCOUNT_CLIENTS, AGENT_CLIENTS, DEFAULT_CLIENT, PROVIDER_KINDS, agentCl
 import { ICON_PALETTE } from './icon-palette.ts';
 
 test('agent clients come in menu order, the default first, and the terminal only among session kinds', () => {
-  assert.deepEqual(AGENT_CLIENTS, ['claude_code', 'codex']);
+  assert.deepEqual(AGENT_CLIENTS, ['claude_code', 'codex', 'pi']);
   assert.equal(DEFAULT_CLIENT, 'claude_code');
-  assert.deepEqual(PROVIDER_KINDS, ['claude_code', 'codex', 'terminal']);
+  assert.deepEqual(PROVIDER_KINDS, ['claude_code', 'codex', 'pi', 'terminal']);
   // The account form has always opened on Codex.
-  assert.deepEqual(ACCOUNT_CLIENTS, ['codex', 'claude_code']);
+  assert.deepEqual(ACCOUNT_CLIENTS, ['codex', 'claude_code', 'pi']);
   assert.ok(isAgentClient('codex')); assert.ok(!isAgentClient('terminal')); assert.ok(!isAgentClient('toString'));
   assert.ok(isProviderKind('terminal')); assert.ok(isProviderKind('claude_code')); assert.ok(!isProviderKind('shell')); assert.ok(!isProviderKind(undefined));
 });
@@ -29,15 +29,17 @@ test('every client is complete enough to draw, colour and offer', () => {
     assert.match(info.glyph.path, /^M[\d.\s-]/, `${id} has a glyph`);
     assert.ok(Object.hasOwn(ICON_PALETTE, info.iconTone), `${id} has a palette tone`);
     assert.match(info.tabTint, /^#[0-9A-F]{6}$/i, `${id} has a tab tint`);
-    assert.ok(info.permissionModes.includes('ask') && info.permissionModes.includes('danger'), `${id} can ask and can run unattended`);
+    // A client that asks can also be told not to; one that never asks offers no modes.
+    assert.ok(info.approvals ? info.permissionModes.includes('ask') && info.permissionModes.includes('danger') : !info.permissionModes.length, `${id}'s modes match whether it asks`);
+    assert.ok(info.approvals || info.chatNote, `${id} says so in the chat when it never asks`);
     assert.ok(info.contextWindow.help, `${id} explains its context window`);
-    assert.ok(info.account.loginDomains.length, `${id} has sign-in hosts`);
   }
 });
 
 test('client-specific behaviour is read from the registry', () => {
   assert.deepEqual(clientInfo('claude_code').permissionModes, ['ask', 'plan', 'accept_edits', 'danger']);
   assert.deepEqual(clientInfo('codex').permissionModes, ['ask', 'danger']);
+  assert.deepEqual(clientInfo('pi').permissionModes, []); assert.equal(clientInfo('pi').approvals, false);
   assert.equal(clientInfo('claude_code').profilePlan, true); assert.equal(clientInfo('codex').profilePlan, false);
   assert.equal(clientInfo('claude_code').modelSlots, true); assert.equal(clientInfo('codex').modelSlots, false);
   assert.equal(clientInfo('claude_code').contextWindow.variable, 'CLAUDE_CODE_MAX_CONTEXT_TOKENS');

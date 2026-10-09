@@ -1657,13 +1657,11 @@ async fn import_native_profile(
         tokio::task::spawn_blocking(move || native_config::pin(&config_state, &input.source_id))
             .await
             .map_err(ApiError::internal)??;
-    let name = bounded_name(input.name.as_deref().unwrap_or(match provider {
-        ProviderKind::Codex => "Host Codex configuration",
-        ProviderKind::ClaudeCode => "Host Claude Code configuration",
-        ProviderKind::Terminal => {
-            return Err(ApiError::bad("Terminal has no native configuration"));
-        }
-    }))?;
+    if !provider.is_agent() {
+        return Err(ApiError::bad("Terminal has no native configuration"));
+    }
+    let host = format!("Host {} configuration", provider.label());
+    let name = bounded_name(input.name.as_deref().unwrap_or(&host))?;
     Ok(Json(
         db(&state, move |s| {
             s.import_native_profile(&name, provider, reference)

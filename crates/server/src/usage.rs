@@ -223,6 +223,19 @@ fn refresh(source: &Source, state: &mut FileState) {
     state.modified = modified;
 }
 
+#[cfg(test)]
+pub(crate) fn test_source(provider: ProviderKind) -> Source {
+    Source {
+        provider,
+        file: PathBuf::from("test.jsonl"),
+        home_session: None,
+    }
+}
+#[cfg(test)]
+pub(crate) fn test_state() -> FileState {
+    new_state()
+}
+
 fn new_state() -> FileState {
     FileState {
         len: 0,
@@ -282,8 +295,11 @@ fn sources(homes: &[Home]) -> Vec<Source> {
     sources
 }
 
-fn cache() -> &'static Mutex<HashMap<PathBuf, FileState>> {
-    static CACHE: OnceLock<Mutex<HashMap<PathBuf, FileState>>> = OnceLock::new();
+/// Read state by client and file: two clients keep transcripts under the same
+/// directory name (Codex's and Pi's `sessions/`), so one file is read once per
+/// client, each from where that client's reader left off.
+fn cache() -> &'static Mutex<HashMap<(ProviderKind, PathBuf), FileState>> {
+    static CACHE: OnceLock<Mutex<HashMap<(ProviderKind, PathBuf), FileState>>> = OnceLock::new();
     CACHE.get_or_init(Default::default)
 }
 
@@ -293,7 +309,9 @@ fn collect(homes: &[Home]) -> Vec<Call> {
     let mut calls = Vec::new();
     let mut seen = HashSet::new();
     for source in sources(homes) {
-        let state = cache.entry(source.file.clone()).or_insert_with(new_state);
+        let state = cache
+            .entry((source.provider, source.file.clone()))
+            .or_insert_with(new_state);
         refresh(&source, state);
         for call in &state.calls {
             if let Some(key) = &call.dedupe

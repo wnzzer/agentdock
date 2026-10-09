@@ -161,7 +161,9 @@ watch([() => view.value.ready, () => activeProfile.value?.id, () => props.sessio
  * endpoint names them, or all it serves when none were chosen. Read from the
  * profile as it is now, so choosing more reaches sessions already open.
  */
-const offeredCatalog = computed(() => offeredModels(profileCatalog.value, (matchingProfiles.value.find(profile => profile.id === props.session.endpoint_profile_id) ?? activeProfile.value)?.models));
+/** The endpoint's models under the IDs this client runs them by. */
+const endpointCatalog = computed(() => { const prefix = activeProfile.value?.native_config ? undefined : agentClient(props.session.provider)?.endpointModelPrefix; return prefix ? profileCatalog.value.map(entry => ({ ...entry, id: prefix + entry.id })) : profileCatalog.value; });
+const offeredCatalog = computed(() => { const prefix = activeProfile.value?.native_config ? '' : agentClient(props.session.provider)?.endpointModelPrefix ?? ''; return offeredModels(endpointCatalog.value, (matchingProfiles.value.find(profile => profile.id === props.session.endpoint_profile_id) ?? activeProfile.value)?.models?.map(id => prefix + id)); });
 const models = computed(() => mergeModels(view.value.models, activeProfile.value?.native_config ? [] : offeredCatalog.value, view.value.model ?? activeProfile.value?.model ?? undefined));
 /**
  * The window to measure the context against: the one the user set for this
@@ -211,7 +213,7 @@ const modelDefault = computed(() => currentModelEntry.value ? currentModelEntry.
 const modelName = computed(() => modelDefault.value ? t('Model') : currentModelEntry.value?.name ?? currentModel.value ?? t('Model'));
 function pickCustomModel() {
   // A model's name typed by hand goes out as its ID, which is what the endpoint knows.
-  const id = resolveModel(customModel.value, profileCatalog.value);
+  const id = resolveModel(customModel.value, endpointCatalog.value);
   if (!id) return;
   customPicked.value = id; customModel.value = '';
   void pickModel(id);

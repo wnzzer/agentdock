@@ -22,6 +22,8 @@ export interface ClientInfo {
   colorToken: string;
   /** The permission modes a session can switch between, in menu order. */
   permissionModes: readonly string[];
+  /** Whether it asks before running tools at all; one that never does has no permission intent to choose. */
+  approvals: boolean;
   /** Whether a profile can ask for `plan` as its permission intent. */
   profilePlan: boolean;
   /** For a model that advertises no levels: every level (depth is a client option), or none (levels belong to the model). */
@@ -34,6 +36,8 @@ export interface ClientInfo {
   proxyNote?: string;
   /** Said on an empty chat, where the headless client behaves unlike its terminal. */
   chatNote?: string;
+  /** How the client names an endpoint's model, when it puts the endpoint's provider in front of the ID. */
+  endpointModelPrefix?: string;
   /** A model list the client publishes without a profile: the catalog source it reports, and what to say about it. */
   nativeCatalog?: { source: string; note: string };
   /** Hosts its sign-in links may point at, and its place in the account form (lowest first). */
@@ -51,6 +55,7 @@ const CLIENTS: Record<AgentProviderKind, ClientInfo> = {
     tabTint: "#FFF0E5",
     colorToken: "claude",
     permissionModes: ["ask", "plan", "accept_edits", "danger"],
+    approvals: true,
     profilePlan: true,
     effortLadder: true,
     modelSlots: true,
@@ -68,6 +73,7 @@ const CLIENTS: Record<AgentProviderKind, ClientInfo> = {
     tabTint: "#F0E9FF",
     colorToken: "codex",
     permissionModes: ["ask", "danger"],
+    approvals: true,
     profilePlan: false,
     effortLadder: false,
     modelSlots: false,
@@ -76,6 +82,27 @@ const CLIENTS: Record<AgentProviderKind, ClientInfo> = {
     // The account form has always opened on Codex.
     account: { loginDomains: ["openai.com", "chatgpt.com"], order: 0 },
     reservedEnvironment: ["CODEX_HOME"],
+  },
+  pi: {
+    label: "Pi",
+    shortLabel: "Pi",
+    // Pi's own mark (https://pi.dev/logo-auto.svg), its three blocks scaled from
+    // an 800 to a 24 grid and drawn in one colour like the other marks.
+    glyph: { path: "M4.96 4.96H15.52V12H12V8.48H4.96ZM4.96 8.48H8.48V12H12V15.52H8.48V19.04H4.96ZM15.52 12H19.04V19.04H15.52Z" },
+    iconTone: "blue",
+    tabTint: "#E8F0FA",
+    colorToken: "pi",
+    // The provider AgentDock writes for a profile's endpoint (server adapters/pi.rs).
+    endpointModelPrefix: "agentdock/",
+    permissionModes: [],
+    approvals: false,
+    profilePlan: false,
+    effortLadder: false,
+    modelSlots: false,
+    contextWindow: { help: "Pi is told it per model, in the models.json AgentDock writes for the endpoint. Empty lets Pi decide." },
+    chatNote: "Pi runs its tools without asking. Send messages only for work you are happy for it to carry out in this directory.",
+    account: { loginDomains: [], order: 2 },
+    reservedEnvironment: ["PI_CODING_AGENT_DIR"],
   },
 };
 

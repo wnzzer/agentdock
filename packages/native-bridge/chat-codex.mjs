@@ -66,7 +66,7 @@ const CODEX_APPROVAL={
 export class CodexChat extends ChatBase {
   async initialize() {
     this.launch=codexLaunch(this.job);this.tools=new Map();
-    this.port=new NativeProcess(this.job.program,this.launch.args,this.job.cwd,message=>this.notification(message),message=>this.fatal(message),()=>this.fatal('Codex app-server exited.'),this.options);
+    this.port=new NativeProcess(this.job.program,this.launch.args,this.job.cwd,message=>this.notification(message),message=>this.fatal(message),()=>this.fatal('Codex app-server exited.'),{...this.options,clientName:'Codex'});
     await this.port.rpc('initialize',{clientInfo:{name:'agentdock',title:'AgentDock',version:'0.1.0'}});
     this.port.send({method:'initialized',params:{}});this.announce();
     this.settings(undefined,this.launch.thread.model);

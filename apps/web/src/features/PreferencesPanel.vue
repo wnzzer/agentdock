@@ -125,7 +125,7 @@ async function revokeGrants() { try { hostGrants.value = await request('/host/gr
             <option v-for="level in REASONING_EFFORTS" :key="level" :value="level">{{ t(effortLabel(level)) }}</option>
           </select>
         </label>
-        <label class="preference-row">
+        <label v-if="clientInfo(provider).permissionModes.length" class="preference-row">
           <span><strong>{{ t('Default permission') }}</strong><small>{{ t('How tools are approved each time a session starts. The session\'s own chip can change it between turns.') }}</small></span>
           <select :value="preferences[provider].permission ?? ''" :class="{danger:preferences[provider].permission==='danger'}" :disabled="saving" @change="pick(provider,'permission')($event)">
             <option value="">{{ t('Client default') }}</option>

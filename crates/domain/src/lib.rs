@@ -155,31 +155,34 @@ pub struct Workspace {
 pub enum ProviderKind {
     ClaudeCode,
     Codex,
+    Pi,
     Terminal,
 }
 
 impl ProviderKind {
     /// The agent clients, in the order the interface offers them. A plain
     /// terminal is a session kind, not a client, so it is not among them.
-    pub const AGENTS: [ProviderKind; 2] = [ProviderKind::ClaudeCode, ProviderKind::Codex];
+    pub const AGENTS: [ProviderKind; 3] = [
+        ProviderKind::ClaudeCode,
+        ProviderKind::Codex,
+        ProviderKind::Pi,
+    ];
 
     /// The name stored and sent on the wire, as serde writes it.
     pub fn as_str(&self) -> &'static str {
         match self {
             ProviderKind::ClaudeCode => "claude_code",
             ProviderKind::Codex => "codex",
+            ProviderKind::Pi => "pi",
             ProviderKind::Terminal => "terminal",
         }
     }
 
     pub fn parse(name: &str) -> Option<ProviderKind> {
-        [
-            ProviderKind::ClaudeCode,
-            ProviderKind::Codex,
-            ProviderKind::Terminal,
-        ]
-        .into_iter()
-        .find(|kind| kind.as_str() == name)
+        Self::AGENTS
+            .into_iter()
+            .chain([ProviderKind::Terminal])
+            .find(|kind| kind.as_str() == name)
     }
 
     /// The agent client with this name; a terminal is not one.
@@ -196,6 +199,7 @@ impl ProviderKind {
         match self {
             ProviderKind::ClaudeCode => "Claude Code",
             ProviderKind::Codex => "Codex",
+            ProviderKind::Pi => "Pi",
             ProviderKind::Terminal => "Terminal",
         }
     }
@@ -435,18 +439,17 @@ mod provider_tests {
 
     #[test]
     fn a_provider_name_reads_back_as_the_same_kind_and_matches_serde() {
-        for kind in [
-            ProviderKind::ClaudeCode,
-            ProviderKind::Codex,
-            ProviderKind::Terminal,
-        ] {
+        for kind in ProviderKind::AGENTS
+            .into_iter()
+            .chain([ProviderKind::Terminal])
+        {
             assert_eq!(ProviderKind::parse(kind.as_str()), Some(kind));
             assert_eq!(
                 serde_json::to_value(kind).unwrap(),
                 serde_json::Value::from(kind.as_str())
             );
         }
-        assert_eq!(ProviderKind::parse("pi"), None);
+        assert_eq!(ProviderKind::parse("gemini"), None);
         assert_eq!(ProviderKind::parse_agent("terminal"), None);
         assert!(ProviderKind::AGENTS.iter().all(ProviderKind::is_agent));
     }

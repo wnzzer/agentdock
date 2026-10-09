@@ -89,6 +89,8 @@
   --claude-soft: #fff0e5;
   --codex: #7552b8;
   --codex-soft: #f0e9ff;
+  --pi: #326eb4;
+  --pi-soft: #e8f0fa;
   --violet-soft: #f1eef8;
   /* How strongly a pastel tint shows: full on light surfaces, a trace on dark. */
   --tint-mix: 100%;
@@ -188,6 +190,8 @@
     --claude-soft: #3a2519;
     --codex: #ad91ec;
     --codex-soft: #2a2242;
+    --pi: #7fb0ea;
+    --pi-soft: #1c2a3d;
   --tint-mix: 14%;
   --chart-1: #3987e5;
   --chart-2: #d95926;
@@ -245,6 +249,8 @@
   --claude-soft: #3a2519;
   --codex: #ad91ec;
   --codex-soft: #2a2242;
+  --pi: #7fb0ea;
+  --pi-soft: #1c2a3d;
   --tint-mix: 14%;
   --chart-1: #3987e5;
   --chart-2: #d95926;

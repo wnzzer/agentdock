@@ -296,7 +296,8 @@ fn build_base(state: &AppState, session: &Session, cwd: PathBuf) -> Result<Spawn
         // launch, which is also the one path that works for a model whose live
         // switch the upstream refuses.
         if let Some(model) = resolve_model(profile) {
-            spec.args.extend(["--model".into(), model]);
+            spec.args
+                .extend(crate::adapters::agent(session.provider)?.model_args(profile, &model));
         }
         if let Some(effort) = profile.effort.as_deref() {
             spec.args
@@ -361,8 +362,10 @@ fn build_base(state: &AppState, session: &Session, cwd: PathBuf) -> Result<Spawn
             .and_then(|p| p.secret_ref.as_deref())
             .map(|reference| crate::secrets::resolve_reference(&state.state_dir, reference))
             .transpose()?;
-        if let Some(model) = p.and_then(resolve_model) {
-            args.extend(["--model".into(), model]);
+        if let Some(p) = p
+            && let Some(model) = resolve_model(p)
+        {
+            args.extend(client.model_args(p, &model));
         }
         if let Some(proxy) = p.and_then(|p| p.proxy_url.as_ref()) {
             // Override both cases so an inherited lowercase variable cannot win.

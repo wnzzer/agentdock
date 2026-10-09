@@ -374,6 +374,8 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Enable chat explicitly to continue this native session in a conversation view.": "明确启用聊天后，即可通过对话界面继续此原生会话。",
   "Enable conversation view": "启用对话界面",
   "Latest message": "最新消息",
+  "Pi is told it per model, in the models.json AgentDock writes for the endpoint. Empty lets Pi decide.": "会按模型写进 AgentDock 为该端点生成的 models.json 告诉 Pi。留空则由 Pi 自行判断。",
+  "Pi runs its tools without asking. Send messages only for work you are happy for it to carry out in this directory.": "Pi 运行工具前不会询问。只发送你愿意让它在这个目录里直接执行的任务。",
   "Filter by name or ID": "按名称或 ID 筛选",
   "{chosen} of {count} chosen": "已选 {chosen} / {count}",
   "Choose matches": "选中筛选结果",

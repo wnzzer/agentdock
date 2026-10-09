@@ -81,32 +81,47 @@ export function jsonLines(readable, onMessage, onFailure, { maxLine = MAX_NATIVE
  */
 const jsonRpcRequest = (id, method, params) => ({ id, method, params });
 
+/**
+ * Which pending request a message answers, and how: a JSON-RPC result or a
+ * Claude `control_response`, unless a client's chat reads its own. Anything
+ * else is not an answer and goes on as a notification.
+ * @type {(message: any) => { id: any, refused?: string|true, result?: any } | undefined}
+ */
+const knownReply = message => {
+  if (message?.type === 'control_response') {
+    const response = message.response ?? {};
+    return { id: response.request_id, ...(response.subtype === 'error' ? { refused: response.error ?? true } : { result: response.response ?? {} }) };
+  }
+  if (message?.method || message?.id === undefined) return undefined;
+  return { id: message.id, ...(message.error ? { refused: message.error?.message ?? message.error } : { result: message.result }) };
+};
+
 export class NativeProcess {
   /**
    * `frame` wraps one request in the client's wire envelope. Replies of either
    * known shape -- a JSON-RPC result or a Claude `control_response` -- are
    * matched back to it below.
    */
-  constructor(program, args, cwd, onMessage, onFailure, onExit, { spawnProcess = spawn, rpcTimeout = 30_000, frame = jsonRpcRequest } = {}) {
+  constructor(program, args, cwd, onMessage, onFailure, onExit, { spawnProcess = spawn, rpcTimeout = 30_000, frame = jsonRpcRequest, reply = knownReply, clientName = 'Claude Code' } = {}) {
     this.pending = new Map(); this.sequence = 0; this.closed = false; this.rpcTimeout = rpcTimeout; this.frame = frame;
     this.failure = message => { if (!this.closed) onFailure(message); };
     this.child = spawnProcess(program,args,{ cwd, env: process.env, stdio:['pipe','pipe','pipe'], shell:false });
     this.stopLines = jsonLines(this.child.stdout, message => {
-      const responseId = message?.type === 'control_response' ? message.response?.request_id : !message?.method ? message?.id : undefined;
-      const pending = this.pending.get(responseId);
+      const answer = reply(message);
+      const pending = answer && this.pending.get(answer.id);
       if (pending) {
-        this.pending.delete(responseId); clearTimeout(pending.timer);
-        if (message.error || message.response?.subtype === 'error') {
+        this.pending.delete(answer.id); clearTimeout(pending.timer);
+        if (answer.refused !== undefined) {
           // The client says exactly why it refused. Dropping that left the user
           // with a generic message and nothing to act on, so its own wording is
           // carried through — clipped, and already redacted on the way out.
-          const stated = message.response?.error ?? message.error?.message ?? message.error;
+          const stated = answer.refused;
           const detail = typeof stated === 'string' && stated.trim() ? clip(stated.trim(), 400) : undefined;
           pending.reject(new Error(detail
-            ? `Claude Code refused: ${detail}`
+            ? `${clientName} refused: ${detail}`
             : 'Native client rejected a control request. Check client settings and version.'));
         }
-        else pending.resolve(message.type === 'control_response' ? message.response.response ?? {} : message.result);
+        else pending.resolve(answer.result);
       } else onMessage(message);
     }, this.failure);
     let diagnosticBytes = 0;
@@ -135,7 +150,7 @@ export class NativeProcess {
       const timer = setTimeout(() => {
         this.pending.delete(id);reject(new Error('Native control request timed out.'));
         // A timed-out start may have executed. Do not reopen the send gate and guess/replay it.
-        if(!optional&&method!=='interrupt'&&method!=='turn/interrupt')this.failure('Native control request timed out; the structured connection was stopped.');
+        if(!optional&&!['interrupt','turn/interrupt','abort'].includes(method))this.failure('Native control request timed out; the structured connection was stopped.');
       },optional?Math.min(this.rpcTimeout,4000):this.rpcTimeout);
       this.pending.set(id,{resolve,reject,timer});
       try { this.send(this.frame(id, method, params)); }
