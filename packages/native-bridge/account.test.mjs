@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { claudeStatusPath, executeAccount, isolatedEnvironment, normalizeClaudeLimits, normalizeLimits, retryAfterSeconds, RpcError, safeLoginUrl, UsageQueryError, usageFailure } from './account.mjs';
+import { executeAccount, isolatedEnvironment } from './account.mjs';
+import { RpcError } from './account-common.mjs';
+import { claudeStatusPath, normalizeClaudeLimits, retryAfterSeconds, UsageQueryError, usageFailure } from './account-claude.mjs';
+import { normalizeLimits, safeLoginUrl } from './account-codex.mjs';
 
 function fixture(overrides = {}) {
   const calls = [], events = [];

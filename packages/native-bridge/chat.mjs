@@ -2,13 +2,12 @@ import { isAbsolute, resolve } from 'node:path';
 import { stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { jsonLines, MAX_INPUT_LINE, MAX_EVENT_LINE, nativeId, redactEvents } from './chat-common.mjs';
-import { CodexChat } from './chat-codex.mjs';
-import { ClaudeChat } from './chat-claude.mjs';
+import { clientFor } from './clients.mjs';
 
 export function validateChatInput(message, first=false) {
   if(!message||typeof message!=='object'||Array.isArray(message))throw Error('Expected a structured chat object.');
   if(first){
-    if(message.type!=='init'||!['codex','claude_code'].includes(message.provider)||typeof message.program!=='string'||!message.program||message.program.includes('\0')||typeof message.cwd!=='string'||!isAbsolute(message.cwd)||!Array.isArray(message.args)||message.args.length>512||message.args.some(arg=>typeof arg!=='string'||arg.includes('\0'))||Buffer.byteLength(JSON.stringify(message.args))>64*1024||(message.resume_id!==undefined&&!nativeId(message.resume_id)))throw Error('Invalid native chat initialization.');
+    if(message.type!=='init'||!clientFor(message.provider)||typeof message.program!=='string'||!message.program||message.program.includes('\0')||typeof message.cwd!=='string'||!isAbsolute(message.cwd)||!Array.isArray(message.args)||message.args.length>512||message.args.some(arg=>typeof arg!=='string'||arg.includes('\0'))||Buffer.byteLength(JSON.stringify(message.args))>64*1024||(message.resume_id!==undefined&&!nativeId(message.resume_id)))throw Error('Invalid native chat initialization.');
     return message;
   }
   if(message.type==='message'||message.type==='steer'){
@@ -58,8 +57,8 @@ export function runChatBridge(input=process.stdin,output=process.stdout,options=
           validateChatInput(message,true);initializing=true;clearTimeout(initTimer);
           if(!(await stat(message.cwd)).isDirectory())throw Error('Chat workspace is not a directory.');
           if(stopped)return;
-          const Type=message.provider==='codex'?CodexChat:ClaudeChat;
-          runtime=new Type(message,emit,{...options,onExit:finish});
+          const { Chat }=clientFor(message.provider);
+          runtime=new Chat(message,emit,{...options,onExit:finish});
           await runtime.initialize();initialized=true;initializing=false;
         }else{
           validateChatInput(message);

@@ -72,7 +72,7 @@ export class CodexChat extends ChatBase {
     this.settings(undefined,this.launch.thread.model);
     // Asking for models must not hold up the session. A Codex build without
     // model/list simply offers no picker rather than a list AgentDock guessed.
-    void this.port.rpc('model/list',{limit:100,includeHidden:false},false,true)
+    void this.port.rpc('model/list',{limit:100,includeHidden:false},true)
       .then(result=>{
         this.models=codexModels(result);
         // Codex runs its own default when a turn names no model, and it says

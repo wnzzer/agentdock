@@ -17,6 +17,9 @@ import { join } from 'node:path';
 
 const MAX_PAYLOAD = 262144;
 
+// Only Claude Code runs this hook, so its config directory is Claude Code's by
+// definition. It is named here rather than read from clients.mjs, which would
+// load every bridge module on each status line refresh.
 function captureDirectory() {
   const configured = process.env.CLAUDE_CONFIG_DIR;
   return join(configured && configured.trim() ? configured : join(homedir(), '.claude'), 'agentdock');

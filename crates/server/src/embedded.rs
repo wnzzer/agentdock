@@ -168,9 +168,16 @@ mod tests {
         }
         // Their imports have to travel with them or the modules fail to load.
         for imported in [
+            "clients.mjs",
             "chat-claude.mjs",
             "chat-codex.mjs",
             "chat-common.mjs",
+            "account-claude.mjs",
+            "account-codex.mjs",
+            "account-common.mjs",
+            "history-claude.mjs",
+            "history-codex.mjs",
+            "history-common.mjs",
             "native-spawn.mjs",
             "app-server.mjs",
         ] {

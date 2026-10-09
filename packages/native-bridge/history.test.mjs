@@ -5,12 +5,14 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { normalizeSessions,discover } from './history.mjs';
+import { discover } from './history.mjs';
+import { normalizeSessions } from './history-common.mjs';
+import { codexSession } from './history-codex.mjs';
 
 test('native metadata is scoped, bounded, and contains no transcript payload',async()=>{
   const root=await realpath(await mkdtemp(join(tmpdir(),'ad-history-test-')));
   try {
-    const rows=await normalizeSessions([{id:'abc-123',name:'test',preview:'private transcript',cwd:root,updatedAt:1700000000},{id:'other',cwd:'/another',updatedAt:1700000000},{id:'--bad',cwd:root,updatedAt:1700000000},{id:'unscoped',updatedAt:1700000000},{id:'empty',cwd:'',updatedAt:1700000000}], 'codex',root);
+    const rows=await normalizeSessions([{id:'abc-123',name:'test',preview:'private transcript',cwd:root,updatedAt:1700000000},{id:'other',cwd:'/another',updatedAt:1700000000},{id:'--bad',cwd:root,updatedAt:1700000000},{id:'unscoped',updatedAt:1700000000},{id:'empty',cwd:'',updatedAt:1700000000}], 'codex',root,codexSession);
     assert.equal(rows.length,1);assert.equal(rows[0].title,'test');assert.equal(rows[0].preview,undefined);
   }finally{await rm(root,{recursive:true});}
 });

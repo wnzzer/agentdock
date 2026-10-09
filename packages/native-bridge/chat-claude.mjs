@@ -88,14 +88,16 @@ export function keepsSelection(models,selected,reported){
   if(selected==='default')return true;
   return reported.toLowerCase().includes(selected.replace(/\[.*\]$/,'').toLowerCase());
 }
+/** Claude Code's stream-json control channel, rather than JSON-RPC. */
+const controlRequest=(id,method,params)=>({type:'control_request',request_id:id,request:{subtype:method,...params}});
 export class ClaudeChat extends ChatBase {
   /** Steered message ids Claude Code has not read back yet. @type {Set<string> | undefined} */
   unconsumed;
   async initialize() {
     this.launch=claudeLaunch(this.job);this.tools=new Map();
-    this.port=new NativeProcess(this.job.program,this.launch.args,this.job.cwd,message=>this.notification(message),message=>this.fatal(message),()=>this.fatal('Claude Code exited.'),this.options);
+    this.port=new NativeProcess(this.job.program,this.launch.args,this.job.cwd,message=>this.notification(message),message=>this.fatal(message),()=>this.fatal('Claude Code exited.'),{...this.options,frame:controlRequest});
     // This drives the user's installed native CLI, not SDK query() or an OAuth/token proxy.
-    const initialized=await this.port.rpc('initialize',{promptSuggestions:false},true);
+    const initialized=await this.port.rpc('initialize',{promptSuggestions:false});
     // The client lists its own commands here, before any turn has run, so the
     // composer can offer them on a brand new session.
     this.announce(this.launch.resume??this.launch.sessionId,commandNames(initialized?.commands));
@@ -122,7 +124,7 @@ export class ClaudeChat extends ChatBase {
     const model=message.model??this.model;
     if(!model)throw Error('Claude Code has not reported which model this session uses yet. Send a message first, then adjust the thinking depth.');
     const effort=message.effort;
-    await this.port.rpc('set_model',{model,...(effort?{effort}:{})},true);
+    await this.port.rpc('set_model',{model,...(effort?{effort}:{})});
     this.model=model;this.effort=effort??this.effort;
     this.settings(this.models,this.model,this.effort);
   }
@@ -139,7 +141,7 @@ export class ClaudeChat extends ChatBase {
     if(this.active)throw Error('Wait for the current turn to finish before changing permissions.');
     const mode=CLAUDE_PERMISSION[message.mode];
     if(!mode)throw Error('Unsupported permission mode.');
-    const result=await this.port.rpc('set_permission_mode',{mode},true);
+    const result=await this.port.rpc('set_permission_mode',{mode});
     // The answer comes back in the client's own vocabulary, so it is translated
     // before it is reported. An answer this bridge cannot name is left to the
     // status message to settle rather than guessed at here.
@@ -173,7 +175,7 @@ export class ClaudeChat extends ChatBase {
   }
   async interrupt() {
     const active=this.active;if(!active)return;active.interrupted=true;this.clearApprovals();this.unconsumed?.clear();
-    try{await this.port.rpc('interrupt',{},true);}catch{if(this.active===active)this.error('Claude Code could not confirm turn interruption.');}
+    try{await this.port.rpc('interrupt',{});}catch{if(this.active===active)this.error('Claude Code could not confirm turn interruption.');}
   }
   notification(message) {
     if(!message||typeof message!=='object')return;

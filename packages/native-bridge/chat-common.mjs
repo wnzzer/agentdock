@@ -75,9 +75,20 @@ export function jsonLines(readable, onMessage, onFailure, { maxLine = MAX_NATIVE
   return () => { stopped = true; clear(); readable.off('data',data); readable.off('end',end); };
 }
 
+/**
+ * JSON-RPC, the request envelope unless a client's chat names its own.
+ * @type {(id: string, method: string, params: object) => object}
+ */
+const jsonRpcRequest = (id, method, params) => ({ id, method, params });
+
 export class NativeProcess {
-  constructor(program, args, cwd, onMessage, onFailure, onExit, { spawnProcess = spawn, rpcTimeout = 30_000 } = {}) {
-    this.pending = new Map(); this.sequence = 0; this.closed = false; this.rpcTimeout = rpcTimeout;
+  /**
+   * `frame` wraps one request in the client's wire envelope. Replies of either
+   * known shape -- a JSON-RPC result or a Claude `control_response` -- are
+   * matched back to it below.
+   */
+  constructor(program, args, cwd, onMessage, onFailure, onExit, { spawnProcess = spawn, rpcTimeout = 30_000, frame = jsonRpcRequest } = {}) {
+    this.pending = new Map(); this.sequence = 0; this.closed = false; this.rpcTimeout = rpcTimeout; this.frame = frame;
     this.failure = message => { if (!this.closed) onFailure(message); };
     this.child = spawnProcess(program,args,{ cwd, env: process.env, stdio:['pipe','pipe','pipe'], shell:false });
     this.stopLines = jsonLines(this.child.stdout, message => {
@@ -118,7 +129,7 @@ export class NativeProcess {
    * method may simply never answer, and that must not look like a broken
    * connection. Such a call fails quietly and changes nothing.
    */
-  rpc(method, params, claude = false, optional = false) {
+  rpc(method, params, optional = false) {
     const id = `agentdock-${++this.sequence}`;
     return new Promise((resolve,reject) => {
       const timer = setTimeout(() => {
@@ -127,7 +138,7 @@ export class NativeProcess {
         if(!optional&&method!=='interrupt'&&method!=='turn/interrupt')this.failure('Native control request timed out; the structured connection was stopped.');
       },optional?Math.min(this.rpcTimeout,4000):this.rpcTimeout);
       this.pending.set(id,{resolve,reject,timer});
-      try { this.send(claude ? {type:'control_request',request_id:id,request:{subtype:method,...params}} : {id,method,params}); }
+      try { this.send(this.frame(id, method, params)); }
       catch(error) { clearTimeout(timer);this.pending.delete(id);reject(error); }
     });
   }

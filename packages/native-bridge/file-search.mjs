@@ -38,45 +38,54 @@ const query = typeof job.query === "string" ? job.query.trim() : "";
 if (!query) { output({ files: [], truncated: false }); process.exit(0); }
 const limit = Math.min(Number.isInteger(job.limit) && job.limit > 0 ? job.limit : 20, MAX_LIMIT);
 
-const environment = withoutAgentDockSecrets(process.env);
-if (job.config_dir) environment.CODEX_HOME = job.config_dir;
+/**
+ * Fuzzy file search through the Codex app-server's index. The search itself is
+ * client-independent -- a workspace is searched this way whichever client its
+ * session runs -- and only happens to borrow Codex's index, so this is the one
+ * place it depends on Codex. Answers through `answer`, exactly once.
+ */
+async function codexFuzzyFileSearch(job, query, limit, answer) {
+  const environment = withoutAgentDockSecrets(process.env);
+  if (job.config_dir) environment.CODEX_HOME = job.config_dir;
 
-let settled = false;
-const finish = value => {
-  if (settled) return;
-  settled = true;
-  server.child.kill("SIGTERM");
-  output(value);
-  process.exit(0);
-};
-// A launch failure and an early exit each get their own answer: the first means
-// Codex is missing, which the UI treats differently from a search that failed.
-const server = new AppServerClient(process.env.AGENTDOCK_CODEX_BIN || "codex", ["app-server"], {
-  cwd: job.cwd, env: environment,
-  onClose: reason => finish({ error: reason === NOT_STARTED ? "Codex is not installed or could not start" : "Codex app-server exited before answering" }),
-});
-const timer = setTimeout(() => finish({ files: [], truncated: true, timed_out: true }), DEADLINE_MS);
-timer.unref?.();
-for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => { server.child.kill("SIGTERM"); process.exit(0); });
-
-try {
-  await server.initialize({ name: "agentdock", version: "0.1.0" });
-  // Confirmed against codex 0.154.0: `roots` is required and must be an array;
-  // `root` and `cwd` are both rejected with "missing field `roots`".
-  const result = await server.request("fuzzyFileSearch", { query, roots: [job.cwd], limit });
-  const rows = Array.isArray(result?.files) ? result.files : [];
-  finish({
-    files: rows.slice(0, limit).map(row => ({
-      path: String(row.path ?? ""),
-      name: String(row.file_name ?? ""),
-      kind: row.match_type === "directory" ? "directory" : "file",
-      score: Number.isFinite(row.score) ? row.score : 0,
-      // Match positions, so the UI can show why a result matched rather than
-      // re-deriving it and disagreeing with the index that ranked it.
-      indices: Array.isArray(row.indices) ? row.indices.filter(Number.isInteger).slice(0, 256) : [],
-    })).filter(row => row.path),
-    truncated: rows.length > limit,
+  let settled = false;
+  const finish = value => {
+    if (settled) return;
+    settled = true;
+    server.child.kill("SIGTERM");
+    answer(value);
+  };
+  // A launch failure and an early exit each get their own answer: the first means
+  // Codex is missing, which the UI treats differently from a search that failed.
+  const server = new AppServerClient(process.env.AGENTDOCK_CODEX_BIN || "codex", ["app-server"], {
+    cwd: job.cwd, env: environment,
+    onClose: reason => finish({ error: reason === NOT_STARTED ? "Codex is not installed or could not start" : "Codex app-server exited before answering" }),
   });
-} catch {
-  finish({ error: "Codex could not complete the search" });
+  const timer = setTimeout(() => finish({ files: [], truncated: true, timed_out: true }), DEADLINE_MS);
+  timer.unref?.();
+  for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => { server.child.kill("SIGTERM"); process.exit(0); });
+
+  try {
+    await server.initialize({ name: "agentdock", version: "0.1.0" });
+    // Confirmed against codex 0.154.0: `roots` is required and must be an array;
+    // `root` and `cwd` are both rejected with "missing field `roots`".
+    const result = await server.request("fuzzyFileSearch", { query, roots: [job.cwd], limit });
+    const rows = Array.isArray(result?.files) ? result.files : [];
+    finish({
+      files: rows.slice(0, limit).map(row => ({
+        path: String(row.path ?? ""),
+        name: String(row.file_name ?? ""),
+        kind: row.match_type === "directory" ? "directory" : "file",
+        score: Number.isFinite(row.score) ? row.score : 0,
+        // Match positions, so the UI can show why a result matched rather than
+        // re-deriving it and disagreeing with the index that ranked it.
+        indices: Array.isArray(row.indices) ? row.indices.filter(Number.isInteger).slice(0, 256) : [],
+      })).filter(row => row.path),
+      truncated: rows.length > limit,
+    });
+  } catch {
+    finish({ error: "Codex could not complete the search" });
+  }
 }
+
+await codexFuzzyFileSearch(job, query, limit, value => { output(value); process.exit(0); });
