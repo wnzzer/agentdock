@@ -11,7 +11,9 @@ test("a workspace's Pi sessions are listed by their first prompt, and other dire
     const work = join(root, 'work'), other = join(root, 'other'), home = join(root, 'home');
     await mkdir(work); await mkdir(other);
     const write = async (cwd, id, prompt) => {
-      const directory = join(home, 'sessions', `--${cwd.replaceAll('/', '-')}--`);
+      // Pi names the directory after the cwd; the listing reads every one, so
+      // any name will do, and a Windows path would not make a valid one.
+      const directory = join(home, 'sessions', `--${id}--`);
       await mkdir(directory, { recursive: true });
       await writeFile(join(directory, `2026_${id}.jsonl`), [
         { type: 'session', version: 3, id, timestamp: '2026-10-09T01:00:00.000Z', cwd },
