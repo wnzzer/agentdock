@@ -7,22 +7,23 @@ import type { NativeModel } from "./chat-model";
  * beginning `claude-fable-5` reads as "Fable 5"), and its official ones —
  * Default, Opus, Sonnet — which behind a gateway either do not exist or only
  * map back to the main model. So once the endpoint has said what it serves,
- * that is the list: the endpoint's models under the endpoint's names, with
- * what the client knows about the same ID (its thinking levels, say), and the
+ * that is the list: the endpoint's models as the endpoint describes them, with
+ * the thinking levels the client knows for the same ID, and the
  * model in use if the endpoint does not list it. Without an endpoint catalog,
  * as for an official account, the client's list stands.
  */
 export function mergeModels(client: readonly NativeModel[], endpoint: readonly NativeModel[], current?: string): NativeModel[] {
   if (!endpoint.length) return [...client];
-  const known = new Map(client.map(entry => [entry.id, entry]));
-  const merged = endpoint.map(entry => {
-    const own = known.get(entry.id);
-    return own ? { ...own, isDefault: undefined, name: entry.name !== entry.id ? entry.name : own.name } : entry;
-  });
-  if (current && !merged.some(entry => entry.id === current)) {
-    const own = known.get(current);
-    merged.unshift(own ? { ...own, isDefault: undefined } : { id: current, name: current });
-  }
+  // Only the client's thinking levels carry over. Its name and description
+  // are its guess at what the ID means ("Opus 5.5 · Best for everyday tasks"),
+  // which behind a gateway describes some other model.
+  const levels = new Map(client.map(entry => [entry.id, entry.efforts]));
+  const withLevels = (entry: NativeModel): NativeModel => {
+    const efforts = levels.get(entry.id);
+    return efforts ? { ...entry, efforts } : entry;
+  };
+  const merged = endpoint.map(withLevels);
+  if (current && !merged.some(entry => entry.id === current)) merged.unshift(withLevels({ id: current, name: current }));
   return merged;
 }
 

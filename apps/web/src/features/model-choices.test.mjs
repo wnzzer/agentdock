@@ -15,14 +15,15 @@ test("with an endpoint catalog, the menu is the endpoint's models", () => {
   const client = [
     { id: 'default', name: 'Default (recommended)', isDefault: true },
     // The client guessed this name from the ID's prefix, and knows its levels.
-    { id: 'claude-fable-5-dd-lacol-b9-5.3newq', name: 'Fable 5', efforts: ['low', 'high'] },
+    { id: 'claude-fable-5-dd-lacol-b9-5.3newq', name: 'Fable 5', description: 'Fable 5 · For the hardest problems', efforts: ['low', 'high'] },
     { id: 'sonnet', name: 'Sonnet' },
   ];
   const merged = mergeModels(client, endpoint);
   assert.deepEqual(merged.map(entry => entry.id), endpoint.map(entry => entry.id), "the client's official entries are left out");
   assert.equal(merged[0].name, 'qwen3.5-9b-local', "the endpoint's name wins over the client's guess");
   assert.deepEqual(merged[0].efforts, ['low', 'high'], 'what the client knows about the same ID is kept');
-  assert.deepEqual(mergeModels(client, endpoint, 'sonnet').map(entry => entry.id)[0], 'sonnet', 'the model in use stays, first');
+  assert.equal(merged[0].description, undefined, "the client's description of a model it guessed at is not");
+  assert.deepEqual(mergeModels(client, endpoint, 'sonnet')[0], { id: 'sonnet', name: 'sonnet' }, 'the model in use stays, first, as its ID');
   assert.deepEqual(mergeModels(client, endpoint, 'my-own-id')[0], { id: 'my-own-id', name: 'my-own-id' }, 'even one neither lists');
   assert.deepEqual(mergeModels(client, []), client, 'no endpoint catalog, the client list as it was');
 });
