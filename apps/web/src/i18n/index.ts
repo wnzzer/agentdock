@@ -374,6 +374,8 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Enable chat explicitly to continue this native session in a conversation view.": "明确启用聊天后，即可通过对话界面继续此原生会话。",
   "Enable conversation view": "启用对话界面",
   "Latest message": "最新消息",
+  "Collapse": "收起",
+  "Expand": "展开",
   "Switch this conversation endpoint?": "切换此对话的端点？",
   "Only an idle session can switch. Its current bridge will close; the next message starts a new native context. Old messages stay visible but are never sent to the new endpoint.": "仅可切换空闲会话。当前连接会关闭，下一条消息将启用新的原生上下文；旧消息仍可查看，但不会发送给新端点。",
   "Confirm endpoint change": "确认切换端点",
