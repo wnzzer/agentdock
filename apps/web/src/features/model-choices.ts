@@ -1,20 +1,28 @@
 import type { NativeModel } from "./chat-model";
 
 /**
- * The models a session can switch to: what its client reports, and what its
- * endpoint serves.
+ * The models a session can switch to.
  *
- * A client lists the models it knows and the one it was started with, named
- * by its own guess (an endpoint ID beginning `claude-fable-5` reads as "Fable
- * 5"). An endpoint behind a gateway serves many more, under IDs nobody would
- * type, with names people do. So the endpoint's models are added after the
- * client's, and where both list an ID, the endpoint's name is the one shown.
+ * A client lists the models it knows, named by its own guess (an endpoint ID
+ * beginning `claude-fable-5` reads as "Fable 5"), and its official ones —
+ * Default, Opus, Sonnet — which behind a gateway either do not exist or only
+ * map back to the main model. So once the endpoint has said what it serves,
+ * that is the list: the endpoint's models under the endpoint's names, with
+ * what the client knows about the same ID (its thinking levels, say), and the
+ * model in use if the endpoint does not list it. Without an endpoint catalog,
+ * as for an official account, the client's list stands.
  */
-export function mergeModels(client: readonly NativeModel[], endpoint: readonly NativeModel[]): NativeModel[] {
-  const named = new Map(endpoint.map(entry => [entry.id, entry.name]));
-  const merged = client.map(entry => named.has(entry.id) && named.get(entry.id) !== entry.id ? { ...entry, name: named.get(entry.id)! } : entry);
-  const listed = new Set(merged.map(entry => entry.id));
-  for (const entry of endpoint) if (!listed.has(entry.id)) { merged.push(entry); listed.add(entry.id); }
+export function mergeModels(client: readonly NativeModel[], endpoint: readonly NativeModel[], current?: string): NativeModel[] {
+  if (!endpoint.length) return [...client];
+  const known = new Map(client.map(entry => [entry.id, entry]));
+  const merged = endpoint.map(entry => {
+    const own = known.get(entry.id);
+    return own ? { ...own, isDefault: undefined, name: entry.name !== entry.id ? entry.name : own.name } : entry;
+  });
+  if (current && !merged.some(entry => entry.id === current)) {
+    const own = known.get(current);
+    merged.unshift(own ? { ...own, isDefault: undefined } : { id: current, name: current });
+  }
   return merged;
 }
 

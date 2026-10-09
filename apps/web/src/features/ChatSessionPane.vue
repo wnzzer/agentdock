@@ -152,7 +152,8 @@ watch([() => view.value.ready, () => activeProfile.value?.id, () => props.sessio
   catch { profileCatalog.value = []; }
 }, { immediate: true });
 
-const models = computed(() => mergeModels(view.value.models, profileCatalog.value));
+// An official account's catalog is the client's own list; an endpoint's replaces it.
+const models = computed(() => mergeModels(view.value.models, activeProfile.value?.native_config ? [] : profileCatalog.value, view.value.model ?? activeProfile.value?.model ?? undefined));
 /**
  * The window to measure the context against: the one the user set for this
  * model, else what the client reports, else the published one. A client
