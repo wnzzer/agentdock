@@ -364,6 +364,29 @@ test('Claude subagent output reaches its parent tool card instead of the main re
   assert.equal(progress[0].text,undefined);
 });
 
+test('a turn Claude starts by itself, after a background command finished, is shown rather than dropped',()=>{
+  const events=[];
+  const chat=Object.create(ClaudeChat.prototype);
+  chat.emit=event=>events.push(event);chat.tools=new Map();chat.seen=new Map();chat.active=undefined;
+  // The queued notification comes back as input AgentDock never sent.
+  chat.notification({type:'user',isReplay:true,uuid:'note-1',message:{role:'user',content:'<task-notification>…</task-notification>'}});
+  chat.notification({type:'assistant',message:{id:'a-1',content:[{type:'text',text:'Tests passed; pushing.'}]}});
+  const turns=events.filter(event=>event.type==='turn');
+  assert.deepEqual(turns.map(event=>event.status),['running']);
+  assert.match(turns[0].id,/^background-/,'its id is not mistaken for a message the user sent');
+  assert.deepEqual(events.filter(event=>event.type==='message').map(event=>event.text),['Tests passed; pushing.']);
+
+  // Without a replay first, the reply itself opens the turn.
+  events.length=0;chat.active=undefined;
+  chat.notification({type:'assistant',message:{id:'a-2',content:[{type:'text',text:'Carrying on.'}]}});
+  assert.deepEqual(events.map(event=>event.type),['turn','message']);
+
+  // A background subagent's progress is not a turn of the main agent.
+  events.length=0;chat.active=undefined;
+  chat.notification({type:'assistant',parent_tool_use_id:'task-1',message:{content:[{type:'text',text:'still going'}]}});
+  assert.deepEqual(events,[]);
+});
+
 test('subagent output for an unknown parent is dropped rather than inventing a card',()=>{
   const events=[];
   const chat=Object.create(ClaudeChat.prototype);

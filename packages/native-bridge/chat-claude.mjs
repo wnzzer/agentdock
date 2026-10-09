@@ -204,9 +204,13 @@ export class ClaudeChat extends ChatBase {
     if(message.type==='user'&&message.isReplay===true){
       const id=typeof message.uuid==='string'?message.uuid:undefined;
       if(id)this.unconsumed?.delete(id);
-      if(id&&!this.active&&this.seen.has(id)){this.assistantId=undefined;this.finalAssistant=false;this.active={id,interrupted:false};this.emit({type:'turn',id,status:'running'});}
+      if(id&&!this.active)this.open(this.seen.has(id)?id:`background-${id}`);
       return;
     }
+    // A turn the client starts by itself: a background command it was waiting
+    // on finished, and it carries on. Dropping it hid work that still ran --
+    // commits and pushes the user never saw -- so it opens a turn like any other.
+    if(!this.active&&['assistant','stream_event'].includes(message.type)&&!message.parent_tool_use_id)this.open(`background-${randomUUID()}`);
     if(!this.active)return;
     // A subagent's output belongs to the tool call that started it. Emitting it
     // as a message would overwrite the main assistant reply, which is why this
@@ -257,6 +261,9 @@ export class ClaudeChat extends ChatBase {
       this.finish(interrupted?'interrupted':failed?'failed':'completed');
       if(!interrupted)this.continueSteered();
     }
+  }
+  open(id) {
+    this.assistantId=undefined;this.finalAssistant=false;this.active={id,interrupted:false};this.emit({type:'turn',id,status:'running'});
   }
   // Progress only: an activity line names what the subagent is doing and never
   // replaces the card's own text, which holds the tool's input and result.
