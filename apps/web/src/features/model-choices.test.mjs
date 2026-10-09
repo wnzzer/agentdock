@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { filterModels, mergeModels, resolveModel } from './model-choices.ts';
+import { filterModels, mergeModels, offeredModels, resolveModel } from './model-choices.ts';
 
 // An endpoint behind a gateway that serves models under IDs nobody would type.
 const endpoint = [
@@ -26,6 +26,12 @@ test("with an endpoint catalog, the menu is the endpoint's models", () => {
   assert.deepEqual(mergeModels(client, endpoint, 'sonnet')[0], { id: 'sonnet', name: 'sonnet' }, 'the model in use stays, first, as its ID');
   assert.deepEqual(mergeModels(client, endpoint, 'my-own-id')[0], { id: 'my-own-id', name: 'my-own-id' }, 'even one neither lists');
   assert.deepEqual(mergeModels(client, []), client, 'no endpoint catalog, the client list as it was');
+});
+
+test('a profile offers the models chosen in it, or all of them', () => {
+  assert.deepEqual(offeredModels(endpoint, []).length, endpoint.length);
+  assert.deepEqual(offeredModels(endpoint, undefined).length, endpoint.length);
+  assert.deepEqual(offeredModels(endpoint, ['claude-fable-5-dd-3.5-MLG/gro-iaz', 'gone-model']), [endpoint[1], { id: 'gone-model', name: 'gone-model' }]);
 });
 
 test('a model typed by its name is sent by its ID', () => {

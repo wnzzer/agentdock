@@ -56,6 +56,8 @@ export interface EndpointProfile {
   /** Reasoning effort default, when the client supports one. */
   effort?: string | null;
   model_aliases?: Record<string, string>;
+  /** The endpoint models a session's menu offers; empty or absent offers all it serves. */
+  models?: string[];
   /** A live reference to native client configuration, not copied configuration contents. */
   native_config?: { source_id: string; config_dir: string; config_env?: string | null } | null;
   created_at: string;

@@ -28,6 +28,17 @@ export function mergeModels(client: readonly NativeModel[], endpoint: readonly N
 }
 
 /**
+ * The models a profile offers from its endpoint's list: the ones chosen in
+ * it, in that order and named as the endpoint names them, or the whole list
+ * when none were chosen. A chosen model the list no longer has stays, by ID.
+ */
+export function offeredModels<T extends { id: string; name: string }>(catalog: readonly T[], chosen: readonly string[] | undefined): (T | { id: string; name: string })[] {
+  if (!chosen?.length) return [...catalog];
+  const named = new Map(catalog.map(entry => [entry.id, entry]));
+  return chosen.map(id => named.get(id) ?? { id, name: id });
+}
+
+/**
  * What a model typed by hand means: an ID as given, or else the ID of the one
  * endpoint model with that name. Sending the name would reach the endpoint as
  * a model it does not have.

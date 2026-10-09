@@ -23,7 +23,7 @@ import { MarkdownContent } from './MarkdownContent';
 import { handoffArrivals, handoffTranscript } from './handoff';
 import { messageQueue } from './message-queue';
 import { attachedImagePaths } from './chat-model';
-import { filterModels, mergeModels, resolveModel } from './model-choices';
+import { filterModels, mergeModels, resolveModel, offeredModels } from './model-choices';
 import { openLightbox } from './image-lightbox';
 import { toolRuns, toolRunNames, toolRunStatus, type ToolRun } from './tool-runs';
 import { mentionQuery, applyMention } from './file-mentions';
@@ -153,7 +153,13 @@ watch([() => view.value.ready, () => activeProfile.value?.id, () => props.sessio
 }, { immediate: true });
 
 // An official account's catalog is the client's own list; an endpoint's replaces it.
-const models = computed(() => mergeModels(view.value.models, activeProfile.value?.native_config ? [] : profileCatalog.value, view.value.model ?? activeProfile.value?.model ?? undefined));
+/**
+ * The endpoint models the profile offers: the ones chosen in it, named as the
+ * endpoint names them, or all it serves when none were chosen. Read from the
+ * profile as it is now, so choosing more reaches sessions already open.
+ */
+const offeredCatalog = computed(() => offeredModels(profileCatalog.value, (matchingProfiles.value.find(profile => profile.id === props.session.endpoint_profile_id) ?? activeProfile.value)?.models));
+const models = computed(() => mergeModels(view.value.models, activeProfile.value?.native_config ? [] : offeredCatalog.value, view.value.model ?? activeProfile.value?.model ?? undefined));
 /**
  * The window to measure the context against: the one the user set for this
  * model, else what the client reports, else the published one. A client

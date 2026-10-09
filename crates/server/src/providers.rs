@@ -101,6 +101,13 @@ pub fn validate_profile(p: &EndpointProfile) -> Result<(), ApiError> {
     // Reasoning effort is a fixed vocabulary both clients share. Anything else
     // would be forwarded to a client that would simply reject it.
     validate_effort(p.effort.as_deref())?;
+    if p.models.len() > 500
+        || p.models
+            .iter()
+            .any(|id| id.trim().is_empty() || id.len() > 200 || id.chars().any(char::is_control))
+    {
+        return Err(ApiError::bad("Models must be real model IDs (maximum 500)"));
+    }
     if p.model_aliases.len() > 100
         || p.model_aliases.iter().any(|(alias, id)| {
             alias.trim().is_empty()
@@ -509,6 +516,7 @@ mod tests {
             proxy_url: None,
             effort: None,
             model_aliases: Default::default(),
+            models: Vec::new(),
             native_config: None,
             environment: Default::default(),
             created_at: chrono::Utc::now(),
@@ -534,6 +542,7 @@ mod tests {
             proxy_url: None,
             effort: None,
             model_aliases: Default::default(),
+            models: Vec::new(),
             native_config: Some(agentdock_domain::NativeConfigReference {
                 source_id: "claude-default".into(),
                 config_dir: std::env::temp_dir()
@@ -584,6 +593,7 @@ mod tests {
             proxy_url: None,
             effort: None,
             model_aliases: Default::default(),
+            models: Vec::new(),
             native_config: None,
             environment: Default::default(),
             created_at: chrono::Utc::now(),

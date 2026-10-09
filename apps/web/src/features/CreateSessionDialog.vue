@@ -14,7 +14,7 @@ import ModalDialog from "./ModalDialog.vue";
 import SessionDraftShell from "./SessionDraftShell.vue";
 import ProviderIcon from "./ProviderIcon.vue";
 import ModelPicker from "./ModelPicker.vue";
-import { resolveModel } from "./model-choices";
+import { offeredModels, resolveModel } from "./model-choices";
 const { t }=useI18n();
 /** `inline` draws the form as a draft tab on the canvas instead of a dialog over it. */
 const props = defineProps<{ workspace: Workspace; profiles: EndpointProfile[]; initialProvider?: ProviderKind; inline?: boolean }>();
@@ -30,7 +30,7 @@ const available = computed(() => props.profiles.filter(item => item.provider ===
 const selectedProfile = computed(() => available.value.find(item => item.id === profileId.value));
 const nativeConfig = computed(() => selectedProfile.value?.native_config);
 const validProfile = computed(() => isProfileSelectionValid(provider.value,profileId.value,props.profiles));
-const choices=computed(()=>nativeConfig.value?[]:[...Object.entries(selectedProfile.value?.model_aliases??{}).map(([id,name])=>({id,name:id+" → "+name})),...(catalog.value?.models??[])]);
+const choices=computed(()=>nativeConfig.value?[]:[...Object.entries(selectedProfile.value?.model_aliases??{}).map(([id,name])=>({id,name:id+" → "+name})),...offeredModels(catalog.value?.models??[],selectedProfile.value?.models)]);
 const effectiveModel=computed(()=>{if(nativeConfig.value)return undefined;const selected=model.value||selectedProfile.value?.model;return selected?(selectedProfile.value?.model_aliases?.[selected]??selected):undefined});
 const effortOptions=computed(()=>provider.value==='terminal'?[]:modelEfforts(provider.value,effectiveModel.value,catalog.value,effort.value||selectedProfile.value?.effort));
 const ephemeral=ref(false);

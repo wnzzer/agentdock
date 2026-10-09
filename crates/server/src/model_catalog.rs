@@ -531,6 +531,7 @@ mod tests {
             proxy_url: None,
             effort: None,
             model_aliases: Default::default(),
+            models: Vec::new(),
             native_config: None,
             environment: Default::default(),
             created_at: chrono::Utc::now(),

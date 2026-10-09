@@ -214,6 +214,7 @@ pub async fn endpoint(
                 proxy_url: flat("proxy_url")?,
                 effort: flat("effort")?,
                 model_aliases: Default::default(),
+                models: Vec::new(),
                 native_config: None,
                 environment: Default::default(),
                 created_at: chrono::Utc::now(),

@@ -5,6 +5,9 @@ import { errorMessage, json, providerLabel, request } from "./api";
 import { parseModelAliases, formatModelAliases } from "./endpoint-models";
 import { sharesHostConfig, nativeProfileRenamePayload, nativeProfileUpdatePayload, profileEnvironmentPayload, profileEnvironmentDraftChanged } from "./native-profiles";
 import { environmentRows, newEnvironmentRow, type EnvironmentRow } from "./environment-model";
+import { limitKey, nextLimits, validWindow, windowValue, type Limits } from "./model-limits";
+import ModelSelection from "./ModelSelection.vue";
+import { offeredModels } from "./model-choices";
 import EnvironmentEditor from "./EnvironmentEditor.vue";
 import { SLOTS, followingRows, setSlot, slotState, slotSummary, type SlotVariable } from "./claude-slots";
 import { effortLabel, modelEfforts } from "./reasoning-effort";
@@ -95,7 +98,8 @@ async function releaseSecret(reference: string | null | undefined, remaining: Ar
 const deletingProfile = computed(() => props.profiles.find(p => p.id === deleteId.value) ?? (editingRecord.value?.id === deleteId.value ? editingRecord.value : undefined));
 const aliases = computed(() => { try { return { value: parseModelAliases(aliasesText.value), error: "" }; } catch (cause) { return { value: {} as Record<string,string>, error: errorMessage(cause) }; } });
 const resolved = computed(() => aliases.value.value[form.model] ?? form.model);
-const choices = computed(() => [...Object.entries(aliases.value.value).map(([id, actual]) => ({id,name:id + " → " + actual})), ...(models.value?.models ?? [])]);
+const offered = computed(() => offeredModels(models.value?.models ?? [], chosenModels.value));
+const choices = computed(() => [...Object.entries(aliases.value.value).map(([id, actual]) => ({id,name:id + " → " + actual})), ...offered.value]);
 const effortOptions = computed(() => modelEfforts(form.provider, resolved.value || undefined, models.value, form.effort));
 const canSave = computed(() => !!form.name.trim() && !environmentError.value && contextValid.value && (!!editingNative.value || (secretValid.value && !aliases.value.error)));
 let discoveryRevision = 0;
@@ -103,41 +107,46 @@ function resetDiscovery() { discoveryRevision++; models.value = undefined; model
 watch(() => [form.provider, form.endpoint_url, form.proxy_url, form.secret_ref], resetDiscovery);
 
 /**
- * The context window of the profile's default model, kept per model
- * (server model_limits.rs) so every session on that model uses it. Empty
- * leaves the client to decide; the published window is shown as a reference
- * but never applied on its own, since an account may not have all of it.
+ * Context windows, kept per model (server model_limits.rs) so every session
+ * on that model uses them: the default model's below it, any chosen model's
+ * under its advanced settings. Empty leaves the client to decide; the
+ * published window is shown as a reference but never applied on its own,
+ * since an account may not have all of it.
  */
-interface ModelContext { context_window: number | null; source: "yours" | "published" | null; published: number | null }
-const contextInfo = ref<ModelContext>(), contextInput = ref("");
-let contextAsked = 0;
-watch(() => form.model.trim(), async model => {
-  const asked = ++contextAsked; contextInfo.value = undefined; contextInput.value = "";
-  if (!model) return;
+const savedLimits = ref<Limits>(), contextDrafts = reactive<Record<string, string>>({});
+const publishedWindows = reactive<Record<string, number | null>>({});
+async function loadLimits() {
+  for (const key of Object.keys(contextDrafts)) delete contextDrafts[key];
   try {
-    const info = await request<ModelContext>(`/models/context?model=${encodeURIComponent(model)}`);
-    if (asked !== contextAsked) return;
-    contextInfo.value = info; contextInput.value = info.source === "yours" && info.context_window ? String(info.context_window) : "";
-  } catch { /* An older backend: no field to fill. */ }
-});
-const contextValue = computed(() => { const text = contextInput.value.replace(/[,_\s]/g, ""); return text ? Number(text) : undefined; });
-const contextValid = computed(() => contextValue.value === undefined || (Number.isInteger(contextValue.value) && contextValue.value >= 1000 && contextValue.value <= 100_000_000));
-const contextPlaceholder = computed(() => contextInfo.value?.published ? t("Published: {tokens} tokens", { tokens: contextInfo.value.published.toLocaleString() }) : t("Unknown · the client decides"));
-/** Write the window for the default model, and on Claude Code make sure it is passed, as a variable listed below. */
-async function saveContextWindow() {
-  const model = form.model.trim();
-  if (!model || !contextInfo.value || !contextValid.value) return;
-  const before = contextInfo.value.source === "yours" ? contextInfo.value.context_window : null;
-  const after = contextValue.value ?? null;
-  if (after && form.provider === "claude_code" && !environmentDraft.value.some(row => row.name.trim() === CONTEXT_VARIABLE)) {
+    const saved = await request<{ models: Record<string, { context_window: number }> }>("/models/limits");
+    savedLimits.value = Object.fromEntries(Object.entries(saved.models).map(([model, limit]) => [model, limit.context_window]));
+  } catch { savedLimits.value = undefined; /* An older backend: no windows to set. */ }
+}
+function windowText(model: string) { const key = limitKey(model); return contextDrafts[key] ?? (savedLimits.value?.[key] ? String(savedLimits.value[key]) : ""); }
+function setWindow(model: string, text: string) { contextDrafts[limitKey(model)] = text; }
+async function lookPublished(model: string) {
+  const key = limitKey(model);
+  if (!key || key in publishedWindows) return;
+  publishedWindows[key] = null;
+  try { publishedWindows[key] = (await request<{ published: number | null }>(`/models/context?model=${encodeURIComponent(model.trim())}`)).published; } catch { /* Unknown stays unknown. */ }
+}
+function windowPlaceholder(model: string) { const published = publishedWindows[limitKey(model)]; return published ? t("Published: {tokens} tokens", { tokens: published.toLocaleString() }) : t("Unknown · the client decides"); }
+watch(() => form.model, model => { if (model.trim()) void lookPublished(model); });
+const contextValid = computed(() => Object.values(contextDrafts).every(validWindow));
+/** Write the windows set here, and on Claude Code make sure the default model's is passed, as a variable listed below. */
+async function saveContextWindows() {
+  if (!savedLimits.value || !contextValid.value) return;
+  if (windowValue(windowText(form.model)) && form.provider === "claude_code" && !environmentDraft.value.some(row => row.name.trim() === CONTEXT_VARIABLE)) {
     environmentDraft.value = [...environmentDraft.value, { ...newEnvironmentRow(), name: CONTEXT_VARIABLE, kind: "main_model_context" }];
   }
-  if (before === after) return;
-  const current = await request<{ models: Record<string, { context_window: number }> }>("/models/limits");
-  const models = { ...current.models };
-  if (after) models[model.toLowerCase()] = { context_window: after }; else delete models[model.toLowerCase()];
-  await request("/models/limits", json("PUT", { models }));
+  const next = nextLimits(savedLimits.value, contextDrafts);
+  if (!next) return;
+  await request("/models/limits", json("PUT", { models: Object.fromEntries(Object.entries(next).map(([model, window]) => [model, { context_window: window }])) }));
+  savedLimits.value = next;
+  for (const key of Object.keys(contextDrafts)) delete contextDrafts[key];
 }
+/** The endpoint models this profile offers in a session's menu; none chosen offers them all. */
+const chosenModels = ref<string[]>([]);
 const CONTEXT_VARIABLE = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
 
 /**
@@ -171,7 +180,8 @@ function payload(includeEnvironment = true) {
   return { name:form.name.trim(), provider:form.provider, endpoint_url:form.endpoint_url.trim()||null, model:form.model.trim()||null, permission_mode:form.permission_mode, secret_ref:form.secret_ref.trim()||null,
     ...(form.proxy_url.trim()||old?.proxy_url!==undefined ? {proxy_url:form.proxy_url.trim()||null}:{}),
     ...(Object.keys(aliases.value.value).length||old?.model_aliases!==undefined ? {model_aliases:aliases.value.value}:{}),
-    ...(form.effort.trim()||old?.effort!==undefined ? {effort:form.effort.trim()||null}:{}), ...environment };
+    ...(form.effort.trim()||old?.effort!==undefined ? {effort:form.effort.trim()||null}:{}),
+    ...(chosenModels.value.length||old?.models!==undefined ? {models:chosenModels.value}:{}), ...environment };
 }
 function requestLeave(action: () => void) {
   if (busy.value) return;
@@ -189,6 +199,7 @@ function edit(p?: EndpointProfile) {
   Object.assign(form,{name:p?.name??"",provider:p?.provider??"claude_code",endpoint_url:p?.endpoint_url??"",model:p?.model??"",effort:p?.effort??"",permission_mode:p?.permission_mode??"native",secret_ref:p?.secret_ref??"",proxy_url:p?.proxy_url??""});
   apiKey.value = ""; chooseSecretMode(p?.secret_ref);
   aliasesText.value=formatModelAliases(p?.model_aliases); models.value=undefined; modelError.value="";
+  chosenModels.value=[...(p?.models??[])]; void loadLimits();
 }
 async function discover() {
   if (!backendCapabilities.models || editingNative.value || discovering.value || !secretValid.value || aliases.value.error) return;
@@ -210,7 +221,7 @@ async function save() {
   try{
     const previous=editingProfile.value?.secret_ref;
     await storePastedKey();
-    await saveContextWindow();
+    await saveContextWindows();
     const saved=await request<EndpointProfile>("/endpoint-profiles"+(editing.value?"/"+encodeURIComponent(editing.value):""),json(editing.value?"PATCH":"POST",payload()));
     if(previous!==saved.secret_ref)await releaseSecret(previous,[saved.secret_ref,...otherReferences.value]);
     notice.value=editingNative.value?(backendCapabilities.environment?"Profile updated. Process environment overrides were saved without changing the native configuration.":"Profile name updated. The native configuration was not changed."):editing.value?"Profile updated. Existing session snapshots are unchanged.":"Profile created. Select it when creating a session.";
@@ -289,9 +300,10 @@ onBeforeUnmount(()=>{discoveryRevision++;});
           <div class="model-fetch"><strong>{{ t('Model selection') }}</strong><button type="button" class="small-button" :disabled="discovering||!backendCapabilities.models||!secretValid||!!aliases.error" :title="!backendCapabilities.models?t('Backend upgrade required'):t('Reads the endpoint\'s model list. No model is run.')" @click="discover"><Icon name="refresh" :size="14" />{{ discovering?t('Loading models…'):t('Load models from endpoint') }}</button></div>
           <div v-if="modelError" class="inline-error" role="alert">{{ modelError }}<p>{{ t('You can still enter a model ID or alias manually.') }}</p></div>
           <p v-if="models" class="form-help">{{ t('{count} models returned', {count:models.models.length}) }} · <span>{{ models.source_url }}</span><br v-if="models.has_more" /><span v-if="models.has_more">{{ t('The endpoint has more models; this is the first page.') }}</span></p>
+          <ModelSelection v-if="!editingNative && (models?.models.length || chosenModels.length)" v-model:selected="chosenModels" :catalog="models?.models ?? []" :window-text="windowText" :placeholder="windowPlaceholder" @window="setWindow" @look="lookPublished" />
           <label>{{ t('Default model') }}<ModelPicker v-model="form.model" :models="choices" :placeholder="t('Choose a model or enter an ID')" /></label>
-          <label v-if="form.model.trim() && contextInfo">{{ t('Context window') }} <small>{{ t('tokens, for this model in every profile') }}</small><input v-model="contextInput" inputmode="numeric" autocomplete="off" spellcheck="false" :placeholder="contextPlaceholder" /></label>
-          <p v-if="form.model.trim() && contextInfo" :class="contextValid ? 'form-help' : 'inline-error'">{{ !contextValid ? t('A context window is between 1,000 and 100,000,000 tokens.') : form.provider === 'claude_code' ? t('Claude Code is told it through CLAUDE_CODE_MAX_CONTEXT_TOKENS, listed with the environment variables below. Empty lets Claude Code decide.') : t('Codex is told it as model_context_window at launch. Empty lets Codex decide.') }}</p>
+          <label v-if="form.model.trim() && savedLimits">{{ t('Context window') }} <small>{{ t('tokens, for this model in every profile') }}</small><input :value="windowText(form.model)" inputmode="numeric" autocomplete="off" spellcheck="false" :placeholder="windowPlaceholder(form.model)" @input="setWindow(form.model, ($event.target as HTMLInputElement).value)" /></label>
+          <p v-if="form.model.trim() && savedLimits" :class="validWindow(windowText(form.model)) ? 'form-help' : 'inline-error'">{{ !validWindow(windowText(form.model)) ? t('A context window is between 1,000 and 100,000,000 tokens.') : form.provider === 'claude_code' ? t('Claude Code is told it through CLAUDE_CODE_MAX_CONTEXT_TOKENS, listed with the environment variables below. Empty lets Claude Code decide.') : t('Codex is told it as model_context_window at launch. Empty lets Codex decide.') }}</p>
           <div v-if="form.provider==='claude_code'" class="model-slots">
             <p class="form-help">{{ slotsText }} <button type="button" class="text-button" :aria-expanded="slotsOpen" @click="slotsOpen=!slotsOpen">{{ t(slotsOpen ? 'Hide' : 'Advanced') }}</button></p>
             <template v-if="slotsOpen">

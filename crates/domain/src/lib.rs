@@ -250,6 +250,10 @@ pub struct EndpointProfile {
     pub effort: Option<String>,
     #[serde(default)]
     pub model_aliases: std::collections::BTreeMap<String, String>,
+    /// The endpoint models a session's menu offers, chosen from what the
+    /// endpoint serves. Empty offers all of them.
+    #[serde(default)]
+    pub models: Vec<String>,
     #[serde(default)]
     pub native_config: Option<NativeConfigReference>,
     pub created_at: DateTime<Utc>,

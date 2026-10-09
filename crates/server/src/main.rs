@@ -194,6 +194,8 @@ struct CreateProfile {
     effort: Option<String>,
     #[serde(default)]
     model_aliases: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    models: Vec<String>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -975,6 +977,7 @@ async fn discover_models(
         proxy_url: optional(input.proxy_url),
         effort: optional(input.effort),
         model_aliases: input.model_aliases,
+        models: input.models,
         native_config: None,
         environment: input.environment,
         created_at: chrono::Utc::now(),
@@ -1692,6 +1695,7 @@ async fn create_profile(
         proxy_url: optional(input.proxy_url),
         effort: optional(input.effort),
         model_aliases: input.model_aliases,
+        models: input.models,
         native_config: None,
         environment: input.environment,
         created_at: chrono::Utc::now(),
@@ -1721,6 +1725,11 @@ async fn update_profile(
         if key == "environment" {
             p.environment = serde_json::from_value(value.clone())
                 .map_err(|_| ApiError::bad("Invalid environment overrides"))?;
+            continue;
+        }
+        if key == "models" {
+            p.models = serde_json::from_value(value.clone())
+                .map_err(|_| ApiError::bad("Models must be a list of model IDs"))?;
             continue;
         }
         if key == "model_aliases" {
