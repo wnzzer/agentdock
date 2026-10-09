@@ -63,6 +63,9 @@ pub trait ClientAdapter: Sync {
     /// Its default history source: the id sessions record, and the server
     /// variable that names a different directory to read.
     fn history_source(&self) -> (&'static str, &'static str);
+    /// Its place among the host's configurations and history sources, lowest
+    /// first. The first available one is what those dialogs preselect.
+    fn source_order(&self) -> u8;
     /// Names in a workspace that hold its configuration, kept out of listings.
     fn protected_names(&self) -> &'static [&'static str];
     /// Host variables that would route a launch AgentDock configures to some

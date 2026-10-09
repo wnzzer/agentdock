@@ -31,6 +31,9 @@ impl ClientAdapter for ClaudeCode {
     fn history_source(&self) -> (&'static str, &'static str) {
         ("claude-default", "AGENTDOCK_CLAUDE_HISTORY_DIR")
     }
+    fn source_order(&self) -> u8 {
+        1
+    }
     fn protected_names(&self) -> &'static [&'static str] {
         &[".claude", ".claude.json"]
     }

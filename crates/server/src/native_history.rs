@@ -42,7 +42,9 @@ pub fn sources() -> Vec<NativeSource> {
         .or_else(|| env::var_os("USERPROFILE"))
         .map(PathBuf::from);
     let mut sources = Vec::new();
-    for client in crate::adapters::all() {
+    let mut clients: Vec<_> = crate::adapters::all().collect();
+    clients.sort_by_key(|client| client.source_order());
+    for client in clients {
         let (id, override_key) = client.history_source();
         let (provider, label, native_key, subdir) = (
             client.kind(),

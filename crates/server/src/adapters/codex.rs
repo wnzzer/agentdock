@@ -34,6 +34,10 @@ impl ClientAdapter for Codex {
     fn history_source(&self) -> (&'static str, &'static str) {
         ("codex-default", "AGENTDOCK_CODEX_HISTORY_DIR")
     }
+    // Listed first, as it always has been.
+    fn source_order(&self) -> u8 {
+        0
+    }
     fn protected_names(&self) -> &'static [&'static str] {
         &[".codex"]
     }
