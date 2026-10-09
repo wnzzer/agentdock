@@ -47,6 +47,13 @@ pub struct ListPrice {
         rename = "cacheWrite1h"
     )]
     pub cache_write_1h: Option<f64>,
+    /// The most a model takes in, and writes out, in tokens: a fallback for
+    /// showing how full a context is, never handed to a client on its own
+    /// (a published window can be one the account has not been given).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,6 +78,10 @@ impl PriceList {
                     .chain(price.cache_write)
                     .chain(price.cache_write_1h)
                     .all(sane)
+                    && [price.context_window, price.max_output]
+                        .into_iter()
+                        .flatten()
+                        .all(|tokens| (1..=100_000_000).contains(&tokens))
             });
         valid.then_some(list)
     }
@@ -276,6 +287,8 @@ mod tests {
                             cache_read: 0.1,
                             cache_write: None,
                             cache_write_1h: None,
+                            context_window: None,
+                            max_output: None,
                         },
                     )
                 })

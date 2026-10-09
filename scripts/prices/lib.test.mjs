@@ -2,12 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { build, convert, nextFile, problems, SCHEMA_VERSION } from "./lib.mjs";
 
-const claude = { litellm_provider: "anthropic", mode: "chat", input_cost_per_token: 4e-6, output_cost_per_token: 2e-5, cache_read_input_token_cost: 2e-7, cache_creation_input_token_cost: 5e-6, cache_creation_input_token_cost_above_1hr: 8e-6, input_cost_per_token_above_200k_tokens: 8e-6 };
-const gpt = { litellm_provider: "openai", mode: "responses", input_cost_per_token: 5e-6, output_cost_per_token: 3e-5, cache_read_input_token_cost: 5e-7, input_cost_per_token_flex: 2.5e-6 };
+const claude = { litellm_provider: "anthropic", mode: "chat", max_input_tokens: 1000000, max_output_tokens: 128000, input_cost_per_token: 4e-6, output_cost_per_token: 2e-5, cache_read_input_token_cost: 2e-7, cache_creation_input_token_cost: 5e-6, cache_creation_input_token_cost_above_1hr: 8e-6, input_cost_per_token_above_200k_tokens: 8e-6 };
+const gpt = { litellm_provider: "openai", mode: "responses", max_tokens: 400000, input_cost_per_token: 5e-6, output_cost_per_token: 3e-5, cache_read_input_token_cost: 5e-7, input_cost_per_token_flex: 2.5e-6 };
 
 test("an entry becomes dollars per million at its base tier, with cache writes only where charged", () => {
-  assert.deepEqual(convert(claude), { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5, cacheWrite1h: 8 });
-  assert.deepEqual(convert(gpt), { input: 5, output: 30, cacheRead: 0.5 });
+  assert.deepEqual(convert(claude), { input: 4, output: 20, cacheRead: 0.2, contextWindow: 1000000, maxOutput: 128000, cacheWrite: 5, cacheWrite1h: 8 });
+  // Only max_tokens: it stands for the window.
+  assert.deepEqual(convert(gpt), { input: 5, output: 30, cacheRead: 0.5, contextWindow: 400000 });
   // No cache price: a cached token costs what an input token does.
   assert.deepEqual(convert({ input_cost_per_token: 1.5e-4, output_cost_per_token: 6e-4 }), { input: 150, output: 600, cacheRead: 150 });
   assert.equal(convert({ output_cost_per_token: 1e-5 }), undefined, "no input price, no entry");
@@ -31,6 +32,7 @@ test("only the clients' models are kept, without dated copies, and overrides win
   }, { models: { "gpt-5.5": { input: 1, output: 2, cacheRead: 0.1 } } });
   assert.deepEqual(Object.keys(models), ["claude-haiku-4-5", "claude-opus-5-5", "gpt-4o-2024-05-13", "gpt-5.5", "o3"]);
   assert.deepEqual(models["gpt-5.5"], { input: 1, output: 2, cacheRead: 0.1 });
+  assert.equal(models["o3"].contextWindow, 400000);
 });
 
 test("a list that lost a required model, a sane price or most of its models is not published", () => {
@@ -40,6 +42,8 @@ test("a list that lost a required model, a sane price or most of its models is n
   assert.match(problems({ x: { input: 5e-6, output: 30e6, cacheRead: 0 } })[0], /x.output is not a sane price/);
   assert.match(problems({ x: { input: -1, output: 1, cacheRead: 0 } })[0], /x.input/);
   assert.match(problems({ x: { input: 1, output: 1, cacheRead: 0, cacheWrite: Number.NaN } })[0], /x.cacheWrite/);
+  assert.match(problems({ x: { input: 1, output: 1, cacheRead: 0, contextWindow: 1.5 } })[0], /x.contextWindow is not a sane token count/);
+  assert.match(problems({ x: { input: 1, output: 1, cacheRead: 0, maxOutput: 2e9 } })[0], /x.maxOutput/);
   const previous = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`m${i}`, good["gpt-5.5"]]));
   assert.match(problems(good, { previous })[0], /only 1 models, down from 10/);
 });

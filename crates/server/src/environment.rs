@@ -7,16 +7,24 @@ pub fn validate(values: &EnvironmentOverrides) -> Result<(), ApiError> {
     agentdock_domain::validate_environment(values).map_err(ApiError::bad)
 }
 
+/// What a launch knows that an environment value can follow: the session's
+/// main model, and the context window the user set for it.
+#[derive(Default, Clone, Copy)]
+pub struct Launch<'a> {
+    pub main_model: Option<&'a str>,
+    pub main_context: Option<u64>,
+}
+
 /// Secret references resolve from the server's environment, then from the
-/// secrets AgentDock stores (see secrets.rs); a main-model value becomes
-/// `main_model`, the session's model at this launch.
+/// secrets AgentDock stores (see secrets.rs); a main-model value becomes the
+/// session's model at this launch, and a main-model-context value its window.
 pub fn apply(
     spec: &mut SpawnSpec,
     values: &EnvironmentOverrides,
     state_dir: &std::path::Path,
-    main_model: Option<&str>,
+    launch: Launch<'_>,
 ) -> Result<(), ApiError> {
-    apply_with(spec, values, main_model, |key| {
+    apply_with(spec, values, launch, |key| {
         crate::secrets::resolve(state_dir, key)
     })
 }
@@ -24,7 +32,7 @@ pub fn apply(
 fn apply_with(
     spec: &mut SpawnSpec,
     values: &EnvironmentOverrides,
-    main_model: Option<&str>,
+    launch: Launch<'_>,
     mut resolve: impl FnMut(&str) -> Option<String>,
 ) -> Result<(), ApiError> {
     validate(values)?;
@@ -48,8 +56,12 @@ fn apply_with(
             EnvironmentValue::Unset => None,
             // No main model: the variable is left out, so the client keeps
             // its own default for that slot.
-            EnvironmentValue::MainModel => match main_model {
+            EnvironmentValue::MainModel => match launch.main_model {
                 Some(model) => Some(model.to_owned()),
+                None => continue,
+            },
+            EnvironmentValue::MainModelContext => match launch.main_context {
+                Some(window) => Some(window.to_string()),
                 None => continue,
             },
         };
@@ -98,7 +110,7 @@ mod tests {
             ("REMOVE".into(), EnvironmentValue::Unset),
         ]
         .into();
-        apply_with(&mut spec, &values, None, |key| {
+        apply_with(&mut spec, &values, Launch::default(), |key| {
             assert_eq!(key, "AGENTDOCK_SECRET_FIXTURE");
             Some("synthetic-secret-value".into())
         })
@@ -132,9 +144,11 @@ mod tests {
             },
         )]
         .into();
-        assert!(apply_with(&mut spec, &values, None, |_| None).is_err());
-        let error =
-            apply_with(&mut spec, &values, None, |_| Some("secret\0suffix".into())).unwrap_err();
+        assert!(apply_with(&mut spec, &values, Launch::default(), |_| None).is_err());
+        let error = apply_with(&mut spec, &values, Launch::default(), |_| {
+            Some("secret\0suffix".into())
+        })
+        .unwrap_err();
         assert!(!error.message.contains("secret\0suffix"));
     }
 
@@ -152,7 +166,16 @@ mod tests {
             env: Default::default(),
             env_remove: vec![],
         };
-        apply_with(&mut spec, &values, Some("qwen-gateway-id"), |_| None).unwrap();
+        apply_with(
+            &mut spec,
+            &values,
+            Launch {
+                main_model: Some("qwen-gateway-id"),
+                main_context: None,
+            },
+            |_| None,
+        )
+        .unwrap();
         assert_eq!(
             spec.env
                 .get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
@@ -166,7 +189,7 @@ mod tests {
             env: Default::default(),
             env_remove: vec![],
         };
-        apply_with(&mut spec, &values, None, |_| None).unwrap();
+        apply_with(&mut spec, &values, Launch::default(), |_| None).unwrap();
         assert!(!spec.env.contains_key("ANTHROPIC_DEFAULT_HAIKU_MODEL"));
         assert!(
             !spec
@@ -176,5 +199,39 @@ mod tests {
         );
         let json = serde_json::to_value(&values).unwrap();
         assert_eq!(json["ANTHROPIC_DEFAULT_HAIKU_MODEL"]["kind"], "main_model");
+    }
+
+    #[test]
+    fn a_main_model_context_value_is_the_window_set_for_that_model() {
+        let values: EnvironmentOverrides = [(
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS".to_owned(),
+            EnvironmentValue::MainModelContext,
+        )]
+        .into();
+        let spec = || SpawnSpec {
+            program: "fixture".into(),
+            args: vec![],
+            cwd: "/fixture".into(),
+            env: Default::default(),
+            env_remove: vec![],
+        };
+        let mut set = spec();
+        let launch = Launch {
+            main_model: Some("qwen-gateway-id"),
+            main_context: Some(32_768),
+        };
+        apply_with(&mut set, &values, launch, |_| None).unwrap();
+        assert_eq!(
+            set.env
+                .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+                .map(String::as_str),
+            Some("32768")
+        );
+        let mut unset = spec();
+        apply_with(&mut unset, &values, Launch::default(), |_| None).unwrap();
+        assert!(
+            !unset.env.contains_key("CLAUDE_CODE_MAX_CONTEXT_TOKENS"),
+            "no window set: Claude Code keeps its own"
+        );
     }
 }

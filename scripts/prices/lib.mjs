@@ -20,6 +20,9 @@ function wanted(name, entry) {
 }
 
 const perMillion = value => (typeof value === "number" && Number.isFinite(value) ? +(value * PER_MILLION).toFixed(6) : undefined);
+const tokens = value => (Number.isInteger(value) && value > 0 ? value : undefined);
+/** No model takes more than this; a larger figure is a unit mistake. */
+const MOST_TOKENS = 100_000_000;
 
 /**
  * The prices AgentDock uses from one LiteLLM entry. Only the base tier: the
@@ -34,6 +37,12 @@ export function convert(entry) {
     cacheRead: perMillion(entry.cache_read_input_token_cost) ?? perMillion(entry.input_cost_per_token),
   };
   if (price.input === undefined || price.output === undefined) return undefined;
+  // How much a model takes in, and writes out, at most: a fallback for
+  // showing how full a context is, never pushed to a client on its own.
+  const context = tokens(entry.max_input_tokens) ?? tokens(entry.max_tokens);
+  const output = tokens(entry.max_output_tokens);
+  if (context !== undefined) price.contextWindow = context;
+  if (output !== undefined) price.maxOutput = output;
   const write = perMillion(entry.cache_creation_input_token_cost);
   const writeHour = perMillion(entry.cache_creation_input_token_cost_above_1hr);
   if (write !== undefined) price.cacheWrite = write;
@@ -67,6 +76,10 @@ export function problems(models, { required = [], previous } = {}) {
   const names = Object.keys(models);
   for (const name of required) if (!models[name]) found.push(`required model missing: ${name}`);
   for (const [name, price] of Object.entries(models)) {
+    for (const field of ["contextWindow", "maxOutput"]) {
+      const value = price[field];
+      if (value !== undefined && !(Number.isInteger(value) && value > 0 && value <= MOST_TOKENS)) found.push(`${name}.${field} is not a sane token count: ${value}`);
+    }
     for (const field of ["input", "output", "cacheRead", "cacheWrite", "cacheWrite1h"]) {
       const value = price[field];
       if (value === undefined && ["cacheWrite", "cacheWrite1h"].includes(field)) continue;

@@ -4,7 +4,7 @@ import type { AgentProviderKind, EndpointProfile, ModelCatalog } from "@agentdoc
 import { errorMessage, json, providerLabel, request } from "./api";
 import { parseModelAliases, formatModelAliases } from "./endpoint-models";
 import { sharesHostConfig, nativeProfileRenamePayload, nativeProfileUpdatePayload, profileEnvironmentPayload, profileEnvironmentDraftChanged } from "./native-profiles";
-import { environmentRows, type EnvironmentRow } from "./environment-model";
+import { environmentRows, newEnvironmentRow, type EnvironmentRow } from "./environment-model";
 import EnvironmentEditor from "./EnvironmentEditor.vue";
 import { SLOTS, followingRows, setSlot, slotState, slotSummary, type SlotVariable } from "./claude-slots";
 import { effortLabel, modelEfforts } from "./reasoning-effort";
@@ -97,10 +97,48 @@ const aliases = computed(() => { try { return { value: parseModelAliases(aliases
 const resolved = computed(() => aliases.value.value[form.model] ?? form.model);
 const choices = computed(() => [...Object.entries(aliases.value.value).map(([id, actual]) => ({id,name:id + " → " + actual})), ...(models.value?.models ?? [])]);
 const effortOptions = computed(() => modelEfforts(form.provider, resolved.value || undefined, models.value, form.effort));
-const canSave = computed(() => !!form.name.trim() && !environmentError.value && (!!editingNative.value || (secretValid.value && !aliases.value.error)));
+const canSave = computed(() => !!form.name.trim() && !environmentError.value && contextValid.value && (!!editingNative.value || (secretValid.value && !aliases.value.error)));
 let discoveryRevision = 0;
 function resetDiscovery() { discoveryRevision++; models.value = undefined; modelError.value = ""; discovering.value = false; }
 watch(() => [form.provider, form.endpoint_url, form.proxy_url, form.secret_ref], resetDiscovery);
+
+/**
+ * The context window of the profile's default model, kept per model
+ * (server model_limits.rs) so every session on that model uses it. Empty
+ * leaves the client to decide; the published window is shown as a reference
+ * but never applied on its own, since an account may not have all of it.
+ */
+interface ModelContext { context_window: number | null; source: "yours" | "published" | null; published: number | null }
+const contextInfo = ref<ModelContext>(), contextInput = ref("");
+let contextAsked = 0;
+watch(() => form.model.trim(), async model => {
+  const asked = ++contextAsked; contextInfo.value = undefined; contextInput.value = "";
+  if (!model) return;
+  try {
+    const info = await request<ModelContext>(`/models/context?model=${encodeURIComponent(model)}`);
+    if (asked !== contextAsked) return;
+    contextInfo.value = info; contextInput.value = info.source === "yours" && info.context_window ? String(info.context_window) : "";
+  } catch { /* An older backend: no field to fill. */ }
+});
+const contextValue = computed(() => { const text = contextInput.value.replace(/[,_\s]/g, ""); return text ? Number(text) : undefined; });
+const contextValid = computed(() => contextValue.value === undefined || (Number.isInteger(contextValue.value) && contextValue.value >= 1000 && contextValue.value <= 100_000_000));
+const contextPlaceholder = computed(() => contextInfo.value?.published ? t("Published: {tokens} tokens", { tokens: contextInfo.value.published.toLocaleString() }) : t("Unknown · the client decides"));
+/** Write the window for the default model, and on Claude Code make sure it is passed, as a variable listed below. */
+async function saveContextWindow() {
+  const model = form.model.trim();
+  if (!model || !contextInfo.value || !contextValid.value) return;
+  const before = contextInfo.value.source === "yours" ? contextInfo.value.context_window : null;
+  const after = contextValue.value ?? null;
+  if (after && form.provider === "claude_code" && !environmentDraft.value.some(row => row.name.trim() === CONTEXT_VARIABLE)) {
+    environmentDraft.value = [...environmentDraft.value, { ...newEnvironmentRow(), name: CONTEXT_VARIABLE, kind: "main_model_context" }];
+  }
+  if (before === after) return;
+  const current = await request<{ models: Record<string, { context_window: number }> }>("/models/limits");
+  const models = { ...current.models };
+  if (after) models[model.toLowerCase()] = { context_window: after }; else delete models[model.toLowerCase()];
+  await request("/models/limits", json("PUT", { models }));
+}
+const CONTEXT_VARIABLE = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
 
 /**
  * Claude Code's model slots, edited here and kept as the environment
@@ -172,6 +210,7 @@ async function save() {
   try{
     const previous=editingProfile.value?.secret_ref;
     await storePastedKey();
+    await saveContextWindow();
     const saved=await request<EndpointProfile>("/endpoint-profiles"+(editing.value?"/"+encodeURIComponent(editing.value):""),json(editing.value?"PATCH":"POST",payload()));
     if(previous!==saved.secret_ref)await releaseSecret(previous,[saved.secret_ref,...otherReferences.value]);
     notice.value=editingNative.value?(backendCapabilities.environment?"Profile updated. Process environment overrides were saved without changing the native configuration.":"Profile name updated. The native configuration was not changed."):editing.value?"Profile updated. Existing session snapshots are unchanged.":"Profile created. Select it when creating a session.";
@@ -251,6 +290,8 @@ onBeforeUnmount(()=>{discoveryRevision++;});
           <div v-if="modelError" class="inline-error" role="alert">{{ modelError }}<p>{{ t('You can still enter a model ID or alias manually.') }}</p></div>
           <p v-if="models" class="form-help">{{ t('{count} models returned', {count:models.models.length}) }} · <span>{{ models.source_url }}</span><br v-if="models.has_more" /><span v-if="models.has_more">{{ t('The endpoint has more models; this is the first page.') }}</span></p>
           <label>{{ t('Default model') }}<ModelPicker v-model="form.model" :models="choices" :placeholder="t('Choose a model or enter an ID')" /></label>
+          <label v-if="form.model.trim() && contextInfo">{{ t('Context window') }} <small>{{ t('tokens, for this model in every profile') }}</small><input v-model="contextInput" inputmode="numeric" autocomplete="off" spellcheck="false" :placeholder="contextPlaceholder" /></label>
+          <p v-if="form.model.trim() && contextInfo" :class="contextValid ? 'form-help' : 'inline-error'">{{ !contextValid ? t('A context window is between 1,000 and 100,000,000 tokens.') : form.provider === 'claude_code' ? t('Claude Code is told it through CLAUDE_CODE_MAX_CONTEXT_TOKENS, listed with the environment variables below. Empty lets Claude Code decide.') : t('Codex is told it as model_context_window at launch. Empty lets Codex decide.') }}</p>
           <div v-if="form.provider==='claude_code'" class="model-slots">
             <p class="form-help">{{ slotsText }} <button type="button" class="text-button" :aria-expanded="slotsOpen" @click="slotsOpen=!slotsOpen">{{ t(slotsOpen ? 'Hide' : 'Advanced') }}</button></p>
             <template v-if="slotsOpen">

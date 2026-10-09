@@ -22,6 +22,7 @@ mod installation;
 mod mcp;
 mod media;
 mod model_catalog;
+mod model_limits;
 mod native_config;
 mod native_history;
 mod paths;
@@ -683,6 +684,7 @@ fn router(state: AppState) -> Router {
         .merge(accounts::routes())
         .merge(clients::routes())
         .merge(resources::routes())
+        .merge(model_limits::routes())
         .merge(usage::routes())
         .merge(host_grants::routes())
         .merge(checkouts::routes())

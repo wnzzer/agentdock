@@ -19,6 +19,10 @@ pub enum EnvironmentValue {
     /// follow the model chosen for the session. Nothing is set when the
     /// session names no model.
     MainModel,
+    /// The context window the user set for the session's main model, at
+    /// launch: how `CLAUDE_CODE_MAX_CONTEXT_TOKENS` follows the model. Nothing
+    /// is set when no window was set for it.
+    MainModelContext,
 }
 
 impl std::fmt::Debug for EnvironmentValue {
@@ -28,6 +32,7 @@ impl std::fmt::Debug for EnvironmentValue {
             Self::SecretRef { .. } => "SecretRef { reference: [REDACTED] }",
             Self::Unset => "Unset",
             Self::MainModel => "MainModel",
+            Self::MainModelContext => "MainModelContext",
         })
     }
 }
@@ -126,7 +131,9 @@ pub fn validate_environment(environment: &EnvironmentOverrides) -> Result<(), St
                     ));
                 }
             }
-            EnvironmentValue::Unset | EnvironmentValue::MainModel => {}
+            EnvironmentValue::Unset
+            | EnvironmentValue::MainModel
+            | EnvironmentValue::MainModelContext => {}
         }
     }
     Ok(())

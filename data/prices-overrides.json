@@ -14,35 +14,45 @@
       "output": 75,
       "cacheRead": 1.5,
       "cacheWrite": 18.75,
-      "cacheWrite1h": 30
+      "cacheWrite1h": 30,
+      "contextWindow": 200000,
+      "maxOutput": 32000
     },
     "claude-opus-4-1": {
       "input": 15,
       "output": 75,
       "cacheRead": 1.5,
       "cacheWrite": 18.75,
-      "cacheWrite1h": 30
+      "cacheWrite1h": 30,
+      "contextWindow": 200000,
+      "maxOutput": 32000
     },
     "claude-sonnet-4": {
       "input": 3,
       "output": 15,
       "cacheRead": 0.3,
       "cacheWrite": 3.75,
-      "cacheWrite1h": 6
+      "cacheWrite1h": 6,
+      "contextWindow": 200000,
+      "maxOutput": 64000
     },
     "claude-3-7-sonnet": {
       "input": 3,
       "output": 15,
       "cacheRead": 0.3,
       "cacheWrite": 3.75,
-      "cacheWrite1h": 6
+      "cacheWrite1h": 6,
+      "contextWindow": 200000,
+      "maxOutput": 64000
     },
     "claude-3-5-haiku": {
       "input": 0.8,
       "output": 4,
       "cacheRead": 0.08,
       "cacheWrite": 1,
-      "cacheWrite1h": 1.6
+      "cacheWrite1h": 1.6,
+      "contextWindow": 200000,
+      "maxOutput": 8192
     }
   }
 }

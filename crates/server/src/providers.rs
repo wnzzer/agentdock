@@ -215,11 +215,17 @@ pub fn build(state: &AppState, session: &Session, cwd: PathBuf) -> Result<SpawnS
         spec.args.extend(["--name".into(), session.title.clone()]);
     }
     let main_model = session.endpoint_snapshot.as_ref().and_then(resolve_model);
+    let main_context = main_model
+        .as_deref()
+        .and_then(|model| crate::model_limits::context_override(&state.state_dir, model));
     crate::environment::apply(
         &mut spec,
         &session.environment,
         &state.state_dir,
-        main_model.as_deref(),
+        crate::environment::Launch {
+            main_model: main_model.as_deref(),
+            main_context,
+        },
     )?;
     // Last, so no session environment override can replace the session's own
     // identity with another's.
@@ -451,6 +457,13 @@ fn build_base(state: &AppState, session: &Session, cwd: PathBuf) -> Result<Spawn
                         "-c".into(),
                         format!("model_reasoning_effort={}", encode(effort)),
                     ]);
+                }
+                // Only a window the user set (model_limits.rs): a published
+                // one may exceed what the account has.
+                if let Some(window) = p.and_then(resolve_model).and_then(|model| {
+                    crate::model_limits::context_override(&state.state_dir, &model)
+                }) {
+                    args.extend(["-c".into(), format!("model_context_window={window}")]);
                 }
                 if p.is_some_and(|p| p.endpoint_url.is_some() || p.secret_ref.is_some()) {
                     config.push_str("model_provider = \"agentdock\"\n\n[model_providers.agentdock]\nname = \"AgentDock\"\nwire_api = \"responses\"\nrequires_openai_auth = false\n");
