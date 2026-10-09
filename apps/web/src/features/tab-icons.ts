@@ -1,11 +1,12 @@
-import type { ProviderKind } from "@agentdock/protocol";
+import type { AgentProviderKind, ProviderKind } from "@agentdock/protocol";
 import type { LeafPaneKind } from "@agentdock/protocol/layout";
+import { AGENT_CLIENTS, clientInfo, isProviderKind } from "./clients";
 import { ICON_PALETTE } from "./icon-palette";
 import { mediaKind } from "./media-kind";
 
+const CLIENT_TABS = Object.fromEntries(AGENT_CLIENTS.map(id => [id, { color: ICON_PALETTE[clientInfo(id).iconTone], background: clientInfo(id).tabTint }])) as Record<AgentProviderKind, { color: string; background: string }>;
 export const TAB_ICON_PALETTE = {
-  claude_code: { color: ICON_PALETTE.orange, background: "#FFF0E5" },
-  codex: { color: ICON_PALETTE.purple, background: "#F0E9FF" },
+  ...CLIENT_TABS,
   agent: { color: "#6958A6", background: "#F1ECFA" },
   git: { color: ICON_PALETTE.orange, background: "#FFF0E5" },
   text: { color: ICON_PALETTE.blue, background: "#E8F1FD" },
@@ -25,13 +26,11 @@ export interface TabIconAppearance {
   background: string;
 }
 
-function isProvider(value: unknown): value is ProviderKind { return value === "claude_code" || value === "codex" || value === "terminal"; }
-
 /** Authoritative session data wins over legacy serialized metadata. Never guess from a title. */
 export function tabIconProvider(metadata?: Record<string, unknown>, sessionProviders?: Record<string, ProviderKind>): ProviderKind | undefined {
   const sessionId = metadata?.session_id;
   const actual = typeof sessionId === "string" && sessionProviders && Object.hasOwn(sessionProviders, sessionId) ? sessionProviders[sessionId] : undefined;
-  return isProvider(actual) ? actual : isProvider(metadata?.provider) ? metadata.provider : undefined;
+  return isProviderKind(actual) ? actual : isProviderKind(metadata?.provider) ? metadata.provider : undefined;
 }
 
 export function resolveTabIcon(kind: LeafPaneKind, metadata?: Record<string, unknown>, sessionProviders?: Record<string, ProviderKind>): TabIconAppearance {

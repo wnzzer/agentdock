@@ -9,6 +9,7 @@ import { limitKey, nextLimits, validWindow, windowValue, type Limits } from "./m
 import ModelSelection from "./ModelSelection.vue";
 import { offeredModels } from "./model-choices";
 import EnvironmentEditor from "./EnvironmentEditor.vue";
+import { AGENT_CLIENTS, DEFAULT_CLIENT, clientInfo, clientLabel } from "./clients";
 import { SLOTS, followingRows, setSlot, slotState, slotSummary, type SlotVariable } from "./claude-slots";
 import { effortLabel, modelEfforts } from "./reasoning-effort";
 import { useI18n } from "../i18n";
@@ -36,7 +37,7 @@ const environmentDraft = ref<EnvironmentRow[]>([]), initialEnvironment = ref<Env
 const environmentDirty = computed(() => profileEnvironmentDraftChanged(environmentDraft.value, initialEnvironment.value));
 const environmentError = computed(() => { try { profileEnvironmentPayload(environmentDraft.value, backendCapabilities.environment, initialEnvironment.value); return ""; } catch (cause) { return errorMessage(cause); } });
 const pendingNavigation = ref<(() => void)>();
-const form = reactive({ name: "", provider: "claude_code" as AgentProviderKind, endpoint_url: "", model: "", effort: "", permission_mode: "native" as EndpointProfile["permission_mode"], secret_ref: "", proxy_url: "" });
+const form = reactive({ name: "", provider: DEFAULT_CLIENT as AgentProviderKind, endpoint_url: "", model: "", effort: "", permission_mode: "native" as EndpointProfile["permission_mode"], secret_ref: "", proxy_url: "" });
 const secretValid = computed(() => secretMode.value === "stored" || !form.secret_ref || /^env:AGENTDOCK_SECRET_[A-Z0-9_]+$/.test(form.secret_ref));
 /**
  * Where the endpoint's key lives. "stored": pasted here and kept by AgentDock
@@ -133,11 +134,12 @@ async function lookPublished(model: string) {
 function windowPlaceholder(model: string) { const published = publishedWindows[limitKey(model)]; return published ? t("Published: {tokens} tokens", { tokens: published.toLocaleString() }) : t("Unknown · the client decides"); }
 watch(() => form.model, model => { if (model.trim()) void lookPublished(model); });
 const contextValid = computed(() => Object.values(contextDrafts).every(validWindow));
-/** Write the windows set here, and on Claude Code make sure the default model's is passed, as a variable listed below. */
+/** Write the windows set here, and where the client reads the window from a variable (Claude Code), make sure the default model's is passed, as one listed below. */
 async function saveContextWindows() {
   if (!savedLimits.value || !contextValid.value) return;
-  if (windowValue(windowText(form.model)) && form.provider === "claude_code" && !environmentDraft.value.some(row => row.name.trim() === CONTEXT_VARIABLE)) {
-    environmentDraft.value = [...environmentDraft.value, { ...newEnvironmentRow(), name: CONTEXT_VARIABLE, kind: "main_model_context" }];
+  const variable = client.value.contextWindow.variable;
+  if (windowValue(windowText(form.model)) && variable && !environmentDraft.value.some(row => row.name.trim() === variable)) {
+    environmentDraft.value = [...environmentDraft.value, { ...newEnvironmentRow(), name: variable, kind: "main_model_context" }];
   }
   const next = nextLimits(savedLimits.value, contextDrafts);
   if (!next) return;
@@ -147,7 +149,8 @@ async function saveContextWindows() {
 }
 /** The endpoint models this profile offers in a session's menu; none chosen offers them all. */
 const chosenModels = ref<string[]>([]);
-const CONTEXT_VARIABLE = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
+/** What the form offers and explains for the chosen client (clients.ts). */
+const client = computed(() => clientInfo(form.provider));
 
 /**
  * Claude Code's model slots, edited here and kept as the environment
@@ -165,12 +168,12 @@ const slotsText = computed(() => t({
   client: "Opus, Sonnet and Haiku use Claude Code's own models.",
   mixed: "Opus, Sonnet and Haiku are set one by one.",
 }[slotSummary(environmentDraft.value)]));
-// A new profile's slots follow its main model on Claude Code and are not
-// there at all on Codex, which has one model.
+// A new profile's slots follow its main model on a client that has them
+// (Claude Code), and are not there at all on one with a single model (Codex).
 watch(() => form.provider, provider => {
   if (editing.value || editingRecord.value) return;
   const plain = environmentDraft.value.filter(row => !SLOTS.some(slot => slot.variable === row.name.trim()));
-  environmentDraft.value = provider === "claude_code" ? followingRows(plain) : plain;
+  environmentDraft.value = clientInfo(provider).modelSlots ? followingRows(plain) : plain;
   initialEnvironment.value = environmentDraft.value.map(row => ({ ...row }));
 });
 function payload(includeEnvironment = true) {
@@ -191,12 +194,12 @@ function requestLeave(action: () => void) {
 function discardEnvironmentDraft() { const action = pendingNavigation.value; pendingNavigation.value = undefined; environmentDraft.value = initialEnvironment.value.map(row => ({ ...row })); action?.(); }
 function edit(p?: EndpointProfile) {
   pendingNavigation.value = undefined;
-  // A new profile starts on Claude Code, whose slots follow its main model.
-  environmentDraft.value = p ? environmentRows(p.environment) : followingRows();
+  // A new profile starts on the default client, whose slots follow its main model.
+  environmentDraft.value = p ? environmentRows(p.environment) : clientInfo(DEFAULT_CLIENT).modelSlots ? followingRows() : [];
   initialEnvironment.value = environmentDraft.value.map(row => ({ ...row }));
   resetDiscovery();editingRecord.value=p;
   editing.value=p?.id; formVisible.value=true; error.value=""; notice.value=""; deleteId.value=undefined;
-  Object.assign(form,{name:p?.name??"",provider:p?.provider??"claude_code",endpoint_url:p?.endpoint_url??"",model:p?.model??"",effort:p?.effort??"",permission_mode:p?.permission_mode??"native",secret_ref:p?.secret_ref??"",proxy_url:p?.proxy_url??""});
+  Object.assign(form,{name:p?.name??"",provider:p?.provider??DEFAULT_CLIENT,endpoint_url:p?.endpoint_url??"",model:p?.model??"",effort:p?.effort??"",permission_mode:p?.permission_mode??"native",secret_ref:p?.secret_ref??"",proxy_url:p?.proxy_url??""});
   apiKey.value = ""; chooseSecretMode(p?.secret_ref);
   aliasesText.value=formatModelAliases(p?.model_aliases); models.value=undefined; modelError.value="";
   chosenModels.value=[...(p?.models??[])]; void loadLimits();
@@ -276,7 +279,7 @@ onBeforeUnmount(()=>{discoveryRevision++;});
           <h3>{{ editing ? t('Edit profile') : t('Create profile') }}</h3>
           <div class="form-columns">
             <label>{{ t('Name') }}<input v-model="form.name" required :disabled="busy" :placeholder="t('Personal {client}', { client: providerLabel(form.provider) })" maxlength="120" /></label>
-            <label>{{ t('Provider') }}<select v-model="form.provider" :disabled="!!editing||busy"><option value="claude_code">Claude Code</option><option value="codex">Codex</option></select></label>
+            <label>{{ t('Provider') }}<select v-model="form.provider" :disabled="!!editing||busy"><option v-for="id in AGENT_CLIENTS" :key="id" :value="id">{{ clientLabel(id) }}</option></select></label>
           </div>
           <template v-if="editingNative">
             <div class="shared-config-panel"><strong><ProviderIcon :provider="editingProfile!.provider" :size="17" />{{ sharesHostConfig(editingNative) ? t('Host configuration · shared sign-in') : t('Isolated configuration · this account only') }}</strong><code>{{ editingNative.config_dir }}</code><p v-if="sharesHostConfig(editingNative)">{{ t('Shared with the host: sign-in, model and permissions come from this directory, and anything else that edits it changes this profile too. AgentDock never copies or rewrites it.') }}</p><p v-else>{{ t('AgentDock created this directory for this account, and nothing else signs in through it.') }}</p></div>
@@ -284,7 +287,7 @@ onBeforeUnmount(()=>{discoveryRevision++;});
           <template v-else>
           <label>{{ t('Endpoint URL') }}<input v-model="form.endpoint_url" type="url" :placeholder="t('Official endpoint when empty')" autocomplete="off" /></label>
           <label>{{ t('Proxy URL') }}<input v-model="form.proxy_url" type="url" placeholder="http://127.0.0.1:7890" autocomplete="off" /></label>
-          <p class="form-help">{{ t('Applied on the server. Empty uses the host network.') }}<template v-if="form.provider==='claude_code'"> {{ t('Claude Code does not support SOCKS.') }}</template></p>
+          <p class="form-help">{{ t('Applied on the server. Empty uses the host network.') }}<template v-if="client.proxyNote"> {{ t(client.proxyNote) }}</template></p>
           <template v-if="secretMode==='stored'">
             <label>{{ t('API key') }}<input v-model="apiKey" type="password" autocomplete="new-password" spellcheck="false" :placeholder="storedKey ? t('Saved · leave empty to keep it') : t('Empty for an endpoint without a key')" /></label>
             <p class="form-help">{{ storedKey ? t('Kept as {name} in the state directory, readable only by you. It never returns to the browser.', { name: storedKey }) : t('Kept in the state directory, readable only by you, and usable at once. It never returns to the browser.') }}<button v-if="storedKey" type="button" class="text-button danger-text secret-clear" @click="form.secret_ref=''">{{ t('Stop using this key') }}</button></p>
@@ -303,8 +306,8 @@ onBeforeUnmount(()=>{discoveryRevision++;});
           <ModelSelection v-if="!editingNative && (models?.models.length || chosenModels.length)" v-model:selected="chosenModels" :catalog="models?.models ?? []" :window-text="windowText" :placeholder="windowPlaceholder" @window="setWindow" @look="lookPublished" />
           <label>{{ t('Default model') }}<ModelPicker v-model="form.model" :models="choices" :placeholder="t('Choose a model or enter an ID')" /></label>
           <label v-if="form.model.trim() && savedLimits">{{ t('Context window') }} <small>{{ t('tokens, for this model in every profile') }}</small><input :value="windowText(form.model)" inputmode="numeric" autocomplete="off" spellcheck="false" :placeholder="windowPlaceholder(form.model)" @input="setWindow(form.model, ($event.target as HTMLInputElement).value)" /></label>
-          <p v-if="form.model.trim() && savedLimits" :class="validWindow(windowText(form.model)) ? 'form-help' : 'inline-error'">{{ !validWindow(windowText(form.model)) ? t('A context window is between 1,000 and 100,000,000 tokens.') : form.provider === 'claude_code' ? t('Claude Code is told it through CLAUDE_CODE_MAX_CONTEXT_TOKENS, listed with the environment variables below. Empty lets Claude Code decide.') : t('Codex is told it as model_context_window at launch. Empty lets Codex decide.') }}</p>
-          <div v-if="form.provider==='claude_code'" class="model-slots">
+          <p v-if="form.model.trim() && savedLimits" :class="validWindow(windowText(form.model)) ? 'form-help' : 'inline-error'">{{ !validWindow(windowText(form.model)) ? t('A context window is between 1,000 and 100,000,000 tokens.') : t(client.contextWindow.help) }}</p>
+          <div v-if="client.modelSlots" class="model-slots">
             <p class="form-help">{{ slotsText }} <button type="button" class="text-button" :aria-expanded="slotsOpen" @click="slotsOpen=!slotsOpen">{{ t(slotsOpen ? 'Hide' : 'Advanced') }}</button></p>
             <template v-if="slotsOpen">
               <p class="form-help">{{ t('Claude Code also runs these slots, for background work, subagents and its Opus, Sonnet and Haiku choices. Each is an environment variable, listed with the others below.') }}</p>
@@ -326,7 +329,7 @@ onBeforeUnmount(()=>{discoveryRevision++;});
           <p v-if="aliases.error" class="inline-error">{{ t(aliases.error) }}</p>
           <p v-else class="form-help">{{ t('One alias = model-id per line. Aliases change display selection, not the provider protocol.') }}</p>
           <p v-if="form.model" class="model-effective">{{ t('Effective model') }}: <code>{{ resolved }}</code></p>
-          <label>{{ t('Permission intent') }}<select v-model="form.permission_mode"><option value="native">{{ t('Native · provider defaults') }}</option><option value="interactive">{{ t('Interactive · conservative native prompts') }}</option><option value="trusted">{{ t('Trusted · native file-edit trust') }}</option><option v-if="form.provider==='claude_code'" value="plan">{{ t('Plan · review before edits') }}</option><option value="blocked">{{ t('Blocked · do not start') }}</option></select></label>
+          <label>{{ t('Permission intent') }}<select v-model="form.permission_mode"><option value="native">{{ t('Native · provider defaults') }}</option><option value="interactive">{{ t('Interactive · conservative native prompts') }}</option><option value="trusted">{{ t('Trusted · native file-edit trust') }}</option><option v-if="client.profilePlan" value="plan">{{ t('Plan · review before edits') }}</option><option value="blocked">{{ t('Blocked · do not start') }}</option></select></label>
           </template>
           <EnvironmentEditor v-model="environmentDraft" :supported="backendCapabilities.environment" :disabled="busy" />
           <p v-if="environmentError" class="inline-error" role="alert">{{ t(environmentError) }}</p>

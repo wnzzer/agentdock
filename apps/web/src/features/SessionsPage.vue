@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import type { ProviderKind, Session, Workspace } from '@agentdock/protocol';
 import { providerLabel } from './api';
+import { PROVIDER_KINDS } from './clients';
 import { filterSessionList, isEphemeralSession, isSessionArchived } from './session-list';
 import type { SessionArchiveFilter, SessionEphemeralFilter } from './session-list';
 import { invertSelection, selectRange } from './session-selection';
@@ -110,7 +111,7 @@ function relative(at?: string | null) {
       </div>
       <div class="sessions-filters">
         <select v-model="workspaceId" :aria-label="t('Filter sessions by workspace')"><option value="">{{ t('All workspaces') }}</option><option v-for="workspace in workspaces" :key="workspace.id" :value="workspace.id">{{ workspace.name }}</option></select>
-        <select v-model="provider" :aria-label="t('Filter sessions by provider')"><option value="">{{ t('All providers') }}</option><option v-for="entry in (['claude_code', 'codex', 'terminal'] as const)" :key="entry" :value="entry">{{ entry === 'terminal' ? t('Terminal') : providerLabel(entry) }}</option></select>
+        <select v-model="provider" :aria-label="t('Filter sessions by provider')"><option value="">{{ t('All providers') }}</option><option v-for="entry in PROVIDER_KINDS" :key="entry" :value="entry">{{ entry === 'terminal' ? t('Terminal') : providerLabel(entry) }}</option></select>
         <select v-model="status" :aria-label="t('Filter sessions by status')"><option value="">{{ t('All statuses') }}</option><option v-for="entry in statuses" :key="entry" :value="entry">{{ t(entry) }}</option></select>
         <select v-model="ephemeral" :aria-label="t('Filter temporary windows')"><option value="all">{{ t('Permanent and temporary') }}</option><option value="only">{{ t('Only temporary windows') }}</option><option value="hidden">{{ t('Hide temporary windows') }}</option></select>
         <button v-if="hasFilters" class="text-button" @click="clearFilters">{{ t('Clear session filters') }}</button>

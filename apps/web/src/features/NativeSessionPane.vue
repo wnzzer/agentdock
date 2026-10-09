@@ -5,6 +5,7 @@ import type { EndpointProfile, ProviderKind, Session } from "@agentdock/protocol
 import { errorMessage, json, providerLabel, request } from "./api";
 import { sessionConnections } from "./session-connection";
 import { backendCapabilities } from "./backend-capabilities";
+import { DEFAULT_CLIENT } from "./clients";
 import { useI18n } from "../i18n";
 import Icon from "./Icon.vue";
 import ProviderIcon from "./ProviderIcon.vue";
@@ -49,7 +50,7 @@ function reconnect(){closeSessionMenu();terminalView.value?.reconnect();}
     <span class="empty-icon"><Icon :name="terminal?'terminal':'spark'" :size="28" /></span>
     <h3>{{ t(terminal?'A terminal, when you need it':'Make room for your next idea') }}</h3>
     <p>{{ t('Open a session to connect. Closing the pane keeps it running.') }}</p>
-    <button class="primary-button" @click="emit('create',terminal?'terminal':'claude_code')"><Icon name="plus" :size="15" />{{ t(terminal?'New terminal':'New agent session') }}</button>
+    <button class="primary-button" @click="emit('create',terminal?'terminal':DEFAULT_CLIENT)"><Icon name="plus" :size="15" />{{ t(terminal?'New terminal':'New agent session') }}</button>
     <div v-if="choices.length" class="session-choices"><small>{{ t('OR OPEN AN EXISTING SESSION') }}</small><button v-for="s in choices" :key="s.id" @click="emit('select',s)"><ProviderIcon :provider="s.provider" :size="15" /><span>{{ s.title }}</span><span :class="['state-dot',s.status]" /></button></div>
   </section>
   <section v-else class="agent-session-pane">

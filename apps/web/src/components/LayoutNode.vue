@@ -8,6 +8,7 @@ import TabIcon from "../features/TabIcon.vue";
 import Icon from "../features/Icon.vue";
 import ContextMenu from "../features/ContextMenu.vue";
 import { sessionStatuses } from "../features/attention";
+import { DEFAULT_CLIENT, PROVIDER_KINDS, providerLabel } from "../features/clients";
 const { t } = useI18n();
 
 const props = defineProps<{ node: LayoutNode; selected?: string | null; maximized?: string | null; locatedPaneId?: string | null; workspaceLabels?: Record<string, string>; mixedWorkspaces?: boolean; workspaceBranches?: Record<string, string>; sessionBranches?: Record<string, string>; sessionProviders?: Record<string, ProviderKind>; ephemeralSessionIds?: string[]; ephemeralSupported?: boolean }>();
@@ -94,11 +95,8 @@ const paneTypes: { kind: LeafPaneKind; title: string }[] = [
   { kind: "editor", title: "File editor" },
   { kind: "file_preview", title: "File preview" },
 ];
-const newSessionKinds: { provider: ProviderKind; title: string; ephemeral?: boolean }[] = [
-  { provider: "claude_code", title: "New Claude Code session" },
-  { provider: "codex", title: "New Codex session" },
-  { provider: "terminal", title: "New terminal" },
-];
+const newSessionKinds: { provider: ProviderKind; title: string; values?: Record<string, string> }[] = PROVIDER_KINDS.map(provider =>
+  provider === "terminal" ? { provider, title: "New terminal" } : { provider, title: "New {provider} session", values: { provider: providerLabel(provider) } });
 /** Running or waiting on you, for the dot on a session's tab; nothing for the rest. */
 function tabStatus(pane: PaneNode) {
   const id = pane.metadata?.session_id;
@@ -268,8 +266,8 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
         <details ref="addMenu" class="dock-add-menu">
           <summary class="dock-action" :title="t('New session here')" :aria-label="t('New session here')"><Icon name="plus" :size="15" /></summary>
           <div class="dock-menu-items">
-            <button v-for="entry in newSessionKinds" :key="entry.provider" type="button" @click="createSession(entry.provider)"><TabIcon :kind="entry.provider === 'terminal' ? 'terminal' : 'agent_chat'" :provider="entry.provider === 'terminal' ? undefined : entry.provider" :size="14" />{{ t(entry.title) }}</button>
-            <button v-if="ephemeralSupported" type="button" @click="createSession('claude_code', true)"><Icon name="clock" :size="14" />{{ t('New temporary window') }}</button>
+            <button v-for="entry in newSessionKinds" :key="entry.provider" type="button" @click="createSession(entry.provider)"><TabIcon :kind="entry.provider === 'terminal' ? 'terminal' : 'agent_chat'" :provider="entry.provider === 'terminal' ? undefined : entry.provider" :size="14" />{{ t(entry.title, entry.values) }}</button>
+            <button v-if="ephemeralSupported" type="button" @click="createSession(DEFAULT_CLIENT, true)"><Icon name="clock" :size="14" />{{ t('New temporary window') }}</button>
             <hr />
             <button v-for="type in paneTypes" :key="type.kind" type="button" @click="add(type.kind)"><TabIcon :kind="type.kind" :size="14" />{{ t(type.title) }}</button>
           </div>
@@ -287,8 +285,8 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
     </div>
     <ContextMenu v-if="paneMenu" :x="paneMenu.x" :y="paneMenu.y" :label="t('Pane actions')" @close="paneMenu = null">
       <div class="context-menu-label">{{ t('New session here') }}</div>
-      <button v-for="entry in newSessionKinds" :key="entry.provider" role="menuitem" @click="paneAction(() => createSession(entry.provider))"><TabIcon :kind="entry.provider === 'terminal' ? 'terminal' : 'agent_chat'" :provider="entry.provider === 'terminal' ? undefined : entry.provider" :size="14" />{{ t(entry.title) }}</button>
-      <button v-if="ephemeralSupported" role="menuitem" @click="paneAction(() => createSession('claude_code', true))"><Icon name="clock" :size="14" />{{ t('New temporary window') }}</button>
+      <button v-for="entry in newSessionKinds" :key="entry.provider" role="menuitem" @click="paneAction(() => createSession(entry.provider))"><TabIcon :kind="entry.provider === 'terminal' ? 'terminal' : 'agent_chat'" :provider="entry.provider === 'terminal' ? undefined : entry.provider" :size="14" />{{ t(entry.title, entry.values) }}</button>
+      <button v-if="ephemeralSupported" role="menuitem" @click="paneAction(() => createSession(DEFAULT_CLIENT, true))"><Icon name="clock" :size="14" />{{ t('New temporary window') }}</button>
       <hr />
       <button v-for="type in paneTypes" :key="type.kind" role="menuitem" @click="paneAction(() => add(type.kind))"><TabIcon :kind="type.kind" :size="14" />{{ t(type.title) }}</button>
       <hr />

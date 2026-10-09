@@ -1,5 +1,7 @@
+import type { AgentProviderKind } from "@agentdock/protocol";
+
 /** The usage report as the server sends it, and the figures the page derives from it. */
-export type UsageProvider = "claude_code" | "codex";
+export type UsageProvider = AgentProviderKind;
 export interface UsageBucket {
   input: number;
   cache_read: number;

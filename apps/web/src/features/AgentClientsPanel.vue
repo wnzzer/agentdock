@@ -6,6 +6,7 @@ import { ApiError, errorMessage, json, providerLabel, request } from './api';
 import Icon from './Icon.vue';
 import ProviderIcon from './ProviderIcon.vue';
 import { useI18n } from '../i18n';
+import { clientTone } from './clients';
 
 /** Where the program a session launches was resolved from. */
 type ProgramSource = 'override' | 'path' | 'managed' | 'missing';
@@ -81,7 +82,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); });
 
       <article v-for="client in clients" :key="client.provider" class="client-card">
         <header>
-          <span :class="['client-mark',client.provider]"><ProviderIcon :provider="client.provider" :size="19"/></span>
+          <span :class="['client-mark',client.provider]" :style="clientTone(client.provider)"><ProviderIcon :provider="client.provider" :size="19"/></span>
           <div>
             <strong>{{ providerLabel(client.provider) }} <em>{{ versionLabel(client) }}</em></strong>
             <small :title="client.program"><code>{{ client.program }}</code> · {{ sourceLabel(client) }}</small>
@@ -116,8 +117,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); });
 .client-card strong em{font-style:normal;font-weight:450;font-size:var(--text-xs);color:var(--muted);margin-left:4px}
 .client-card small{display:block;margin-top:3px;font-size:var(--text-xs);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .client-card small code{font-size:var(--text-xs);color:var(--ink-soft)}
-.client-mark{display:grid;place-items:center;width:34px;height:34px;border-radius:var(--radius-md);background:var(--codex-soft);color:var(--codex);flex-shrink:0}
-.client-mark.claude_code{background:var(--claude-soft);color:var(--claude)}
+.client-mark{display:grid;place-items:center;width:34px;height:34px;border-radius:var(--radius-md);background:var(--client-soft);color:var(--client-ink);flex-shrink:0}
 .client-state{border-radius:var(--radius-xl);padding:4px 9px;font-size:var(--text-xs);background:var(--fill);color:var(--ink-soft);flex-shrink:0}
 .client-state.installed{background:var(--ok-soft);color:var(--accent-ink)}
 .client-state.missing{background:var(--warn-soft);color:#9c844c}

@@ -7,8 +7,9 @@ import ProviderIcon from './ProviderIcon.vue';
 import Icon from './Icon.vue';
 import { errorMessage, json, providerLabel, request } from './api';
 import { REASONING_EFFORTS, effortLabel } from './reasoning-effort';
-import { PERMISSION_CHOICES, loadPreferences, preferences, savePreferences, type PreferenceProvider, type Preferences } from './preferences';
+import { loadPreferences, preferences, savePreferences, type PreferenceProvider, type Preferences } from './preferences';
 import { backendCapabilities } from './backend-capabilities';
+import { AGENT_CLIENTS, clientInfo, clientTone } from './clients';
 import { useI18n } from '../i18n';
 
 /**
@@ -19,12 +20,11 @@ import { useI18n } from '../i18n';
  */
 const props = defineProps<{ profiles: EndpointProfile[] }>();
 const { t, locale, setLocale } = useI18n();
-const PROVIDERS: PreferenceProvider[] = ['claude_code', 'codex'];
 const PERMISSION_LABELS: Record<string, string> = { ask: 'Ask every time', plan: 'Plan first', accept_edits: 'Accept edits', danger: 'Never ask' };
 const loaded = ref(false), saving = ref(false), error = ref(''), saved = ref(false);
 const profilesFor = (provider: PreferenceProvider) => props.profiles.filter(profile => profile.provider === provider);
 /** A preference naming a deleted profile reads as none, and says so. */
-const staleProfile = computed(() => Object.fromEntries(PROVIDERS.map(provider => {
+const staleProfile = computed(() => Object.fromEntries(AGENT_CLIENTS.map(provider => {
   const id = preferences.value[provider].endpoint_profile_id;
   return [provider, !!id && !profilesFor(provider).some(profile => profile.id === id)];
 })));
@@ -108,8 +108,8 @@ async function revokeGrants() { try { hostGrants.value = await request('/host/gr
     </article>
     <p v-if="!loaded" class="preferences-quiet">{{ t('Loading…') }}</p>
     <template v-else>
-      <article v-for="provider in PROVIDERS" :key="provider" class="preference-card">
-        <header><span :class="['preference-mark',provider]"><ProviderIcon :provider="provider" :size="17"/></span><strong>{{ providerLabel(provider) }}</strong></header>
+      <article v-for="provider in AGENT_CLIENTS" :key="provider" class="preference-card">
+        <header><span :class="['preference-mark',provider]" :style="clientTone(provider)"><ProviderIcon :provider="provider" :size="17"/></span><strong>{{ providerLabel(provider) }}</strong></header>
         <label class="preference-row">
           <span><strong>{{ t('Default endpoint') }}</strong><small>{{ t('Chosen in the new-session dialog, and used by one-click sessions.') }}</small></span>
           <select :value="staleProfile[provider] ? '' : preferences[provider].endpoint_profile_id ?? ''" :disabled="saving" @change="pick(provider,'endpoint_profile_id')($event)">
@@ -119,7 +119,7 @@ async function revokeGrants() { try { hostGrants.value = await request('/host/gr
         </label>
         <p v-if="staleProfile[provider]" class="preference-note">{{ t('The profile chosen before no longer exists; the last used one applies.') }}</p>
         <label class="preference-row">
-          <span><strong>{{ t('Default thinking depth') }}</strong><small>{{ t(provider === 'codex' ? 'Only where the model offers it.' : 'Deeper is slower and uses more of your quota.') }}</small></span>
+          <span><strong>{{ t('Default thinking depth') }}</strong><small>{{ t(clientInfo(provider).effortLadder ? 'Deeper is slower and uses more of your quota.' : 'Only where the model offers it.') }}</small></span>
           <select :value="preferences[provider].effort ?? ''" :disabled="saving" @change="pick(provider,'effort')($event)">
             <option value="">{{ t('Automatic · provider default') }}</option>
             <option v-for="level in REASONING_EFFORTS" :key="level" :value="level">{{ t(effortLabel(level)) }}</option>
@@ -129,7 +129,7 @@ async function revokeGrants() { try { hostGrants.value = await request('/host/gr
           <span><strong>{{ t('Default permission') }}</strong><small>{{ t('How tools are approved each time a session starts. The session\'s own chip can change it between turns.') }}</small></span>
           <select :value="preferences[provider].permission ?? ''" :class="{danger:preferences[provider].permission==='danger'}" :disabled="saving" @change="pick(provider,'permission')($event)">
             <option value="">{{ t('Client default') }}</option>
-            <option v-for="mode in PERMISSION_CHOICES[provider]" :key="mode" :value="mode">{{ t(PERMISSION_LABELS[mode]) }}</option>
+            <option v-for="mode in clientInfo(provider).permissionModes" :key="mode" :value="mode">{{ t(PERMISSION_LABELS[mode]) }}</option>
           </select>
         </label>
         <p v-if="preferences[provider].permission==='danger'" class="preference-note danger">{{ t('New sessions will run tools without asking. Only choose this for directories you trust completely.') }}</p>
@@ -165,8 +165,7 @@ async function revokeGrants() { try { hostGrants.value = await request('/host/gr
 .preference-card{border:1px solid var(--border);border-radius:var(--radius-lg);padding:13px 14px 6px;margin-bottom:10px;background:var(--surface)}
 .preference-card header{display:flex;align-items:center;gap:10px;margin-bottom:6px}
 .preference-card header strong{font-size:var(--text-md);font-weight:600;color:var(--ink)}
-.preference-mark{display:grid;place-items:center;width:30px;height:30px;border-radius:var(--radius-md);background:var(--codex-soft);color:var(--codex);flex-shrink:0}
-.preference-mark.claude_code{background:var(--claude-soft);color:var(--claude)}
+.preference-mark{display:grid;place-items:center;width:30px;height:30px;border-radius:var(--radius-md);background:var(--client-soft);color:var(--client-ink);flex-shrink:0}
 /* Only the cards carry an icon; the rows are read by their labels. Functional
    icons take the text's tone rather than a hue of their own (icon-palette.ts). */
 .preference-mark.general{background:var(--fill);color:var(--ink-soft)}

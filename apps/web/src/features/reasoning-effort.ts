@@ -1,12 +1,14 @@
 import type { AgentProviderKind, ModelCatalog } from '@agentdock/protocol';
+import { agentClient } from './clients';
 
 /** The values accepted by both native clients' configuration surfaces. */
 export const REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type ReasoningEffort = typeof REASONING_EFFORTS[number];
 
 /**
- * Claude Code exposes --effort as a client option. Codex is model-specific and
- * must use the levels advertised by its model/list response; an empty catalog
+ * Claude Code exposes --effort as a client option, so it gets every level
+ * (`effortLadder` in clients.ts). Codex is model-specific and must use the
+ * levels advertised by its model/list response; an empty catalog
  * deliberately produces no guessed choices.
  */
 export function modelEfforts(
@@ -16,7 +18,7 @@ export function modelEfforts(
   current?: string | null,
 ): string[] {
   const advertised = model ? catalog?.models.find(entry => entry.id === model)?.efforts ?? [] : [];
-  const values = provider === 'claude_code' && !advertised.length
+  const values = agentClient(provider)?.effortLadder && !advertised.length
     ? [...REASONING_EFFORTS]
     : advertised.filter(value => (REASONING_EFFORTS as readonly string[]).includes(value));
   if (current && (REASONING_EFFORTS as readonly string[]).includes(current) && !values.includes(current)) values.push(current);

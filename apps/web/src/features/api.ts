@@ -56,5 +56,5 @@ export const json = (method: string, value?: unknown): RequestInit => ({ method,
 export const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 export const workspacePath = (id: string) => `/workspaces/${encodeURIComponent(id)}`;
 export const assetUrl = (id: string, path: string) => `/api${workspacePath(id)}/asset?path=${encodeURIComponent(path)}`;
-export const providerLabel = (provider: string) => ({ claude_code: "Claude Code", codex: "Codex", terminal: "Terminal" })[provider] ?? provider;
+export { providerLabel } from "./clients";
 export const formatBytes = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1024 ** 2 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`;

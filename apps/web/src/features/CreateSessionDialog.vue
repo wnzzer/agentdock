@@ -15,11 +15,12 @@ import SessionDraftShell from "./SessionDraftShell.vue";
 import ProviderIcon from "./ProviderIcon.vue";
 import ModelPicker from "./ModelPicker.vue";
 import { offeredModels, resolveModel } from "./model-choices";
+import { AGENT_CLIENTS, DEFAULT_CLIENT, agentClient, clientLabel, nativeCatalogNote } from "./clients";
 const { t }=useI18n();
 /** `inline` draws the form as a draft tab on the canvas instead of a dialog over it. */
 const props = defineProps<{ workspace: Workspace; profiles: EndpointProfile[]; initialProvider?: ProviderKind; inline?: boolean }>();
 const emit = defineEmits<{ close: []; created: [session: Session]; profiles: [] }>();
-const provider = ref<ProviderKind>(props.initialProvider ?? "claude_code");
+const provider = ref<ProviderKind>(props.initialProvider ?? DEFAULT_CLIENT);
 /** Preferences choose the account and depth a new session starts with; the form can still change both. */
 const preferredProfileSelection=(value:ProviderKind,profiles:typeof props.profiles)=>rememberedSelection(value,profiles,undefined,preferenceFor(value)?.endpoint_profile_id);
 const preferredEffort=()=>preferenceFor(provider.value)?.effort??"";
@@ -91,7 +92,7 @@ const dirty = computed(() => title.value !== t('{provider} session', { provider:
     <form class="form-stack" @submit.prevent="create">
       <p class="form-description">{{ t('Create a session in {workspace}. It connects when opened.',{workspace:workspace.name}) }}</p>
       <p v-if="backendCapabilities.structuredChat && provider!=='terminal'" class="inline-notice">{{ t('Chat UI · mobile ready. The official CLI runs the agent and handles permissions; no prompt is sent until you press Send.') }}</p>
-      <label>{{ t('Provider') }}<select v-model="provider" :disabled="busy"><option value="claude_code">Claude Code</option><option value="codex">Codex</option><option value="terminal">{{ t('Terminal · optional host shell') }}</option></select></label>
+      <label>{{ t('Provider') }}<select v-model="provider" :disabled="busy"><option v-for="client in AGENT_CLIENTS" :key="client" :value="client">{{ clientLabel(client) }}</option><option value="terminal">{{ t('Terminal · optional host shell') }}</option></select></label>
       <label>{{ t('Session name') }}<input v-model="title" autofocus required :disabled="busy" maxlength="120" :placeholder="t('What are you working on?')" /></label>
       <template v-if="provider!=='terminal'">
         <label>{{ t('Endpoint profile') }}<select v-model="profileId" :disabled="busy" @change="profileTouched=true"><option v-if="profileId===PROFILE_CHOICE_REQUIRED" :value="PROFILE_CHOICE_REQUIRED" disabled>{{ t('Choose a session configuration') }}</option><option value="">{{ t('Isolated configuration · separate sign-in may be required') }}</option><option v-for="profile in available" :key="profile.id" :value="profile.id">{{ profile.name }} · {{ profile.native_config ? t('Host configuration · shared sign-in') : profile.model || t('default model') }}</option></select></label>
@@ -99,8 +100,8 @@ const dirty = computed(() => title.value !== t('{provider} session', { provider:
                 <div v-if="nativeConfig" class="inline-notice native-session-notice"><strong><ProviderIcon :provider="provider" :size="15" />{{ t('Shared host configuration') }}</strong><code>{{ nativeConfig.config_dir }}</code><p>{{ t('Sign-in, model and permissions come from this directory, shared with the host; AgentDock never copies or rewrites it. The directory being there does not mean it is signed in.') }}</p></div>
         <template v-else-if="validProfile">
         <div v-if="selectedProfile" class="inline-notice"><ProviderIcon :provider="provider" :size="15" /> {{ selectedProfile.endpoint_url || t('Official endpoint') }}<br />{{ t('Permission intent') }}: {{ t(selectedProfile.permission_mode) }} · {{ t('This session keeps a configuration snapshot.') }}<br v-if="selectedProfile.proxy_url" /><span v-if="selectedProfile.proxy_url">{{ t('Proxy URL') }}: {{ selectedProfile.proxy_url }}</span></div>
-        <div class="session-model-bar"><label>{{ t('Session model') }}<ModelPicker v-model="model" :models="choices" :placeholder="selectedProfile?.model || t('Use profile or native default')" /></label><button v-if="selectedProfile || provider==='codex'" type="button" class="small-button" :disabled="discovering||!backendCapabilities.models" :title="!backendCapabilities.models?t('Backend upgrade required'):undefined" @click="discover">{{ discovering?t('Loading models…'):t('Load models') }}</button></div>
-        <p v-if="catalog?.source_url==='codex://model/list'" class="form-help">{{ t('Loaded from the native Codex catalog. Account access may differ.') }}</p>
+        <div class="session-model-bar"><label>{{ t('Session model') }}<ModelPicker v-model="model" :models="choices" :placeholder="selectedProfile?.model || t('Use profile or native default')" /></label><button v-if="selectedProfile || agentClient(provider)?.nativeCatalog" type="button" class="small-button" :disabled="discovering||!backendCapabilities.models" :title="!backendCapabilities.models?t('Backend upgrade required'):undefined" @click="discover">{{ discovering?t('Loading models…'):t('Load models') }}</button></div>
+        <p v-if="nativeCatalogNote(catalog?.source_url)" class="form-help">{{ t(nativeCatalogNote(catalog?.source_url)!) }}</p>
         <div v-if="modelError" class="inline-error" role="alert">{{ modelError }}</div>
         <p v-if="effectiveModel" class="form-help">{{ t('Effective model') }}: <code>{{ effectiveModel }}</code></p>
         <label v-if="!nativeConfig && effortOptions.length">{{ t('Thinking depth') }}<select v-model="effort"><option value="">{{ t('Automatic · provider default') }}</option><option v-for="level in effortOptions" :key="level" :value="level">{{ effortLabel(level) }}</option></select></label>

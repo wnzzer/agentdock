@@ -41,6 +41,7 @@ import { attentionTitle, trackSessions, waitingIds } from "./features/attention"
 import { useMobile } from "./features/mobile";
 import { useI18n } from "./i18n";
 import { ApiConnectionError, ApiError, errorMessage, json, providerLabel, request, workspacePath } from "./features/api";
+import { AGENT_CLIENTS, DEFAULT_CLIENT, PROVIDER_KINDS } from "./features/clients";
 import { loadPreferences, preferenceFor } from "./features/preferences";
 import { paneString, paneWorkspace, paneSession, filePane, changesPane, sessionPane, renameSessionPanes, scopeLegacyLayout, acceptsScopedPane, ephemeralSessionIds, withoutEphemeralPanes } from "./features/pane-context";
 import { isEphemeralSession } from "./features/session-list";
@@ -568,7 +569,7 @@ function openFiles(id = selectedWorkspaceId.value) {
  * form. Nothing exists on the server until Create, and the draft survives a
  * detour to settings, which a dialog closed to make way for it could not.
  */
-function newSession(id = selectedWorkspaceId.value, provider: ProviderKind = "claude_code") {
+function newSession(id = selectedWorkspaceId.value, provider: ProviderKind = DEFAULT_CLIENT) {
   if (!workspaces.value.some(workspace => workspace.id === id)) return;
   if (route.name !== "canvas") void router.push({ name: "canvas" });
   sidebarOpen.value = false;
@@ -721,7 +722,7 @@ const paletteItems = computed<PaletteItem[]>(() => {
     items.push({ id: `session:${session.id}`, title: session.title, subtitle: `${label(session.provider)} · ${workspaceName(session.workspace_id)}${waiting ? " · " + t("Needs you") : ""}`, group: waiting ? t("Needs you") : t("Sessions"), provider: session.provider, suggested: waiting || recent.includes(session.id), run: () => openSession(session) });
   }
   if (here) {
-    for (const provider of ["claude_code", "codex", "terminal"] as const) items.push({ id: `new:${provider}`, title: provider === "terminal" ? t("New terminal") : t("New {provider} session", { provider: label(provider) }), subtitle: contextWorkspace.value?.name, group: t("Commands"), provider, suggested: provider !== "terminal", keywords: "new create 新建", run: () => void quickSession(here, provider) });
+    for (const provider of PROVIDER_KINDS) items.push({ id: `new:${provider}`, title: provider === "terminal" ? t("New terminal") : t("New {provider} session", { provider: label(provider) }), subtitle: contextWorkspace.value?.name, group: t("Commands"), provider, suggested: provider !== "terminal", keywords: "new create 新建", run: () => void quickSession(here, provider) });
     items.push({ id: "new:options", title: t("New session with options…"), subtitle: contextWorkspace.value?.name, group: t("Commands"), icon: "plus", hint: hint("new-session"), keywords: "new create 新建", run: () => newSession(here) });
   }
   items.push(
@@ -882,7 +883,7 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
           <button class="primary-button new-session-top" :disabled="!contextWorkspace || quickBusy" :aria-label="t('New session')" :title="contextWorkspace ? t('New {provider} session in {workspace}', { provider: quickProviderLabel, workspace: contextWorkspace.name }) : t('New session')" @click="quickSession(contextWorkspace?.id)"><Icon :name="mobile ? 'edit' : 'plus'" :size="mobile ? 19 : 14"/><span>{{ t('New session') }}</span></button>
           <details v-if="!mobile" class="new-session-more"><summary class="primary-button" :aria-label="t('More ways to start a session')" :title="t('More ways to start a session')"><Icon name="chevron" :size="12" class="new-session-caret"/></summary>
             <nav class="new-session-menu" :aria-label="t('New session')">
-              <button v-for="provider in (['claude_code','codex','terminal'] as const)" :key="provider" type="button" :disabled="!contextWorkspace || quickBusy" @click="closeNewSessionMenu($event); quickSession(contextWorkspace?.id, provider)"><TabIcon :kind="provider === 'terminal' ? 'terminal' : 'agent_chat'" :metadata="provider === 'terminal' ? undefined : { provider }" :size="16" /><span class="new-session-label">{{ provider === 'terminal' ? t('New terminal') : t('New {provider} session', { provider: providerLabel(provider) }) }}</span></button>
+              <button v-for="provider in PROVIDER_KINDS" :key="provider" type="button" :disabled="!contextWorkspace || quickBusy" @click="closeNewSessionMenu($event); quickSession(contextWorkspace?.id, provider)"><TabIcon :kind="provider === 'terminal' ? 'terminal' : 'agent_chat'" :metadata="provider === 'terminal' ? undefined : { provider }" :size="16" /><span class="new-session-label">{{ provider === 'terminal' ? t('New terminal') : t('New {provider} session', { provider: providerLabel(provider) }) }}</span></button>
               <hr/>
               <button type="button" :disabled="!contextWorkspace" @click="closeNewSessionMenu($event); newSession(contextWorkspace?.id)"><Icon name="settings" :size="15"/><span class="new-session-label">{{ t('New session with options…') }}</span><kbd>{{ hint('new-session') }}</kbd></button>
             </nav>
@@ -949,8 +950,7 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
       </div>
     </div>
     <div class="sheet-section">{{ t('New') }}</div>
-    <button type="button" class="sheet-row" :disabled="quickBusy" @click="sheetAction(() => quickSession(contextWorkspace?.id, 'claude_code'))"><TabIcon kind="agent_chat" :metadata="{ provider: 'claude_code' }" :size="18" /><span class="sheet-row-copy"><strong>{{ t('New Claude Code session') }}</strong></span></button>
-    <button type="button" class="sheet-row" :disabled="quickBusy" @click="sheetAction(() => quickSession(contextWorkspace?.id, 'codex'))"><TabIcon kind="agent_chat" :metadata="{ provider: 'codex' }" :size="18" /><span class="sheet-row-copy"><strong>{{ t('New Codex session') }}</strong></span></button>
+    <button v-for="client in AGENT_CLIENTS" :key="client" type="button" class="sheet-row" :disabled="quickBusy" @click="sheetAction(() => quickSession(contextWorkspace?.id, client))"><TabIcon kind="agent_chat" :metadata="{ provider: client }" :size="18" /><span class="sheet-row-copy"><strong>{{ t('New {provider} session', { provider: providerLabel(client) }) }}</strong></span></button>
     <button type="button" class="sheet-row" :disabled="quickBusy" @click="sheetAction(() => quickSession(contextWorkspace?.id, 'terminal'))"><TabIcon kind="terminal" :size="18" /><span class="sheet-row-copy"><strong>{{ t('New terminal') }}</strong></span></button>
     <button type="button" class="sheet-row" @click="sheetAction(() => newSession(contextWorkspace?.id))"><Icon name="settings" :size="20" /><span class="sheet-row-copy"><strong>{{ t('New session with options…') }}</strong></span></button>
     <template v-if="contextWorkspace">

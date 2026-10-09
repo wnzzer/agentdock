@@ -11,6 +11,7 @@ import { useI18n } from "../i18n";
 import Icon from "./Icon.vue";
 import ProviderIcon from "./ProviderIcon.vue";
 import { lastQuickProvider } from "./quick-session";
+import { AGENT_CLIENTS } from "./clients";
 import SidebarSessionRow from "./SidebarSessionRow.vue";
 
 const props = withDefaults(defineProps<{
@@ -174,8 +175,7 @@ defineExpose({ revealSession });
         </div>
         <div v-if="openMenuId === group.workspace.id" :id="`workspace-menu-${group.workspace.id}`" class="workspace-more-panel">
           <div class="workspace-menu-label">{{ t('New') }}</div>
-          <button @click="quick(group.workspace.id, 'claude_code')"><ProviderIcon provider="claude_code" :size="13" />{{ t('New Claude Code session') }}</button>
-          <button @click="quick(group.workspace.id, 'codex')"><ProviderIcon provider="codex" :size="13" />{{ t('New Codex session') }}</button>
+          <button v-for="client in AGENT_CLIENTS" :key="client" @click="quick(group.workspace.id, client)"><ProviderIcon :provider="client" :size="13" />{{ t('New {provider} session', { provider: providerLabel(client) }) }}</button>
           <button @click="quick(group.workspace.id, 'terminal')"><Icon name="terminal" :size="13" />{{ t('New terminal') }}</button>
           <button v-if="ephemeralSupported" class="workspace-scratch-action" :title="t('Discarded when its window is closed, and not kept in the session list.')" @click="quick(group.workspace.id, quickProvider, true)"><Icon name="clock" :size="13" />{{ t('New temporary window') }}</button>
           <button @click="openMenuId = undefined; emit('newSession', group.workspace.id)"><Icon name="settings" :size="13" />{{ t('New session… (more options)') }}</button>

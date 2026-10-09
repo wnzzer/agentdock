@@ -590,8 +590,6 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Check again in {n} min": "{n} 分钟后可再查",
   "The official endpoint allows about one check per window. Waiting avoids spending the next allowance.": "官方接口每个窗口大约只允许查询一次，等待可避免提前用掉下一次机会。",
   "New {provider} session in {workspace}": "在 {workspace} 新建 {provider} 会话",
-  "New Claude Code session": "新建 Claude Code 会话",
-  "New Codex session": "新建 Codex 会话",
   "New temporary window": "新建临时窗口",
   "New session… (more options)": "新建会话…（更多选项）",
   "Locate {session} in canvas": "在工作区中定位 {session}",

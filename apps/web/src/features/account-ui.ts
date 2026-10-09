@@ -1,4 +1,5 @@
 import { randomId } from "./random-id";
+import { clientInfo } from "./clients";
 import type { AgentProviderKind } from '@agentdock/protocol';
 
 export type AccountWindowKind = 'five_hour' | 'weekly';
@@ -93,7 +94,7 @@ export function accountResetDate(value?: string | number): Date | undefined {
 export function accountLoginUrl(account: Pick<AccountView, 'provider' | 'login'>): string | undefined {
   if (!account.login?.url) return undefined;
   try {
-    const url = new URL(account.login.url), domains = account.provider === 'codex' ? ['openai.com', 'chatgpt.com'] : ['claude.ai', 'anthropic.com'];
+    const url = new URL(account.login.url), domains = clientInfo(account.provider).account.loginDomains;
     return url.protocol === 'https:' && !url.username && !url.password && domains.some(domain => url.hostname === domain || url.hostname.endsWith('.' + domain)) ? url.href : undefined;
   } catch { return undefined; }
 }

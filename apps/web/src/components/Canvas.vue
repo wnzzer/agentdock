@@ -19,6 +19,7 @@ import LayoutNode from "./LayoutNode.vue";
 import Icon from "../features/Icon.vue";
 import { activatePane, applyPreset, closePane as removePane, containerId, createPane, dockPane, findNode, findNodes, flattenPanes, projectLayout, replacePane, resizeSplit, restoreCollapsed, selectionGroups, splitPane, updatePane, validateLayout, type DockPosition, type LayoutPreset } from "../layout/layout-engine";
 import { useI18n } from "../i18n";
+import { DEFAULT_CLIENT } from "../features/clients";
 import { SWIPE_EDGE_PX, SWIPE_LONG_PRESS_MS, swipeAxis, swipeBlockedAt, swipeOffset, swipeOutcome, type SwipeTarget } from "../features/pane-swipe";
 const { t } = useI18n();
 
@@ -310,7 +311,7 @@ onBeforeUnmount(() => {
       <div v-if="compactPane" ref="compactContent" :key="compactPane.id" :id="`dock-panel-${compactPane.id}`" class="dock-compact-content" :class="enterFrom && `enter-from-${enterFrom}`" :data-kind="compactPane.kind" @animationend="enterFrom = null"><slot name="pane" :pane="compactPane" /></div>
       <div v-else class="dock-compact-empty">
         <span class="dock-empty-symbol"><Icon name="spark" :size="28" /></span><strong>{{ t('A little room for your next idea') }}</strong>
-        <button type="button" class="primary-button" @click="emit('create-session', working.root.id, 'claude_code', false)"><Icon name="plus" :size="15" />{{ t('New session') }}</button>
+        <button type="button" class="primary-button" @click="emit('create-session', working.root.id, DEFAULT_CLIENT, false)"><Icon name="plus" :size="15" />{{ t('New session') }}</button>
       </div>
     </div>
     <div v-else ref="stage" class="dock-canvas-stage">

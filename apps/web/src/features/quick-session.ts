@@ -1,18 +1,18 @@
 import type { EndpointProfile, ProviderKind } from "@agentdock/protocol";
+import { DEFAULT_CLIENT, PROVIDER_KINDS, providerLabel } from "./clients";
 import { PROFILE_CHOICE_REQUIRED, preferredProfileSelection } from "./profile-preferences";
 
 export type QuickProvider = ProviderKind;
-const PROVIDERS: readonly QuickProvider[] = ["claude_code", "codex", "terminal"];
 const KEY = "agentdock.quick-provider.v1";
 type PreferenceStorage = Pick<Storage, "getItem" | "setItem">;
 
 function browserStorage(): PreferenceStorage | undefined {
   try { return typeof window === "undefined" ? undefined : window.localStorage; } catch { return undefined; }
 }
-const DEFAULT: QuickProvider = "claude_code";
+const DEFAULT: QuickProvider = DEFAULT_CLIENT;
 /** Only covers a storage that is unavailable or throwing; a readable storage is always authoritative. */
 const unstored = { value: undefined as QuickProvider | undefined };
-const valid = (value: unknown): QuickProvider | undefined => PROVIDERS.find(provider => provider === value);
+const valid = (value: unknown): QuickProvider | undefined => PROVIDER_KINDS.find(provider => provider === value);
 
 /** The provider the plain "+" will create, so its tooltip can say so up front. */
 export function lastQuickProvider(storage?: PreferenceStorage): QuickProvider {
@@ -66,10 +66,9 @@ export function planQuickSession(provider: QuickProvider, profiles: EndpointProf
   };
 }
 
-const LABELS: Record<QuickProvider, string> = { claude_code: "Claude Code", codex: "Codex", terminal: "Terminal" };
 /** A numbered name keeps a row of quick sessions distinguishable in the sidebar. */
 export function quickTitle(provider: QuickProvider, ephemeral: boolean, existing: readonly string[]): string {
-  const base = ephemeral ? `${LABELS[provider]} · scratch` : LABELS[provider];
+  const base = ephemeral ? `${providerLabel(provider)} · scratch` : providerLabel(provider);
   if (!existing.includes(base)) return base;
   for (let suffix = 2; suffix < 1000; suffix++) {
     const candidate = `${base} ${suffix}`;

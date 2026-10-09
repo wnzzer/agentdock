@@ -1,4 +1,5 @@
 import type { ProviderKind, Session, Workspace } from "@agentdock/protocol";
+import { providerLabel } from "./clients";
 import { fuzzyScore } from "./fuzzy-search";
 
 export type SessionArchiveFilter = "current" | "archived" | "all";
@@ -20,8 +21,6 @@ export interface SessionListEntry {
   session: Session;
   workspace?: Workspace;
 }
-
-const providerNames: Record<ProviderKind, string> = { claude_code: "Claude Code", codex: "Codex", terminal: "Terminal" };
 
 export function isSessionArchived(session: Pick<Session, "archived_at">): boolean {
   return Boolean(session.archived_at);
@@ -50,7 +49,7 @@ export function filterSessionList(sessions: readonly Session[], workspaces: read
     if (options.status && session.status !== options.status) return;
     const workspace = workspaceById.get(session.workspace_id);
     const score = fuzzyScore(options.query ?? "", [
-      session.title, session.id, providerNames[session.provider], session.provider,
+      session.title, session.id, providerLabel(session.provider), session.provider,
       workspace?.name, workspace?.root_path, session.workspace_id, session.status,
       options.statusLabels?.[session.status],
     ].filter(Boolean).join(" "));

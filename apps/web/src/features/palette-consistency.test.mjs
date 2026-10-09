@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { TAB_ICON_PALETTE } from './tab-icons.ts';
+import { AGENT_CLIENTS, clientInfo, clientTone } from './clients.ts';
 
 const css = file => {
   const source = readFileSync(new URL(file, import.meta.url), 'utf8');
@@ -24,13 +25,16 @@ test('provider orange and purple stay consistent with the existing colored tabs'
   // The provider colours are tokens, so a theme can retint them; the light
   // values must stay the ones the coloured tabs use.
   const shell = readFileSync(new URL('../styles.css', import.meta.url), 'utf8').toLowerCase();
-  for (const [provider, token] of [['claude_code', '--claude'], ['codex', '--codex']]) {
+  for (const [provider, token] of AGENT_CLIENTS.map(id => [id, '--' + clientInfo(id).colorToken])) {
     assert.ok(shell.includes(`${token}: ${TAB_ICON_PALETTE[provider].color.toLowerCase()};`), `${token} matches the ${provider} tab`);
     assert.ok(shell.includes(`${token}-soft: ${TAB_ICON_PALETTE[provider].background.toLowerCase()};`), `${token}-soft matches the ${provider} tab`);
   }
-  for (const file of ['./ChatSessionPane.vue', './AccountsDialog.vue', './ChatPreview.vue']) {
+  // Each surface tints a mark through the client's own token (clients.ts), set inline.
+  assert.deepEqual(clientTone('claude_code'), { '--client-ink': 'var(--claude)', '--client-soft': 'var(--claude-soft)' });
+  assert.deepEqual(clientTone('codex'), { '--client-ink': 'var(--codex)', '--client-soft': 'var(--codex-soft)' });
+  for (const file of ['./ChatSessionPane.vue', './AccountsDialog.vue', './ChatPreview.vue', './PreferencesPanel.vue', './AgentClientsPanel.vue']) {
     const style = css(file);
-    for (const token of ['var(--claude)', 'var(--claude-soft)', 'var(--codex)', 'var(--codex-soft)']) assert.ok(style.includes(token), `${file} uses ${token}`);
+    for (const token of ['var(--client-ink)', 'var(--client-soft)']) assert.ok(style.includes(token), `${file} uses ${token}`);
   }
 });
 

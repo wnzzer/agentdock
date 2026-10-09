@@ -1,7 +1,8 @@
 import type { EnvironmentOverrides, EnvironmentValue } from "@agentdock/protocol";
+import { AGENT_CLIENTS, clientInfo } from "./clients";
 
 export interface EnvironmentRow { id: string; name: string; kind: EnvironmentValue["kind"]; value: string }
-const RESERVED = new Set(["HOME", "USERPROFILE", "PWD", "OLDPWD", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "CLAUDECODE"]);
+const RESERVED = new Set(["HOME", "USERPROFILE", "PWD", "OLDPWD", ...AGENT_CLIENTS.flatMap(id => clientInfo(id).reservedEnvironment)]);
 let nextRow = 0;
 export function newEnvironmentRow(): EnvironmentRow { return { id: "draft-" + ++nextRow, name: "", kind: "literal", value: "" }; }
 export function environmentRows(values: EnvironmentOverrides = {}): EnvironmentRow[] {

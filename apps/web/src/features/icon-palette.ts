@@ -1,3 +1,5 @@
+import { agentClient } from "./clients";
+
 /** Shared foreground tokens for the light UI. Keep provider identity consistent
  * in navigation, tabs and menus; solid buttons can opt into inherited color. */
 export const ICON_PALETTE = {
@@ -24,5 +26,5 @@ export function iconColor(name: string): string {
 }
 
 export function providerColor(provider: string): string {
-  return provider === "claude_code" ? ICON_PALETTE.orange : provider === "codex" ? ICON_PALETTE.purple : ICON_PALETTE.blue;
+  return ICON_PALETTE[agentClient(provider)?.iconTone ?? "blue"];
 }

@@ -1,4 +1,5 @@
 import type { PaneNode, Session, Workspace } from "@agentdock/protocol";
+import { providerLabel } from "./clients";
 import { fuzzyScore } from "./fuzzy-search";
 import { isSessionArchived } from "./session-list";
 
@@ -34,7 +35,6 @@ export function emptyWorkspaceGroupPreferences(): WorkspaceGroupPreferences {
 }
 
 const active = (session: Session) => ["starting", "running", "waiting"].includes(session.status);
-const providerNames = { claude_code: "Claude Code", codex: "Codex", terminal: "Terminal" };
 
 /** Two levels only: known workspaces and their own sessions. Search stays entirely local. */
 export function groupWorkspaces(workspaces: readonly Workspace[], sessions: readonly Session[], options: WorkspaceGroupOptions = {}): WorkspaceGroup[] {
@@ -62,7 +62,7 @@ export function groupWorkspaces(workspaces: readonly Workspace[], sessions: read
     const matchesWorkspace = workspaceScore !== null;
     const matches = allSessions.map((session, sessionIndex) => ({
       session, index: sessionIndex,
-      score: fuzzyScore(query, `${session.title} ${session.id} ${providerNames[session.provider]} ${session.provider} ${workspace.name} ${workspace.root_path} ${session.status}`),
+      score: fuzzyScore(query, `${session.title} ${session.id} ${providerLabel(session.provider)} ${session.provider} ${workspace.name} ${workspace.root_path} ${session.status}`),
     })).filter((item): item is { session: Session; index: number; score: number } => item.score !== null)
       .sort((a, b) => a.score - b.score || a.index - b.index);
     const visibleSessions = matchesWorkspace ? allSessions.slice() : matches.map(item => item.session);

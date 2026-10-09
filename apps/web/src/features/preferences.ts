@@ -1,6 +1,7 @@
 import { ref } from "vue";
-import type { ProviderKind } from "@agentdock/protocol";
+import type { AgentProviderKind, ProviderKind } from "@agentdock/protocol";
 import { json, request } from "./api";
+import { AGENT_CLIENTS, isAgentClient } from "./clients";
 
 /**
  * What a new session starts with, per provider. Kept by the server, so every
@@ -14,16 +15,11 @@ export interface ProviderPreference { endpoint_profile_id?: string | null; effor
  * the status bar, the system page and the recorded history. Absent means on
  * for both.
  */
-export interface Preferences { claude_code: ProviderPreference; codex: ProviderPreference; agent_tools?: boolean; resource_monitoring?: boolean }
-export type PreferenceProvider = "claude_code" | "codex";
-
-export const PERMISSION_CHOICES: Record<PreferenceProvider, readonly string[]> = {
-  claude_code: ["ask", "plan", "accept_edits", "danger"],
-  codex: ["ask", "danger"],
-};
+export type Preferences = Record<AgentProviderKind, ProviderPreference> & { agent_tools?: boolean; resource_monitoring?: boolean };
+export type PreferenceProvider = AgentProviderKind;
 
 /** The one copy the page reads; loaded once and replaced on save. */
-export const preferences = ref<Preferences>({ claude_code: {}, codex: {} });
+export const preferences = ref<Preferences>(Object.fromEntries(AGENT_CLIENTS.map(id => [id, {}])) as Preferences);
 let loading: Promise<Preferences> | undefined;
 
 export function loadPreferences(force = false): Promise<Preferences> {
@@ -43,5 +39,5 @@ export async function savePreferences(next: Preferences): Promise<Preferences> {
 }
 
 export function preferenceFor(provider: ProviderKind, source: Preferences = preferences.value): ProviderPreference | undefined {
-  return provider === "claude_code" || provider === "codex" ? source[provider] : undefined;
+  return isAgentClient(provider) ? source[provider] : undefined;
 }
