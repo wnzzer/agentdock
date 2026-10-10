@@ -21,9 +21,12 @@ use std::{
 const EMBEDDED: &str = include_str!("../../../data/prices.json");
 const SCHEMA_VERSION: u32 = 1;
 /// Tried in order: a CDN, the GitCode mirror for mainland China, GitHub itself.
+/// GitCode's own `/raw/` pages answer with its web app (HTML) rather than the
+/// file, so the mirror is read through its API, which serves the bytes as they
+/// are and without signing in.
 const MIRRORS: [&str; 3] = [
     "https://cdn.jsdelivr.net/gh/wnzzer/agentdock@main/data/prices.json",
-    "https://gitcode.com/wnzzer/agentdock/raw/main/data/prices.json",
+    "https://api.gitcode.com/api/v5/repos/wnzzer/agentdock/raw/data%2Fprices.json?ref=main",
     "https://raw.githubusercontent.com/wnzzer/agentdock/main/data/prices.json",
 ];
 const REFRESH_AFTER: Duration = Duration::from_secs(24 * 3600);
