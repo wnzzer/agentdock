@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import Icon from "./Icon.vue";
 import { useI18n } from "../i18n";
+import { backLabel } from "./page-back";
 
 /**
  * A page over the canvas: a title, a way back, and a body that scrolls on its
@@ -12,6 +14,10 @@ defineProps<{ title: string; subtitle?: string }>();
 const emit = defineEmits<{ back: [] }>();
 const { t } = useI18n();
 const page = ref<HTMLElement>();
+const router = useRouter();
+// The history entry is already this page's when it mounts; `back` names the one before.
+const previous = typeof window === "undefined" ? undefined : window.history.state?.back;
+const back = t(backLabel(typeof previous === "string" && router ? router.resolve(previous).name : undefined));
 function onKey(event: KeyboardEvent) {
   if (event.key !== "Escape" || event.defaultPrevented) return;
   if (document.querySelector(".modal-backdrop, .bottom-sheet-backdrop, details[open]")) return;
@@ -24,7 +30,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey));
 <template>
   <section ref="page" class="page-shell" tabindex="-1" :aria-label="title">
     <header class="page-header">
-      <button type="button" class="page-back" :title="t('Back to workspace') + ' · Esc'" @click="emit('back')"><Icon name="back" :size="16" /><span>{{ t('Back to workspace') }}</span></button>
+      <button type="button" class="page-back" :title="back + ' · Esc'" @click="emit('back')"><Icon name="back" :size="16" /><span>{{ back }}</span></button>
       <div class="page-heading"><h1>{{ title }}</h1><p v-if="subtitle">{{ subtitle }}</p></div>
       <div class="page-actions"><slot name="actions" /></div>
     </header>
