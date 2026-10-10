@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-09T03:16:02Z",
+  "updatedAt": "2026-10-10T09:49:58Z",
   "source": "LiteLLM model_prices_and_context_window.json, with data/prices-overrides.json",
   "models": {
     "claude-3-5-haiku": {
@@ -169,7 +169,7 @@
       "input": 3,
       "output": 15,
       "cacheRead": 0.3,
-      "contextWindow": 1000000,
+      "contextWindow": 200000,
       "maxOutput": 64000,
       "cacheWrite": 3.75,
       "cacheWrite1h": 6
@@ -615,6 +615,11 @@
       "contextWindow": 400000,
       "maxOutput": 128000,
       "cacheWrite": 15.625
+    },
+    "gpt-rosalind-discovery": {
+      "input": 5,
+      "output": 25,
+      "cacheRead": 0.5
     },
     "gpt-rosalind-research": {
       "input": 5,
