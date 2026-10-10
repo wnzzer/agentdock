@@ -102,7 +102,9 @@ test('run information opens as a read-only modal for the bound session without f
       assert.match(dialog, /aria-label="Run information"/);
       assert.match(dialog, new RegExp(`data-session-id="run-info-${chosenView}"`));
       assert.match(dialog, new RegExp(`native-id-${chosenView}`));
-      assert.match(dialog, /Provider session ID/);
+      assert.match(dialog, /AgentDock session ID/);
+      assert.match(dialog, /(Claude Code|Codex|Pi) session ID/);
+      assert.match(dialog, new RegExp(`agentdock resume run-info-${chosenView}`));
       assert.match(dialog, /workspace-fixture/);
       assert.match(dialog, /Configuration revision/);
       assert.match(dialog, /aria-label="Close Run information"/, 'the information panel has a close action');

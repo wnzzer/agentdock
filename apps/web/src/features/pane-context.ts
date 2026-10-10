@@ -1,5 +1,5 @@
 import type { LayoutDocument, LayoutNode, PaneNode, Session, Workspace } from "@agentdock/protocol";
-import { closePane, flattenPanes, restoreCollapsed, validateLayout } from "../layout/layout-engine";
+import { closePane, flattenPanes, restoreCollapsed, updatePane, validateLayout } from "../layout/layout-engine";
 import { isEphemeralSession } from "./session-list";
 
 export function paneString(pane: PaneNode, key: string): string | undefined {
@@ -68,18 +68,30 @@ export function ephemeralSessionIds(sessions: readonly Session[]): string[] {
   return sessions.filter(isEphemeralSession).map(session => session.id);
 }
 /**
- * The persisted copy of a layout. A temporary window's record is discarded with
- * its pane, so storing the pane would resurrect a view whose session is gone.
- * The live in-memory layout keeps the pane; only what leaves this page is trimmed.
+ * The persisted copy of a layout, with each temporary window's pane marked.
+ *
+ * A temporary window stays open across a reload: its session lives on until
+ * its tab is closed (or the server restarts and discards it). Leaving the pane
+ * out instead lost the only way to close it, and left the session running
+ * unseen. The mark lets a later load drop the pane once its session is gone
+ * (withoutDiscardedPanes), rather than reopen a view of nothing.
  */
-export function withoutEphemeralPanes(document: LayoutDocument, sessions: readonly Session[]): LayoutDocument {
+export function markEphemeralPanes(document: LayoutDocument, sessions: readonly Session[]): LayoutDocument {
   const ids = new Set(ephemeralSessionIds(sessions));
   if (!ids.size) return document;
-  const doomed = flattenPanes(document.root).filter(pane => { const id = paneString(pane, "session_id"); return !!id && ids.has(id); });
-  if (!doomed.length) return document;
+  const marked = flattenPanes(document.root).filter(pane => { const id = paneString(pane, "session_id"); return !!id && ids.has(id) && pane.metadata?.ephemeral !== true; });
+  if (!marked.length) return document;
   let root = document.root;
-  for (const pane of doomed) root = closePane(root, pane.id);
+  for (const pane of marked) root = updatePane(root, { ...pane, metadata: { ...pane.metadata, ephemeral: true } });
   return { ...document, root };
+}
+
+/** `root` without the panes of temporary windows whose session was discarded. */
+export function withoutDiscardedPanes(root: LayoutNode, sessions: readonly Session[]): LayoutNode {
+  const known = new Set(sessions.map(session => session.id));
+  const gone = flattenPanes(root).filter(pane => { const id = paneString(pane, "session_id"); return pane.metadata?.ephemeral === true && !!id && !known.has(id); });
+  for (const pane of gone) root = closePane(root, pane.id);
+  return root;
 }
 export function acceptsScopedPane(pane: PaneNode, workspaces: Workspace[], sessions: Session[]): boolean {
   if (!paneWorkspace(pane, workspaces, sessions)) return false;

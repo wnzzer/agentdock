@@ -4,6 +4,8 @@ pub(super) use tower::ServiceExt;
 mod archive_tests;
 #[path = "conversation_api_tests.rs"]
 mod conversation_tests;
+#[path = "launch_api_tests.rs"]
+mod launch_tests;
 use axum::{
     body::{Body, to_bytes},
     http::{Request, header},
@@ -489,7 +491,7 @@ async fn every_client_launch_carries_agentdock_tools_unless_turned_off() {
         .store
         .create_session(workspace.id, ProviderKind::ClaudeCode, "claude")
         .unwrap();
-    let spec = providers::build(&f.state, &claude, cwd.clone()).unwrap();
+    let spec = launch::build(&f.state, &claude, cwd.clone()).unwrap();
     let token = spec.env["AGENTDOCK_AGENT_TOKEN"].clone();
     let config = spec
         .args
@@ -514,7 +516,7 @@ async fn every_client_launch_carries_agentdock_tools_unless_turned_off() {
         );
     }
     // A relaunch replaces the token; the old one names no one.
-    let again = providers::build(&f.state, &claude, cwd.clone()).unwrap();
+    let again = launch::build(&f.state, &claude, cwd.clone()).unwrap();
     assert_ne!(again.env["AGENTDOCK_AGENT_TOKEN"], token);
 
     let codex = f
@@ -522,7 +524,7 @@ async fn every_client_launch_carries_agentdock_tools_unless_turned_off() {
         .store
         .create_session(workspace.id, ProviderKind::Codex, "codex")
         .unwrap();
-    let spec = providers::build(&f.state, &codex, cwd.clone()).unwrap();
+    let spec = launch::build(&f.state, &codex, cwd.clone()).unwrap();
     assert_eq!(spec.args[0], "-c");
     assert_eq!(
         spec.args[1],
@@ -548,7 +550,7 @@ async fn every_client_launch_carries_agentdock_tools_unless_turned_off() {
         .store
         .create_session(workspace.id, ProviderKind::Terminal, "shell")
         .unwrap();
-    let spec = providers::build(&f.state, &terminal, cwd.clone()).unwrap();
+    let spec = launch::build(&f.state, &terminal, cwd.clone()).unwrap();
     assert!(spec.env.contains_key("AGENTDOCK_AGENT_TOKEN"));
     assert_eq!(without_agentdock(&spec.args), spec.args);
 
@@ -562,7 +564,7 @@ async fn every_client_launch_carries_agentdock_tools_unless_turned_off() {
     assert_eq!(status, StatusCode::OK);
     let (_, preferences) = call(f.app(), "GET", "/api/preferences", Value::Null).await;
     assert_eq!(preferences["agent_tools"], false);
-    let spec = providers::build(&f.state, &claude, cwd).unwrap();
+    let spec = launch::build(&f.state, &claude, cwd).unwrap();
     assert!(!spec.env.keys().any(|key| key.starts_with("AGENTDOCK_")));
     assert_eq!(without_agentdock(&spec.args), spec.args);
 }
@@ -617,7 +619,7 @@ async fn agent_tools_know_their_caller_and_a_session_token_opens_nothing_else() 
         .store
         .create_session(workspace.id, ProviderKind::Terminal, "worker")
         .unwrap();
-    let spec = providers::build(&f.state, &session, f.path.join("repo")).unwrap();
+    let spec = launch::build(&f.state, &session, f.path.join("repo")).unwrap();
     let token = spec.env["AGENTDOCK_AGENT_TOKEN"].clone();
     assert_eq!(spec.env["AGENTDOCK_SESSION_ID"], session.id.to_string());
     assert_eq!(spec.env["AGENTDOCK_URL"], "http://127.0.0.1:8787");
@@ -995,7 +997,7 @@ async fn a_session_token_can_neither_see_nor_answer_the_persons_questions() {
         .store
         .create_session(workspace.id, ProviderKind::Terminal, "asker")
         .unwrap();
-    let token = providers::build(&f.state, &session, f.path.join("repo"))
+    let token = launch::build(&f.state, &session, f.path.join("repo"))
         .unwrap()
         .env["AGENTDOCK_AGENT_TOKEN"]
         .clone();
@@ -1101,7 +1103,7 @@ async fn a_key_saved_in_agentdock_reaches_the_client_and_never_comes_back() {
     )
     .await;
     let session: Session = serde_json::from_value(created).unwrap();
-    let spec = providers::build(&f.state, &session, f.path.join("repo")).unwrap();
+    let spec = launch::build(&f.state, &session, f.path.join("repo")).unwrap();
     assert_eq!(
         spec.env.get("OPENAI_API_KEY").map(String::as_str),
         Some("sk-stored-value")
@@ -1115,7 +1117,7 @@ async fn a_key_saved_in_agentdock_reaches_the_client_and_never_comes_back() {
     )
     .await;
     assert_eq!((status, removed), (StatusCode::OK, json!({"removed":true})));
-    let error = providers::build(&f.state, &session, f.path.join("repo")).unwrap_err();
+    let error = launch::build(&f.state, &session, f.path.join("repo")).unwrap_err();
     assert!(error.message.contains(name), "{}", error.message);
 }
 
@@ -1149,7 +1151,7 @@ async fn a_pi_profile_becomes_a_provider_in_its_own_models_json() {
     )
     .await;
     let session: Session = serde_json::from_value(created).unwrap();
-    let spec = providers::build(&f.state, &session, f.path.join("repo")).unwrap();
+    let spec = launch::build(&f.state, &session, f.path.join("repo")).unwrap();
     let args = spec.args.join(" ");
     assert!(args.contains("--model agentdock/qwen-local"), "{args}");
     assert!(args.contains("--thinking high"), "{args}");
@@ -1196,7 +1198,7 @@ async fn a_pi_profile_becomes_a_provider_in_its_own_models_json() {
     )
     .await;
     let session: Session = serde_json::from_value(created).unwrap();
-    let spec = providers::build(&f.state, &session, f.path.join("repo")).unwrap();
+    let spec = launch::build(&f.state, &session, f.path.join("repo")).unwrap();
     let home = PathBuf::from(spec.env.get("PI_CODING_AGENT_DIR").unwrap());
     let config: Value =
         serde_json::from_str(&fs::read_to_string(home.join("models.json")).unwrap()).unwrap();
@@ -1261,7 +1263,7 @@ async fn profiles_validate_snapshot_and_session_states() {
         .get_session(s["id"].as_str().unwrap().parse().unwrap())
         .unwrap()
         .unwrap();
-    let spec = providers::build(&f.state, &record, f.path.join("repo")).unwrap();
+    let spec = launch::build(&f.state, &record, f.path.join("repo")).unwrap();
     let config =
         fs::read_to_string(PathBuf::from(&spec.env["CODEX_HOME"]).join("config.toml")).unwrap();
     let parsed: toml::Value = toml::from_str(&config).unwrap();
@@ -1323,7 +1325,7 @@ async fn claude_plan_mode_is_native_and_codex_does_not_fake_it() {
         .get_session(session["id"].as_str().unwrap().parse().unwrap())
         .unwrap()
         .unwrap();
-    let spec = providers::build(&f.state, &record, f.path.join("repo")).unwrap();
+    let spec = launch::build(&f.state, &record, f.path.join("repo")).unwrap();
     assert!(
         spec.args
             .windows(2)
@@ -1545,7 +1547,7 @@ async fn session_title_can_be_renamed_without_changing_identity_or_process_state
         .get_session(id.parse().unwrap())
         .unwrap()
         .unwrap();
-    let spec = providers::build(&f.state, &record, f.path.join("repo")).unwrap();
+    let spec = launch::build(&f.state, &record, f.path.join("repo")).unwrap();
     assert!(
         spec.args
             .windows(2)
@@ -1588,7 +1590,7 @@ async fn proxy_alias_and_session_model_override_are_snapshotted() {
         .get_session(s["id"].as_str().unwrap().parse().unwrap())
         .unwrap()
         .unwrap();
-    let spec = providers::build(&f.state, &record, f.path.join("repo")).unwrap();
+    let spec = launch::build(&f.state, &record, f.path.join("repo")).unwrap();
     assert!(
         spec.args
             .windows(2)
@@ -2201,7 +2203,7 @@ async fn opening_a_structured_session_in_a_terminal_resumes_its_own_configuratio
         "the reopen is named after the conversation it reopens"
     );
     let record: Session = serde_json::from_value(terminal).unwrap();
-    let spec = providers::build(&f.state, &record, cwd).unwrap();
+    let spec = launch::build(&f.state, &record, cwd).unwrap();
     assert_eq!(
         without_agentdock(&spec.args),
         vec!["--resume", "11111111-2222-3333-4444-555555555555"]
@@ -2464,7 +2466,7 @@ async fn imported_native_profiles_create_new_sessions_without_copying_or_overrid
                 "History imports keep their separate contract"
             );
             assert!(matches!(session.status, SessionStatus::Stopped));
-            let spec = providers::build(&f.state, &session, cwd.clone()).unwrap();
+            let spec = launch::build(&f.state, &session, cwd.clone()).unwrap();
             assert!(
                 without_agentdock(&spec.args).is_empty(),
                 "Do not inject login, endpoint, model, permission or resume flags"
@@ -2583,7 +2585,7 @@ async fn native_profile_rename_and_unlink_preserve_existing_session_reference() 
             .native_config
             .is_some()
     );
-    let spec = providers::build(
+    let spec = launch::build(
         &f.state,
         &stored,
         dunce::canonicalize(f.path.join("repo")).unwrap(),
@@ -2621,7 +2623,7 @@ async fn native_profile_rejects_missing_changed_or_wrong_provider_sources() {
     fs::create_dir(&replacement).unwrap();
     f.state.native_sources[0].config_dir = replacement;
     assert_eq!(
-        providers::build(&f.state, &session, cwd.clone())
+        launch::build(&f.state, &session, cwd.clone())
             .unwrap_err()
             .status,
         StatusCode::CONFLICT
@@ -2640,7 +2642,7 @@ async fn native_profile_rejects_missing_changed_or_wrong_provider_sources() {
     f.state.native_sources[0].config_dir = config.clone();
     f.state.native_sources[0].provider = ProviderKind::ClaudeCode;
     assert_eq!(
-        providers::build(&f.state, &session, cwd.clone())
+        launch::build(&f.state, &session, cwd.clone())
             .unwrap_err()
             .status,
         StatusCode::BAD_REQUEST
@@ -2648,7 +2650,7 @@ async fn native_profile_rejects_missing_changed_or_wrong_provider_sources() {
     f.state.native_sources[0].provider = ProviderKind::Codex;
     f.state.native_sources[0].config_dir = f.path.join("missing-native-source");
     assert_eq!(
-        providers::build(&f.state, &session, cwd.clone())
+        launch::build(&f.state, &session, cwd.clone())
             .unwrap_err()
             .status,
         StatusCode::BAD_REQUEST
@@ -2666,9 +2668,7 @@ async fn native_profile_rejects_missing_changed_or_wrong_provider_sources() {
     );
     f.state.native_sources.clear();
     assert_eq!(
-        providers::build(&f.state, &session, cwd)
-            .unwrap_err()
-            .status,
+        launch::build(&f.state, &session, cwd).unwrap_err().status,
         StatusCode::NOT_FOUND
     );
     assert!(config.join("history-fixture.json").exists());
@@ -2892,7 +2892,7 @@ async fn native_and_history_build_apply_environment_without_mutating_native_conf
             Some(profile.id),
         )
         .unwrap();
-    let spec = providers::build(&f.state, &session, f.path.join("repo")).unwrap();
+    let spec = launch::build(&f.state, &session, f.path.join("repo")).unwrap();
     assert_eq!(spec.env["NATIVE_TEST_MODE"], "template");
     assert_eq!(spec.env["CODEX_HOME"], config.to_str().unwrap());
     let environment: EnvironmentOverrides = [
@@ -2919,7 +2919,7 @@ async fn native_and_history_build_apply_environment_without_mutating_native_conf
         )
         .unwrap()
         .unwrap();
-    let spec = providers::build(&f.state, &session, f.path.join("repo")).unwrap();
+    let spec = launch::build(&f.state, &session, f.path.join("repo")).unwrap();
     assert_eq!(spec.env["NATIVE_TEST_MODE"], "history");
     assert!(spec.env_remove.contains(&"REMOVE_ME".into()));
     assert!(!spec.env_remove.contains(&"PATH".into()));
@@ -4019,7 +4019,7 @@ async fn a_session_can_have_the_agent_tools_on_or_off_whatever_the_preference() 
     // Off for this session, though the preference is on.
     let (_, view) = web("PUT", path.clone(), json!({"choice":false})).await;
     assert_eq!(view["enabled"], false);
-    let spec = providers::build(&f.state, &claude, cwd.clone()).unwrap();
+    let spec = launch::build(&f.state, &claude, cwd.clone()).unwrap();
     assert!(!equipped(&spec) && !spec.env.contains_key("AGENTDOCK_AGENT_TOKEN"));
 
     // On for this session, though the preference is off.
@@ -4032,14 +4032,14 @@ async fn a_session_can_have_the_agent_tools_on_or_off_whatever_the_preference() 
     let (_, view) = web("PUT", path.clone(), json!({"choice":true})).await;
     assert_eq!(view, json!({"choice":true,"default":false,"enabled":true}));
     assert!(equipped(
-        &providers::build(&f.state, &claude, cwd.clone()).unwrap()
+        &launch::build(&f.state, &claude, cwd.clone()).unwrap()
     ));
 
     // Back to following the preference.
     let (_, view) = web("PUT", path.clone(), json!({"choice":null})).await;
     assert_eq!(view["enabled"], false);
     assert!(!equipped(
-        &providers::build(&f.state, &claude, cwd.clone()).unwrap()
+        &launch::build(&f.state, &claude, cwd.clone()).unwrap()
     ));
 
     let (status, _) = web(
@@ -4052,10 +4052,8 @@ async fn a_session_can_have_the_agent_tools_on_or_off_whatever_the_preference() 
 
     // A session cannot switch its own tools: its token opens /api/agent/ only.
     web("PUT", path.clone(), json!({"choice":true})).await;
-    let token = providers::build(&f.state, &claude, cwd.clone())
-        .unwrap()
-        .env["AGENTDOCK_AGENT_TOKEN"]
-        .clone();
+    let token =
+        launch::build(&f.state, &claude, cwd.clone()).unwrap().env["AGENTDOCK_AGENT_TOKEN"].clone();
     f.state
         .runtime
         .start(

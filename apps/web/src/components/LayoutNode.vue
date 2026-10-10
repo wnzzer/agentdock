@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from "vue";
+import { computed, inject, nextTick, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import type { LayoutNode, LeafPaneKind, PaneNode, SplitDirection } from "@agentdock/protocol/layout";
 import type { ProviderKind } from "@agentdock/protocol";
 import { isPaneNode, normalizeRatio, snapRatio, SPLIT_GAP, type DockPosition } from "../layout/layout-engine";
@@ -7,6 +7,8 @@ import { useI18n } from "../i18n";
 import TabIcon from "../features/TabIcon.vue";
 import Icon from "../features/Icon.vue";
 import ContextMenu from "../features/ContextMenu.vue";
+import SessionCommonActions from "../features/SessionCommonActions.vue";
+import { SESSION_ACTIONS } from "../features/session-actions-context";
 import { sessionStatuses } from "../features/attention";
 import { DEFAULT_CLIENT, PROVIDER_KINDS, providerLabel } from "../features/clients";
 const { t } = useI18n();
@@ -42,7 +44,53 @@ function openTabMenu(event: MouseEvent, pane: PaneNode) {
   tabMenu.value = { pane, x: event.clientX, y: event.clientY };
 }
 function closeTabMenu() { tabMenu.value = null; }
+async function openSessionActions(pane: PaneNode) {
+  closeTabMenu();
+  select(pane);
+  await nextTick();
+  const menu = Array.from(document.querySelectorAll<HTMLDetailsElement>('details[data-session-menu-pane]'))
+    .find(element => element.dataset.sessionMenuPane === pane.id);
+  if (menu) {
+    menu.open = true;
+    await nextTick();
+    menu.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+  }
+}
+
+const sessionActions = inject(SESSION_ACTIONS, null);
+const menuSession = computed(() => { const id = tabMenu.value?.pane.metadata?.session_id; return typeof id === "string" ? sessionActions?.session(id) : undefined; });
+/**
+ * The bulk closes, in a submenu beside "Close multiple tabs": in the menu
+ * itself four "Close … tabs" lines read as a wall. Opened by hover, click or
+ * the right arrow; a short delay lets the pointer travel across to it. On a
+ * phone, where the menu is a bottom sheet, it opens inline below instead.
+ */
+const bulkOpen = ref(false), bulkTrigger = ref<HTMLButtonElement>(), bulkMenu = ref<HTMLElement>();
+const bulkPosition = ref({ left: 0, top: 0 });
+const bulkStyle = computed(() => ({ left: bulkPosition.value.left + "px", top: bulkPosition.value.top + "px" }));
+let bulkTimer: ReturnType<typeof setTimeout> | undefined;
+async function openBulk(focus: boolean) {
+  clearTimeout(bulkTimer);
+  const row = bulkTrigger.value?.getBoundingClientRect();
+  if (row) {
+    const width = 180, height = 4 * 32 + 12;
+    const left = row.right + 4 + width <= window.innerWidth - 8 ? row.right + 4 : row.left - 4 - width;
+    bulkPosition.value = { left: Math.max(4, left), top: Math.max(4, Math.min(row.top - 5, window.innerHeight - height - 8)) };
+  }
+  bulkOpen.value = true;
+  if (focus) { await nextTick(); bulkMenu.value?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus(); }
+}
+function keepBulk() { clearTimeout(bulkTimer); }
+function leaveBulk() { clearTimeout(bulkTimer); bulkTimer = setTimeout(() => { bulkOpen.value = false; }, 180); }
+function closeBulk(focusTrigger: boolean) { clearTimeout(bulkTimer); bulkOpen.value = false; if (focusTrigger) bulkTrigger.value?.focus(); }
+watch(tabMenu, () => closeBulk(false));
+onBeforeUnmount(() => clearTimeout(bulkTimer));
 const menuOthers = computed(() => tabMenu.value ? tabs.value.filter(pane => pane.id !== tabMenu.value!.pane.id) : []);
+const menuLeft = computed(() => {
+  const current = tabMenu.value; if (!current) return [];
+  const index = tabs.value.findIndex(pane => pane.id === current.pane.id);
+  return index < 0 ? [] : tabs.value.slice(0, index);
+});
 const menuRight = computed(() => {
   const current = tabMenu.value; if (!current) return [];
   const index = tabs.value.findIndex(pane => pane.id === current.pane.id);
@@ -259,7 +307,23 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
           <button class="dock-tab-close" type="button" :aria-label="t('Close {title} pane', { title: tabLabel(pane) })" :title="t(isEphemeral(pane) ? 'Close and discard this temporary session' : 'Close pane (session keeps running)')" @pointerdown.stop @click.stop="emit('close', pane.id)"><Icon name="close" :size="12" /></button>
         </div>
         <span v-if="!tabs.length" class="dock-empty-label">{{ t('Empty pane') }}</span>
-        <ContextMenu v-if="tabMenu" :x="tabMenu.x" :y="tabMenu.y" :label="t('Tab actions')" :width="180" @close="closeTabMenu"><button role="menuitem" @click="closePanes([tabMenu.pane])">{{ t('Close tab') }}</button><button role="menuitem" :disabled="!menuOthers.length" @click="closePanes(menuOthers)">{{ t('Close other tabs') }}</button><button role="menuitem" :disabled="!menuRight.length" @click="closePanes(menuRight)">{{ t('Close tabs to the right') }}</button><button role="menuitem" @click="closePanes(tabs)">{{ t('Close all tabs') }}</button><hr/><button role="menuitem" @click="closeTabMenu(); emit('maximize', tabMenu!.pane.id)">{{ t(maximized === tabMenu.pane.id ? 'Restore layout' : 'Maximize pane') }}</button><button role="menuitem" @click="closeTabMenu(); emit('split', tabMenu!.pane.id, 'horizontal')">{{ t('Split side by side') }}</button><button role="menuitem" @click="closeTabMenu(); emit('split', tabMenu!.pane.id, 'vertical')">{{ t('Split top and bottom') }}</button></ContextMenu>
+        <ContextMenu v-if="tabMenu" :x="tabMenu.x" :y="tabMenu.y" :label="t('Tab actions')" :width="200" @close="closeTabMenu">
+          <template v-if="menuSession">
+            <div class="context-menu-label tab-menu-title">{{ menuSession.title }}</div>
+            <SessionCommonActions :session="menuSession" :keep-busy="sessionActions!.keepBusy(menuSession.id)" :close-menu="closeTabMenu" @rename="sessionActions!.rename(menuSession!.id)" @environment="sessionActions!.environment(menuSession!.id)" @keep="sessionActions!.keep(menuSession!.id)" @info="sessionActions!.info(menuSession!.id)" />
+            <button role="menuitem" @click="openSessionActions(tabMenu.pane)"><Icon name="more" :size="14" />{{ t('More session actions') }}</button>
+            <hr/>
+          </template>
+          <button v-else-if="tabMenu.pane.metadata?.session_id" role="menuitem" @click="openSessionActions(tabMenu.pane)"><Icon name="more" :size="14" />{{ t('Session actions') }}</button>
+          <button role="menuitem" @click="closePanes([tabMenu.pane])"><Icon name="close" :size="14" />{{ t('Close tab') }}</button>
+          <button ref="bulkTrigger" role="menuitem" class="tab-menu-bulk-trigger" aria-haspopup="menu" :aria-expanded="bulkOpen" @click="openBulk(true)" @mouseenter="openBulk(false)" @mouseleave="leaveBulk" @keydown.right.prevent="openBulk(true)"><Icon name="layout" :size="14" />{{ t('Close multiple tabs') }}<Icon name="chevron" :size="13" class="tab-menu-chevron" /></button>
+          <nav v-if="bulkOpen" ref="bulkMenu" class="tab-menu-flyout" role="menu" :aria-label="t('Close multiple tabs')" :style="bulkStyle" @mouseenter="keepBulk" @mouseleave="leaveBulk" @keydown.left.stop.prevent="closeBulk(true)" @keydown.esc.stop.prevent="closeBulk(true)">
+            <button role="menuitem" :disabled="!menuOthers.length" @click="closePanes(menuOthers)">{{ t('Close other tabs') }}</button>
+            <button role="menuitem" :disabled="!menuLeft.length" @click="closePanes(menuLeft)">{{ t('Close tabs to the left') }}</button>
+            <button role="menuitem" :disabled="!menuRight.length" @click="closePanes(menuRight)">{{ t('Close tabs to the right') }}</button>
+            <button role="menuitem" @click="closePanes(tabs)">{{ t('Close all tabs') }}</button>
+          </nav>
+        </ContextMenu>
       </div>
       <div class="dock-actions" @pointerdown.stop>
         <button v-if="node.type === 'stack' && node.collapsedFrom" type="button" class="dock-action dock-adaptive" :title="t('Reset folded split to 1:1; expands when space allows')" :aria-label="t('Restore folded split ratio')" @click="emit('resize', targetId, 0.5, true)"><Icon name="restore" :size="13" /></button>
@@ -320,20 +384,30 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
 .dock-pane.is-located { border-color:var(--ok);box-shadow:inset 0 0 0 1px #46b29d,0 0 0 1px #b6e3dd60;animation:dock-locate 1.4s ease-out; }.dock-pane.is-located .dock-tab.is-active { background:var(--accent-soft); }
 @keyframes dock-locate { from { box-shadow:inset 0 0 0 3px #70cabb,0 0 0 1px #b6e3dd60; } to { box-shadow:inset 0 0 0 1px #46b29d,0 0 0 1px #b6e3dd60; } }
 @media(prefers-reduced-motion:reduce) { .dock-pane.is-located { animation:none; } }
-.dock-header { display:flex;align-items:center;gap:3px;min-width:0;height:39px;min-height:39px;padding:0 5px 0 0;background:var(--sunken);border-bottom:1px solid var(--fill-hover); }
+.dock-header { display:flex;align-items:center;gap:3px;min-width:0;height:33px;min-height:33px;padding:0 5px 0 0;background:var(--sunken);border-bottom:1px solid var(--fill-hover); }
 .dock-tabs { display:flex;align-items:stretch;flex:1;min-width:0;height:100%;overflow-x:auto; }
 /* Tabs are reached by clicking, not by dragging a bar, so this one only has to
    show that more exist. A full-width scrollbar would take a quarter of the strip. */
 .dock-tabs::-webkit-scrollbar { height: 5px; }
 .dock-tabs::-webkit-scrollbar-thumb { border-width: 1px; }
-.dock-tab { display:flex;align-items:center;gap:7px;max-width:210px;min-width:85px;flex-shrink:0;padding:0 8px 0 11px;color:var(--muted);font-size:var(--text-xs);cursor:grab;border-bottom:2px solid transparent;outline:none;user-select:none; }
-.dock-tab.is-active { max-width:360px;color:var(--ink);background:var(--surface);border-bottom-color:var(--focus); }
+.dock-tab { display:flex;align-items:center;gap:5px;max-width:180px;min-width:72px;flex-shrink:0;padding:0 6px 0 8px;color:var(--muted);font-size:var(--text-xs);cursor:grab;border-bottom:2px solid transparent;outline:none;user-select:none; }
+.dock-tab.is-active { max-width:260px;color:var(--ink);background:var(--surface);border-bottom-color:var(--focus); }
 .dock-tab:focus-visible { box-shadow:inset 0 0 0 2px #53b9b0; }
 .dock-tab-title { min-width:48px;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600; }
 .dock-tab-branch { display:inline-flex;align-items:center;gap:3px;max-width:96px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;font-size:var(--text-xs);border-radius:var(--radius-xs);padding:1px 4px;background:var(--fill);color:var(--ink-soft); }
 .dock-tab-workspace { max-width:80px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;font-size:var(--text-xs);border-radius:var(--radius-xs);padding:1px 4px;background:var(--ok-soft);color:var(--muted); }
 .dock-tab.is-ephemeral { border-bottom-style:dashed; }.dock-tab.is-ephemeral.is-active { border-bottom-color:var(--violet); }
 .dock-tab-ephemeral { flex-shrink:0;width:5px;height:5px;margin-left:-3px;border-radius:50%;background:var(--violet);box-shadow:0 0 0 2px #efeaf8; }
+.tab-menu-bulk-trigger[aria-expanded="true"]{background:var(--fill);color:var(--ink)}
+.tab-menu-chevron{margin-left:auto;color:var(--faint)!important}
+/* Looks like .context-menu, without its phone bottom-sheet rules (styles.css). */
+.tab-menu-flyout{position:fixed;z-index:71;min-width:180px;padding:5px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md);box-shadow:var(--shadow-lg)}
+.tab-menu-flyout>button{display:flex;align-items:center;width:100%;min-height:30px;padding:6px 10px;border:0;border-radius:var(--radius-sm);background:none;text-align:left;font-size:var(--text-sm);color:var(--ink-soft);white-space:nowrap;cursor:pointer}
+.tab-menu-flyout>button:hover:not(:disabled),.tab-menu-flyout>button:focus-visible{background:var(--fill);color:var(--ink);outline:none}
+.tab-menu-flyout>button:disabled{opacity:.4;cursor:not-allowed}
+@media(max-width:760px){.tab-menu-flyout{position:static;min-width:0;padding:0 0 0 22px;border:0;box-shadow:none;background:none}}
+@media(pointer:coarse){.tab-menu-flyout>button{min-height:44px}}
+.tab-menu-title{overflow:hidden;max-width:240px;text-overflow:ellipsis;white-space:nowrap}
 .dock-tab-session-actions{position:relative;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:none}
 .dock-tab:not(.is-active)>.dock-tab-session-actions { display:none; }
 .dock-tab-close { display:grid;place-items:center;border:0;padding:0;background:transparent;width:17px;height:19px;color:var(--faint);cursor:pointer;border-radius:var(--radius-xs);font-size:var(--text-base);flex-shrink:0; }

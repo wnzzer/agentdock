@@ -18,6 +18,9 @@ import ModalDialog from "./ModalDialog.vue";
 import Icon from "./Icon.vue";
 import ProviderIcon from "./ProviderIcon.vue";
 import ModelPicker from "./ModelPicker.vue";
+import ContextMenu from "./ContextMenu.vue";
+import ProfileCopyDialog from "./ProfileCopyDialog.vue";
+import { showToast } from "./toasts";
 import { isStored, ownStoredSecret, referencedSecret, secretNameFor, type SecretName } from "./secret-names";
 const { t } = useI18n();
 const props = defineProps<{ profiles: EndpointProfile[]; embedded?: boolean }>();
@@ -31,7 +34,7 @@ const editingProfile = computed(() => props.profiles.find(profile => profile.id 
 const editingNative = computed(() => editingProfile.value?.native_config);
 const editingManaged = computed(() => editingNative.value?.source_id.startsWith('account:'));
 const formVisible = ref(true), busy = ref(false), discovering = ref(false);
-const error = ref(""), notice = ref(""), modelError = ref("");
+const error = ref(""), modelError = ref("");
 const models = ref<ModelCatalog>(), aliasesText = ref("");
 const environmentDraft = ref<EnvironmentRow[]>([]), initialEnvironment = ref<EnvironmentRow[]>([]);
 const environmentDirty = computed(() => profileEnvironmentDraftChanged(environmentDraft.value, initialEnvironment.value));
@@ -200,7 +203,7 @@ function edit(p?: EndpointProfile) {
   environmentDraft.value = p ? environmentRows(p.environment) : clientInfo(DEFAULT_CLIENT).modelSlots ? followingRows() : [];
   initialEnvironment.value = environmentDraft.value.map(row => ({ ...row }));
   resetDiscovery();editingRecord.value=p;
-  editing.value=p?.id; formVisible.value=true; error.value=""; notice.value=""; deleteId.value=undefined;
+  editing.value=p?.id; formVisible.value=true; error.value=""; deleteId.value=undefined;
   Object.assign(form,{name:p?.name??"",provider:p?.provider??DEFAULT_CLIENT,endpoint_url:p?.endpoint_url??"",api:p?.api??"",model:p?.model??"",effort:p?.effort??"",permission_mode:p?.permission_mode??"native",secret_ref:p?.secret_ref??"",proxy_url:p?.proxy_url??""});
   apiKey.value = ""; chooseSecretMode(p?.secret_ref);
   aliasesText.value=formatModelAliases(p?.model_aliases); models.value=undefined; modelError.value="";
@@ -222,22 +225,22 @@ async function discover() {
 }
 async function save() {
   if(busy.value||!canSave.value)return;
-  busy.value=true;error.value="";notice.value="";
+  busy.value=true;error.value="";
   try{
     const previous=editingProfile.value?.secret_ref;
     await storePastedKey();
     await saveContextWindows();
     const saved=await request<EndpointProfile>("/endpoint-profiles"+(editing.value?"/"+encodeURIComponent(editing.value):""),json(editing.value?"PATCH":"POST",payload()));
     if(previous!==saved.secret_ref)await releaseSecret(previous,[saved.secret_ref,...otherReferences.value]);
-    notice.value=editingNative.value?(backendCapabilities.environment?"Profile updated. Process environment overrides were saved without changing the native configuration.":"Profile name updated. The native configuration was not changed."):editing.value?"Profile updated. Existing session snapshots are unchanged.":"Profile created. Select it when creating a session.";
-    // Stay on what was just saved; the notice says it took.
-    const message=notice.value;pendingNavigation.value=undefined;edit(saved);notice.value=message;emit("changed",saved);
+    const message=editingNative.value?(backendCapabilities.environment?"Profile updated. Process environment overrides were saved without changing the native configuration.":"Profile name updated. The native configuration was not changed."):editing.value?"Profile updated. Existing session snapshots are unchanged.":"Profile created. Select it when creating a session.";
+    // Stay on what was just saved; the toast says it took, wherever the form is scrolled.
+    pendingNavigation.value=undefined;edit(saved);showToast(t(message));emit("changed",saved);
   }catch(cause){error.value=errorMessage(cause);}finally{busy.value=false;}
 }
 async function remove(){
   if(!deleteId.value||busy.value)return;const id=deleteId.value,native=!!deletingProfile.value?.native_config;busy.value=true;error.value="";
   const reference=deletingProfile.value?.secret_ref;
-  try{await request("/endpoint-profiles/"+encodeURIComponent(id),json("DELETE"));await releaseSecret(reference,props.profiles.filter(p=>p.id!==id).map(p=>p.secret_ref));deleteId.value=undefined;if(editing.value===id){formVisible.value=false;editing.value=undefined;editingRecord.value=undefined;}notice.value=native?"Profile reference removed. Native settings, credentials and history remain on the host.":"Profile deleted; no credentials were deleted from the host.";emit("changed");}
+  try{await request("/endpoint-profiles/"+encodeURIComponent(id),json("DELETE"));await releaseSecret(reference,props.profiles.filter(p=>p.id!==id).map(p=>p.secret_ref));deleteId.value=undefined;if(editing.value===id){formVisible.value=false;editing.value=undefined;editingRecord.value=undefined;}showToast(t(native?"Profile reference removed. Native settings, credentials and history remain on the host.":"Profile deleted; no credentials were deleted from the host."));emit("changed");}
   catch(cause){error.value=errorMessage(cause);}finally{busy.value=false;}
 }
 /** One line per profile: the provider is already its icon, and the directory
@@ -255,6 +258,56 @@ function cancelForm() {
     if (back) edit(back); else formVisible.value = false;
   });
 }
+/** A new profile started from another, in a short form of its own (ProfileCopyDialog). */
+const copySource = ref<EndpointProfile>();
+function duplicate(p: EndpointProfile) {
+  menu.value = undefined;
+  if (!p.native_config) requestLeave(() => { copySource.value = p; });
+}
+function copied(saved: EndpointProfile) {
+  copySource.value = undefined;
+  // Opened in the full form, for whatever the short one did not ask.
+  pendingNavigation.value = undefined; edit(saved);
+  showToast(t("Profile created. Select it when creating a session."));
+  emit("changed", saved);
+}
+
+/** Right-click on a profile in the list: rename it in place, copy it, or delete it. */
+const menu = ref<{ x: number; y: number; profile: EndpointProfile }>();
+const renamingId = ref<string>(), renameText = ref("");
+const renameInput = ref<HTMLInputElement[]>();
+function openMenu(event: MouseEvent, p: EndpointProfile) {
+  event.preventDefault();
+  if (busy.value) return;
+  menu.value = { x: event.clientX, y: event.clientY, profile: p };
+}
+const removable = (p: EndpointProfile) => !p.native_config?.source_id.startsWith("account:");
+function startRename(p: EndpointProfile) {
+  menu.value = undefined; renamingId.value = p.id; renameText.value = p.name;
+  void nextTick(() => { renameInput.value?.[0]?.focus(); renameInput.value?.[0]?.select(); });
+}
+async function commitRename() {
+  const id = renamingId.value, name = renameText.value.trim();
+  // Cleared first: the input's blur follows Enter and must not save twice.
+  renamingId.value = undefined;
+  const p = props.profiles.find(profile => profile.id === id);
+  if (!id || !p || !name || name === p.name || busy.value) return;
+  busy.value = true; error.value = "";
+  try {
+    const saved = await request<EndpointProfile>("/endpoint-profiles/" + encodeURIComponent(id), json("PATCH", { name }));
+    if (editing.value === id) { form.name = saved.name; editingRecord.value = saved; }
+    showToast(t("Renamed to {name}", { name: saved.name }));
+    emit("changed", saved);
+  } catch (cause) { error.value = errorMessage(cause); }
+  finally { busy.value = false; }
+}
+function askDelete(p: EndpointProfile) { menu.value = undefined; deleteId.value = p.id; }
+
+// The form can be scrolled far from its top, where errors and the delete
+// confirmation appear; bring them into view rather than leave them unseen.
+const banner = ref<HTMLElement>();
+watch(() => [error.value, deleteId.value], ([message, id]) => { if (message || id) void nextTick(() => banner.value?.scrollIntoView?.({ block: "nearest", behavior: "smooth" })); });
+
 // Open on something to read rather than on a blank page that asks for a click.
 if (props.profiles.length) edit(props.profiles[0]);
 void loadSecrets().then(() => chooseSecretMode(form.secret_ref));
@@ -266,16 +319,24 @@ onBeforeUnmount(()=>{discoveryRevision++;});
     <div class="profiles-layout">
       <section class="profiles-list">
         <button class="secondary-button" :disabled="busy" @click="requestLeave(() => edit())"><Icon name="plus" :size="14" />{{ t('New profile') }}</button>
-        <button v-for="p in profiles" :key="p.id" :class="['profile-card',{selected:editing===p.id&&formVisible}]" :disabled="busy" @click="requestLeave(() => edit(p))">
-          <span :class="['provider-mark',p.provider]"><ProviderIcon :provider="p.provider" /></span>
-          <span><strong>{{ p.name }}</strong><small :class="{'shared-profile-label':!!p.native_config}">{{ profileSummary(p) }}</small></span>
-        </button>
+        <template v-for="p in profiles" :key="p.id">
+          <div v-if="renamingId===p.id" class="profile-card selected profile-renaming">
+            <span :class="['provider-mark',p.provider]"><ProviderIcon :provider="p.provider" /></span>
+            <input ref="renameInput" v-model="renameText" maxlength="120" :aria-label="t('Profile name')" @keydown.enter.prevent="commitRename" @keydown.esc.prevent="renamingId=undefined" @blur="commitRename" />
+          </div>
+          <button v-else :class="['profile-card',{selected:editing===p.id&&formVisible}]" :disabled="busy" @click="requestLeave(() => edit(p))" @contextmenu="openMenu($event, p)">
+            <span :class="['provider-mark',p.provider]"><ProviderIcon :provider="p.provider" /></span>
+            <span><strong>{{ p.name }}</strong><small :class="{'shared-profile-label':!!p.native_config}">{{ profileSummary(p) }}</small></span>
+          </button>
+        </template>
         <p v-if="!profiles.length" class="small-empty">{{ t('No profiles yet. Native, isolated sessions also work without one.') }}</p>
         <p v-if="embedded" class="small-empty profiles-accounts-hint">{{ t('Already signed in to Claude Code or Codex on this host?') }} <button type="button" class="profiles-accounts-link" @click="requestLeave(() => emit('accounts'))">{{ t('Link it in Official accounts') }} →</button></p>
       </section>
       <div class="profile-details">
-        <div v-if="notice" class="inline-success" role="status">{{ t(notice) }}</div>
-        <div v-if="error" class="inline-error" role="alert">{{ error }}</div>
+        <div ref="banner" class="profile-banner">
+          <div v-if="error" class="inline-error" role="alert">{{ error }}</div>
+          <div v-if="deleteId" class="confirmation-bar">{{ t(deletingProfile?.native_config?'Remove this profile reference? Native settings, sign-in and history stay on the host. Existing sessions retain their reference.':'Delete this profile? Existing session snapshots remain.') }} {{ deletingProfile?.name }}<div class="toolbar-buttons"><button class="small-button danger" :disabled="busy" @click="remove">{{ t('Confirm delete') }}</button><button class="small-button" :disabled="busy" @click="deleteId=undefined">{{ t('Keep profile') }}</button></div></div>
+        </div>
         <div v-if="pendingNavigation" class="confirmation-bar" role="alert">{{ t('Discard unsaved environment changes?') }}<div class="toolbar-buttons"><button type="button" class="small-button danger" @click="discardEnvironmentDraft">{{ t('Discard environment changes') }}</button><button type="button" class="small-button" @click="pendingNavigation=undefined">{{ t('Keep editing') }}</button></div></div>
         <form v-if="formVisible" class="form-stack" @submit.prevent="save">
           <h3>{{ editing ? t('Edit profile') : t('Create profile') }}</h3>
@@ -337,12 +398,17 @@ onBeforeUnmount(()=>{discoveryRevision++;});
           <EnvironmentEditor v-model="environmentDraft" :supported="backendCapabilities.environment" :disabled="busy" />
           <p v-if="environmentError" class="inline-error" role="alert">{{ t(environmentError) }}</p>
           <p v-if="editingManaged" class="form-help">{{ t('Manage this account from Official accounts. Its profile cannot be removed separately from its account.') }}</p>
-          <div class="dialog-actions"><button v-if="editing && !editingManaged" type="button" class="text-button danger-text" :disabled="busy" @click="deleteId=editing">{{ t(editingNative?'Remove profile reference':'Delete profile') }}</button><span class="flex-spacer" /><button type="button" class="secondary-button" :disabled="busy" @click="cancelForm">{{ t('Cancel') }}</button><button class="primary-button" :disabled="busy||!canSave">{{ busy?t('Saving…'):t('Save profile') }}</button></div>
+          <div class="dialog-actions"><button v-if="editing && !editingManaged" type="button" class="text-button danger-text" :disabled="busy" @click="deleteId=editing">{{ t(editingNative?'Remove profile reference':'Delete profile') }}</button><button v-if="editing && !editingNative" type="button" class="text-button" :disabled="busy" @click="duplicate(editingProfile!)">{{ t('Duplicate as new profile') }}</button><span class="flex-spacer" /><button type="button" class="secondary-button" :disabled="busy" @click="cancelForm">{{ t('Cancel') }}</button><button class="primary-button" :disabled="busy||!canSave">{{ busy?t('Saving…'):t('Save profile') }}</button></div>
         </form>
         <div v-else class="pane-empty"><p>{{ t('Select a profile to edit, or create one for a different account or endpoint.') }}</p></div>
-        <div v-if="deleteId" class="confirmation-bar">{{ t(deletingProfile?.native_config?'Remove this profile reference? Native settings, sign-in and history stay on the host. Existing sessions retain their reference.':'Delete this profile? Existing session snapshots remain.') }} {{ deletingProfile?.name }}<div class="toolbar-buttons"><button class="small-button danger" :disabled="busy" @click="remove">{{ t('Confirm delete') }}</button><button class="small-button" :disabled="busy" @click="deleteId=undefined">{{ t('Keep profile') }}</button></div></div>
       </div>
     </div>
+    <ContextMenu v-if="menu" :x="menu.x" :y="menu.y" :label="t('Actions for {profile}', { profile: menu.profile.name })" @close="menu = undefined">
+      <button role="menuitem" @click="startRename(menu!.profile)"><Icon name="edit" :size="14" />{{ t('Rename') }}</button>
+      <button v-if="!menu.profile.native_config" role="menuitem" @click="duplicate(menu!.profile)"><Icon name="clipboard" :size="14" />{{ t('Duplicate as new profile') }}</button>
+      <template v-if="removable(menu.profile)"><hr /><button role="menuitem" class="danger" @click="askDelete(menu!.profile)">{{ t(menu.profile.native_config ? 'Remove profile reference' : 'Delete profile') }}</button></template>
+    </ContextMenu>
+    <ProfileCopyDialog v-if="copySource" :source="copySource" :profiles="profiles" @close="copySource = undefined" @created="copied" />
   </ModalDialog>
 </template>
 <style scoped>
@@ -369,6 +435,10 @@ onBeforeUnmount(()=>{discoveryRevision++;});
 .profile-card strong{font-size:var(--text-md);line-height:18px;color:var(--ink);font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .profile-card small{font-size:var(--text-xs);line-height:15px;color:var(--muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .profile-card>span:last-child{flex:1}
+.profile-renaming{display:flex;gap:10px;border:1px solid var(--teal-line)}
+.profile-renaming>input{flex:1;min-width:0;padding:4px 6px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);font-size:var(--text-md);color:var(--ink)}
+.profile-banner{display:flex;flex-direction:column;gap:8px;scroll-margin-top:8px}
+.profile-banner:empty{display:none}
 .profiles-list>.secondary-button{font-size:var(--text-sm);min-height:36px}
 .profiles-accounts-hint{margin-top:14px;font-size:var(--text-xs);line-height:1.6;color:var(--muted);text-align:left}
 .profiles-accounts-link{border:0;background:none;padding:0;font:inherit;color:var(--teal);cursor:pointer}

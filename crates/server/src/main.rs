@@ -20,6 +20,7 @@ mod file_search;
 mod file_watch;
 mod host_grants;
 mod installation;
+mod launch;
 mod mcp;
 mod media;
 mod model_catalog;
@@ -31,6 +32,7 @@ mod preferences;
 mod price_list;
 mod providers;
 mod resources;
+mod resume;
 mod secrets;
 mod security;
 mod sensors;
@@ -424,6 +426,9 @@ const HELP: &str = r#"AgentDock — a host workspace for Claude Code and Codex
   agentdock init            Create user state without starting anything
   agentdock mcp             AgentDock's agent tools as a stdio MCP server, e.g.
                             claude mcp add agentdock -- agentdock mcp
+  agentdock resume <id>     Continue an AgentDock session in this terminal, with
+                            its client, endpoint, model and checkout; <id> is
+                            the AgentDock session ID (Copy resume command)
 
   --version                 Print the version
   --help                    This text
@@ -532,6 +537,11 @@ async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
     if action == "update" {
         return update::command(env::args().any(|argument| argument == "--check")).await;
     }
+    // Asks the running server for a session's launch and runs it here, in this
+    // terminal: no state directory or database of its own.
+    if action == "resume" {
+        return resume::command(env::args().skip(2).collect()).await;
+    }
     if !matches!(
         action.as_str(),
         "serve" | "init" | "start" | "stop" | "restart" | "status" | "logs"
@@ -638,24 +648,28 @@ async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // ownership checks. `locked_database` stays alive through graceful shutdown.
     state.store.reconcile_after_restart()?;
     tracing::info!(%address,db=%database.display(),"AgentDock listening (trusted single-user host mode)");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            #[cfg(unix)]
-            {
-                let mut term =
-                    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                        .expect("SIGTERM");
-                tokio::select! {_=tokio::signal::ctrl_c()=>{},_=term.recv()=>{}}
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = tokio::signal::ctrl_c().await;
-            }
-            state.runtime.shutdown().await;
-            state.chats.shutdown().await;
-            state.accounts.shutdown().await;
-        })
-        .await?;
+    // The peer address lets a few routes answer only this machine (`launch-plan`).
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        #[cfg(unix)]
+        {
+            let mut term =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("SIGTERM");
+            tokio::select! {_=tokio::signal::ctrl_c()=>{},_=term.recv()=>{}}
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = tokio::signal::ctrl_c().await;
+        }
+        state.runtime.shutdown().await;
+        state.chats.shutdown().await;
+        state.accounts.shutdown().await;
+    })
+    .await?;
     Ok(())
 }
 
@@ -802,6 +816,7 @@ fn router(state: AppState) -> Router {
             "/api/sessions/{id}/terminal",
             post(open_session_in_terminal),
         )
+        .route("/api/sessions/{id}/launch-plan", post(session_launch_plan))
         .route("/api/sessions/{id}/stop", post(stop_session))
         .route(
             "/api/sessions/{id}/environment",
@@ -1205,68 +1220,63 @@ async fn open_session_in_terminal(
 ) -> Result<(StatusCode, Json<Session>)> {
     let _guard = state.operations.lock().await;
     let source = session_record(&state, id).await?;
-    if source.provider == ProviderKind::Terminal {
-        return Err(ApiError::bad("This session is already a terminal"));
-    }
-    // An interactive reopen is only meaningful once the client has reported the
-    // conversation it created; before that there is nothing to resume.
-    let native_id = source
-        .provider_session_id
-        .as_deref()
-        .filter(|value| native_history::valid_id(value))
-        .ok_or_else(|| {
-            ApiError::conflict("Send a message first; there is no conversation to reopen yet")
-        })?
-        .to_owned();
-    let cwd = root(&state, source.workspace_id).await?;
-    let title = terminal_title(&source.title);
-    // The reopen shares the structured session's account and endpoint: it is the
-    // same conversation, so it must reach the same place under the same terms.
-    let (provider, profile_id, environment) = (
-        source.provider,
-        source.endpoint_profile_id,
-        source.environment.clone(),
-    );
-    let record = db(&state, move |s| {
-        // The reopen targets a conversation that already exists, so its native
-        // id is known now -- unlike a fresh session, which learns it from the
-        // client's first announcement.
-        s.create_session_with_options(
-            source.workspace_id,
-            provider,
-            &title,
-            profile_id,
-            None,
-            None,
-            environment,
-            // Temporary: an escape hatch is opened to run one interactive
-            // command and then closed. The conversation it carries is owned by
-            // the structured session and survives there, so closing this window
-            // should leave nothing behind. Keeping it is still one click away.
-            true,
-            Some(source.id),
-            Some(native_id),
-        )
-    })
-    .await?;
-    // Creating a session does not launch anything here, as everywhere else: the
-    // caller starts it through the ordinary route, which already knows how to
-    // report a client that will not run. Resolving the launch now is only a
-    // check that this session *can* be built, so an impossible reopen fails
-    // before a record for it exists.
-    let config_state = state.clone();
-    let config_session = record.clone();
-    tokio::task::spawn_blocking(move || providers::build(&config_state, &config_session, cwd))
-        .await
-        .map_err(ApiError::internal)??;
+    let record = launch::terminal_reopen(&state, &source).await?;
     Ok((StatusCode::CREATED, Json(record)))
 }
 
-/// A reopen is named after the conversation it reopens, so the sidebar shows it
-/// beside the structured session rather than as an unrelated terminal.
-fn terminal_title(title: &str) -> String {
-    let base = format!("{} (terminal)", title.trim());
-    base.chars().take(120).collect()
+#[derive(Deserialize, Default)]
+struct LaunchPlanQuery {
+    #[serde(default)]
+    force: bool,
+}
+
+/// What `agentdock resume` runs to continue a session in a terminal of its own:
+/// program, arguments, directory and environment, from the shared launch plan.
+///
+/// The environment carries the endpoint's resolved key, as any launch does, so
+/// only a caller on this machine gets one: the plan names this host's paths and
+/// is of no use elsewhere. A session AgentDock is running now is refused unless
+/// forced, since two clients writing one conversation interleave it.
+async fn session_launch_plan(
+    State(state): State<AppState>,
+    Path(id): Path<SessionId>,
+    Query(query): Query<LaunchPlanQuery>,
+    request: Request,
+) -> Result<Json<Value>> {
+    let local = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<SocketAddr>>()
+        .is_some_and(|peer| peer.0.ip().is_loopback());
+    if !local {
+        return Err(ApiError {
+            status: StatusCode::FORBIDDEN,
+            message: "A session can only be resumed in a terminal on the machine AgentDock runs on"
+                .into(),
+        });
+    }
+    let session = session_record(&state, id).await?;
+    if !query.force
+        && matches!(
+            session.status,
+            SessionStatus::Starting | SessionStatus::Running | SessionStatus::Waiting
+        )
+    {
+        return Err(ApiError::conflict(
+            "This session is running in AgentDock. End it there first, or pass --force to open a second client on the same conversation",
+        ));
+    }
+    let spec = launch::continuation(&state, &session).await?;
+    Ok(Json(json!({
+        "session_id": session.id,
+        "title": session.title,
+        "provider": session.provider,
+        "provider_session_id": session.provider_session_id,
+        "program": spec.program,
+        "args": spec.args,
+        "cwd": spec.cwd,
+        "env": spec.env,
+        "env_remove": spec.env_remove,
+    })))
 }
 
 async fn start_session(
@@ -1286,17 +1296,7 @@ async fn start_session(
     {
         return Ok(Json(session));
     }
-    let cwd = checkouts::session_cwd(&state, &session).await?;
-    let config_state = state.clone();
-    let config_session = session.clone();
-    let spec =
-        tokio::task::spawn_blocking(move || providers::build(&config_state, &config_session, cwd))
-            .await
-            .map_err(ApiError::internal)??;
-    db(&state, move |s| {
-        s.set_session_status(id, SessionStatus::Starting)
-    })
-    .await?;
+    let spec = launch::prepare(&state, &session).await?;
     let runtime = match state.runtime.start(id.to_string(), spec).await {
         Ok(runtime) => runtime,
         Err(_) => {

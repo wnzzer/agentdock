@@ -90,3 +90,54 @@ test('capability loss blocks save and navigation asks before discarding raw envi
   assert.equal(left, true);
   assert.equal(state.environmentDraft.value[0].value, 'old');
 });
+
+test('duplicating opens the short copy form, which creates a profile sharing the key by reference', async () => {
+  capabilities.environment = true;
+  const original = { ...profile(), endpoint_url: 'https://relay.example/v1', model: 'gpt-fixture', secret_ref: 'env:AGENTDOCK_SECRET_FIXTURE' };
+  const { state } = await setup([original]);
+  state.duplicate(original);
+  assert.equal(state.copySource.value.id, original.id);
+  assert.equal(state.editing.value, original.id);
+
+  const CopyDialog = (await server.ssrLoadModule('/src/features/ProfileCopyDialog.vue')).default;
+  let copy;
+  const Harness = { ...CopyDialog, setup(props, context) { copy = CopyDialog.setup(props, context); return copy; } };
+  const created = [];
+  await renderToString(createSSRApp(Harness, { source: original, profiles: [original], onCreated: saved => created.push(saved) }), {});
+  assert.equal(copy.form.name, 'Fixture 副本');
+  assert.equal(copy.keyMode.value, 'keep');
+  copy.form.model = 'gpt-other';
+  const sent = [];
+  mock.method(globalThis, 'fetch', async (url, init = {}) => {
+    sent.push({ url, method: init.method, body: JSON.parse(init.body) });
+    return new Response(JSON.stringify({ ...original, ...sent.at(-1).body, id: 'copy-fixture' }), { status: 200 });
+  });
+  await copy.create();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].url, '/api/endpoint-profiles');
+  assert.equal(sent[0].method, 'POST');
+  assert.equal(sent[0].body.name, 'Fixture 副本');
+  assert.equal(sent[0].body.endpoint_url, 'https://relay.example/v1');
+  assert.equal(sent[0].body.model, 'gpt-other');
+  assert.equal(sent[0].body.secret_ref, 'env:AGENTDOCK_SECRET_FIXTURE');
+  assert.deepEqual(sent[0].body.environment, { MODE: { kind: 'literal', value: 'old' } });
+  assert.equal(created[0].id, 'copy-fixture');
+});
+
+test('a native profile cannot be duplicated, and renaming in the list sends only the name', async () => {
+  const native = profile(true);
+  const { state, html } = await setup([native]);
+  assert.ok(!html.includes('复制为新配置'));
+  state.duplicate(native);
+  assert.equal(state.copySource.value, undefined);
+  let sent;
+  mock.method(globalThis, 'fetch', async (url, init) => {
+    sent = { url, method: init.method, body: JSON.parse(init.body) };
+    return new Response(JSON.stringify({ ...native, ...sent.body }), { status: 200 });
+  });
+  state.startRename(native);
+  state.renameText.value = '  Renamed  ';
+  await state.commitRename();
+  assert.deepEqual(sent, { url: '/api/endpoint-profiles/profile-fixture', method: 'PATCH', body: { name: 'Renamed' } });
+  assert.equal(state.form.name, 'Renamed');
+});

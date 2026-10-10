@@ -187,3 +187,17 @@ test('select mode archives, restores and deletes only the ticked rows that allow
   state.bulkDelete();
   assert.deepEqual(events.shift(), ['delete', [archived]]);
 });
+
+test('Claude Code, Codex and pi share identity actions in the sidebar, including the exact native ID', async () => {
+  for (const provider of ['claude_code', 'codex', 'pi']) {
+    const native = `native-${provider}`;
+    const { html } = await render(SessionRow, { session: session(provider, { provider, provider_session_id: native }) }, state => state.toggleMenu());
+    const client = { claude_code: 'Claude Code', codex: 'Codex', pi: 'Pi' }[provider];
+    for (const label of ['Rename session', 'Session environment', 'Copy resume command', `Copy ${client} session ID`, 'Run information']) assert.ok(html.includes(label), `${provider}: ${label}`);
+    assert.ok(html.includes(`title="${native}"`));
+    assert.ok(html.includes('title="agentdock resume '), 'the resume command names the AgentDock session');
+  }
+  const { html } = await render(SessionRow, { session: current }, state => state.toggleMenu());
+  assert.ok(!/Copy [^"<]* session ID/.test(html), 'a new session has no native ID to copy');
+  assert.ok(!html.includes('Copy resume command'), 'nor a conversation to resume');
+});

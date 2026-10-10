@@ -68,3 +68,10 @@ test('filtering is a read-only projection and restoration makes the same identit
   assert.equal(restored[2].status, 'running');
   assert.equal(restored[2].workspace_id, 'frontend');
 });
+
+test('a resume command names the AgentDock session, once there is a conversation to continue', async () => {
+  const { resumeCommand } = await import('./session-list.ts');
+  assert.equal(resumeCommand({ id: 'a1', provider: 'claude_code', provider_session_id: 'n1' }), 'agentdock resume a1');
+  assert.equal(resumeCommand({ id: 'a1', provider: 'codex', provider_session_id: null }), undefined);
+  assert.equal(resumeCommand({ id: 't1', provider: 'terminal', provider_session_id: null }), 'agentdock resume t1');
+});

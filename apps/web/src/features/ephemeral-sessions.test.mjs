@@ -7,7 +7,7 @@ import { createSSRApp, reactive } from 'vue';
 import { renderToString } from 'vue/server-renderer';
 import { filterSessionList } from './session-list.ts';
 import { groupWorkspaces } from './workspace-groups.ts';
-import { sessionPane, withoutEphemeralPanes } from './pane-context.ts';
+import { markEphemeralPanes, sessionPane, withoutDiscardedPanes } from './pane-context.ts';
 import { flattenPanes } from '../layout/layout-engine.ts';
 
 let server, App, Canvas, CreateSessionDialog, SidebarSessionRow, capabilities, connections, i18n;
@@ -228,6 +228,19 @@ test('closing a pane bound to a permanent session keeps the old behaviour: no re
   assert.deepEqual(openIntents, []);
 });
 
+test('a temporary terminal closes with its tab, without asking, though its process is running', async t => {
+  const shell = session('shell', { ephemeral: true, status: 'running', interaction_mode: 'pty', title: 'Scratch (terminal)' });
+  const { state, requests } = await harness(t, {
+    sessions: [keeper, shell], layout: stackOf(filePaneNode, sessionPane(shell)),
+    fetch: () => Response.json({ id: shell.id }),
+  });
+  const pane = flattenPanes(state.layout.value.root).find(item => item.metadata?.session_id === shell.id);
+  assert.equal(await state.confirmClosePane(pane), true);
+  assert.equal(state.discardPrompt.value, undefined);
+  assert.deepEqual(requests, [{ url: `/api/sessions/${shell.id}`, method: 'DELETE', body: undefined }]);
+  assert.deepEqual(state.sessions.value.map(item => item.id), [keeper.id]);
+});
+
 test('a working temporary session is confirmed inline before anything is stopped', async t => {
   const busy = session('busy', { ephemeral: true, status: 'running', title: 'Busy scratch' });
   const { state, requests, closed } = await harness(t, {
@@ -347,18 +360,27 @@ test('promotion is refused for a session that is already permanent and never iss
 
 // -------------------------------------------------------- layout persistence
 
-test('withoutEphemeralPanes trims only temporary session panes and leaves other layouts untouched', () => {
+test('markEphemeralPanes marks only temporary session panes and leaves other layouts untouched', () => {
   const layout = stackOf(filePaneNode, sessionPane(keeper), sessionPane(scratch));
-  const trimmed = withoutEphemeralPanes(layout, [keeper, scratch]);
-  assert.deepEqual(flattenPanes(trimmed.root).map(pane => pane.id), [filePaneNode.id, `session-${keeper.id}`]);
-  assert.deepEqual(flattenPanes(layout.root).length, 3, 'the input document is not mutated');
-  assert.equal(withoutEphemeralPanes(layout, [keeper]), layout, 'nothing temporary means the same object');
-  // A layout made only of temporary panes still produces a valid empty canvas.
-  const onlyScratch = withoutEphemeralPanes(stackOf(sessionPane(scratch)), [scratch]);
-  assert.deepEqual(flattenPanes(onlyScratch.root), []);
+  const marked = markEphemeralPanes(layout, [keeper, scratch]);
+  assert.deepEqual(flattenPanes(marked.root).map(pane => pane.id), [filePaneNode.id, `session-${keeper.id}`, `session-${scratch.id}`]);
+  assert.deepEqual(flattenPanes(marked.root).map(pane => pane.metadata?.ephemeral === true), [false, false, true]);
+  assert.equal(flattenPanes(layout.root)[2].metadata.ephemeral, undefined, 'the input document is not mutated');
+  assert.equal(markEphemeralPanes(layout, [keeper]), layout, 'nothing temporary means the same object');
+  assert.equal(markEphemeralPanes(marked, [keeper, scratch]), marked, 'marking twice changes nothing');
 });
 
-test('the saved shared canvas and its browser cache never contain a temporary window', async t => {
+test('a restored temporary window is dropped once its session is discarded, and only then', () => {
+  const restored = markEphemeralPanes(stackOf(filePaneNode, sessionPane(keeper), sessionPane(scratch)), [keeper, scratch]);
+  assert.equal(withoutDiscardedPanes(restored.root, [keeper, scratch]), restored.root, 'a live temporary window stays open');
+  const pruned = withoutDiscardedPanes(restored.root, [keeper]);
+  assert.deepEqual(flattenPanes(pruned).map(pane => pane.id), [filePaneNode.id, `session-${keeper.id}`]);
+  // An ordinary pane whose session is missing is not this function's to remove.
+  const unmarked = stackOf(sessionPane(keeper));
+  assert.equal(withoutDiscardedPanes(unmarked.root, []), unmarked.root);
+});
+
+test('the saved shared canvas and its browser cache keep a temporary window, marked', async t => {
   const saved = [];
   const { state, requests } = await harness(t, {
     layout: stackOf(filePaneNode, sessionPane(keeper), sessionPane(scratch)),
@@ -368,15 +390,13 @@ test('the saved shared canvas and its browser cache never contain a temporary wi
   await state.flushLayout();
   assert.equal(requests.length, 1);
   assert.equal(requests[0].url, '/api/canvas/layout');
-  assert.deepEqual(flattenPanes(saved[0].root).map(pane => pane.id), [filePaneNode.id, `session-${keeper.id}`]);
-  assert.equal(state.layoutStatus.value, 'Saved', 'the trimmed save must still settle');
-  // The live canvas keeps the pane so the window stays usable until it is closed.
-  assert.deepEqual(flattenPanes(state.layout.value.root).map(pane => pane.id), [filePaneNode.id, `session-${keeper.id}`, `session-${scratch.id}`]);
+  assert.deepEqual(flattenPanes(saved[0].root).map(pane => [pane.id, pane.metadata?.ephemeral === true]), [[filePaneNode.id, false], [`session-${keeper.id}`, false], [`session-${scratch.id}`, true]]);
+  assert.equal(state.layoutStatus.value, 'Saved');
   const cached = JSON.parse([...storageValues.values()].find(value => value.includes('fixture-stack')));
-  assert.deepEqual(flattenPanes(cached.layout.root).map(pane => pane.id), [filePaneNode.id, `session-${keeper.id}`]);
+  assert.deepEqual(flattenPanes(cached.layout.root).map(pane => pane.id), [filePaneNode.id, `session-${keeper.id}`, `session-${scratch.id}`]);
 });
 
-test('the localStorage fallback on a backend without a shared canvas is trimmed the same way', async t => {
+test('the localStorage fallback on a backend without a shared canvas is marked the same way', async t => {
   capabilities.setBackendCapabilities({ ok: true, api_version: 2, capabilities: ['ephemeral_sessions'] });
   const { state, requests } = await harness(t, { layout: stackOf(filePaneNode, sessionPane(scratch)) });
   state.queueLayout(state.layout.value);
@@ -384,7 +404,7 @@ test('the localStorage fallback on a backend without a shared canvas is trimmed 
   assert.deepEqual(requests, [], 'an old canvas backend is never contacted');
   assert.equal(state.layoutStatus.value, 'Saved in this browser');
   const cached = JSON.parse([...storageValues.values()].find(value => value.includes('"layout"')));
-  assert.deepEqual(flattenPanes(cached.layout.root).map(pane => pane.id), [filePaneNode.id]);
+  assert.deepEqual(flattenPanes(cached.layout.root).map(pane => [pane.id, pane.metadata?.ephemeral === true]), [[filePaneNode.id, false], [`session-${scratch.id}`, true]]);
 });
 
 test('a backend without the capability persists every pane exactly as before', async t => {

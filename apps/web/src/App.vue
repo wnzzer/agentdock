@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, provide, reactive, ref, watch } from "vue";
 import { shellHeight } from "./features/viewport-height";
 import type { EndpointProfile, FileEntry, GitStatus, LayoutDocument, LayoutNode, PaneNode, ProviderKind, Session, Workspace } from "@agentdock/protocol";
 import Canvas from "./components/Canvas.vue";
@@ -24,6 +24,8 @@ import { onPageReturn } from "./features/page-return";
 import WorkspaceBranchMenu from "./features/WorkspaceBranchMenu.vue";
 import ImageLightbox from "./features/ImageLightbox.vue";
 import SessionEnvironmentDialog from "./features/SessionEnvironmentDialog.vue";
+import SessionRunInfo from "./features/SessionRunInfo.vue";
+import { SESSION_ACTIONS } from "./features/session-actions-context";
 import SessionRenameDialog from "./features/SessionRenameDialog.vue";
 import AuthDialog from "./features/AuthDialog.vue";
 import Icon from "./features/Icon.vue";
@@ -43,7 +45,7 @@ import { useI18n } from "./i18n";
 import { ApiConnectionError, ApiError, errorMessage, json, providerLabel, request, workspacePath } from "./features/api";
 import { AGENT_CLIENTS, DEFAULT_CLIENT, PROVIDER_KINDS } from "./features/clients";
 import { loadPreferences, preferenceFor } from "./features/preferences";
-import { paneString, paneWorkspace, paneSession, filePane, changesPane, sessionPane, renameSessionPanes, scopeLegacyLayout, acceptsScopedPane, ephemeralSessionIds, withoutEphemeralPanes } from "./features/pane-context";
+import { paneString, paneWorkspace, paneSession, filePane, changesPane, sessionPane, renameSessionPanes, scopeLegacyLayout, acceptsScopedPane, ephemeralSessionIds, markEphemeralPanes, withoutDiscardedPanes } from "./features/pane-context";
 import { isEphemeralSession } from "./features/session-list";
 import { lastQuickProvider, planQuickSession, rememberQuickProvider } from "./features/quick-session";
 import { backendCapabilities, setBackendCapabilities, type BackendHealth } from "./features/backend-capabilities";
@@ -126,6 +128,8 @@ let layoutTimer: ReturnType<typeof setTimeout> | undefined, pollTimer: ReturnTyp
 let pendingLayout: LayoutDocument | undefined;
 let saveQueue: Promise<void> = Promise.resolve();
 const sessionsLoading = ref(false);
+/** Set once the session list has loaded, so an empty list before then is not read as "every session is gone". */
+const sessionsKnown = ref(false);
 let sessionsRevision = 0;
 let workspaceRegistryRevision = 0;
 const gitLoading = new Set<string>();
@@ -225,9 +229,9 @@ function initialPane(node: LayoutNode): PaneNode | undefined {
   return initialPane(node.first) ?? initialPane(node.second);
 }
 /** Everything that leaves this page — server canvas, browser cache, recovery
- * snapshot — drops temporary windows, so a reload cannot restore a pane whose
- * session the backend has already discarded. The live layout keeps them. */
-function persistableLayout(document: LayoutDocument) { return withoutEphemeralPanes(document, sessions.value); }
+ * snapshot — marks temporary windows, so a reload keeps them open (and
+ * closable) while their session lives, and drops them once it is discarded. */
+function persistableLayout(document: LayoutDocument) { return markEphemeralPanes(document, sessions.value); }
 function cacheLayout(document: LayoutDocument, pending: boolean) { return writeCanvasCache(storage, storageKey.value, persistableLayout(document), pending); }
 function queueLayout(document: LayoutDocument) {
   const snapshot = persistableLayout(copyLayout(document));
@@ -342,6 +346,13 @@ watch(sessions, list => {
   for (const session of list) root = renameSessionPanes(root, session.id, session.title);
   if (root !== layout.value.root) layout.value = { ...layout.value, root };
 });
+// A temporary window restored from a saved layout whose session has since been
+// discarded (a server restart, another page closing it) has nothing to show.
+watch([sessions, sessionsKnown, canvasRevision, canvasReady], () => {
+  if (!sessionsKnown.value || !canvasReady.value) return;
+  const root = withoutDiscardedPanes(layout.value.root, sessions.value);
+  if (root !== layout.value.root) layout.value = { ...layout.value, root };
+});
 function openSession(session: Session) {
   if (!workspaces.value.some(workspace => workspace.id === session.workspace_id)) {
     // A session can arrive before its workspace does -- one opened in a
@@ -451,11 +462,13 @@ async function discardEphemeral(session: Session): Promise<boolean> {
   }
 }
 /** Close guard. A non-ephemeral pane keeps its existing view-only behaviour and
- * issues no request at all; a working temporary session asks first. */
+ * issues no request at all. A temporary window goes with its tab; only a
+ * conversation in the middle of a turn asks first. A terminal's process is
+ * "running" for as long as it is open, which says nothing about work under way. */
 async function confirmClosePane(pane: PaneNode): Promise<boolean> {
   const session = paneSession(pane, sessions.value);
   if (!session || !isEphemeralSession(session)) return true;
-  if (["running", "starting", "waiting"].includes(session.status)) { discardPrompt.value = { paneId: pane.id, session }; return false; }
+  if (session.interaction_mode === "structured" && ["running", "starting", "waiting"].includes(session.status)) { discardPrompt.value = { paneId: pane.id, session }; return false; }
   return await discardEphemeral(session);
 }
 async function confirmDiscard() {
@@ -497,6 +510,16 @@ async function renameSession(session: Session, title: string): Promise<boolean> 
   } catch (cause) { report(cause); return false; }
 }
 function requestRenameSession(id: string) { if (sessions.value.some(session => session.id === id)) renameSessionId.value = id; }
+const runInfoSessionId = ref<string>();
+const runInfoSession = computed(() => sessions.value.find(session => session.id === runInfoSessionId.value));
+provide(SESSION_ACTIONS, {
+  session: id => sessions.value.find(session => session.id === id),
+  keepBusy: id => keepBusyIds.value.includes(id),
+  rename: requestRenameSession,
+  environment: id => { environmentSessionId.value = id; },
+  keep: keepSessionById,
+  info: id => { runInfoSessionId.value = id; },
+});
 async function saveRenameSession(title: string) {
   const session = renameSessionTarget.value;
   if (!session) return;
@@ -653,7 +676,7 @@ async function refreshSessions() {
   if (showAuth.value || sessionsLoading.value) return;
   sessionsLoading.value = true;
   const own = ++sessionsRevision;
-  try { const list = await request<Session[]>("/sessions"); if (own === sessionsRevision) sessions.value = list; apiOnline.value = true; connectionError.value = ""; }
+  try { const list = await request<Session[]>("/sessions"); if (own === sessionsRevision) { sessions.value = list; sessionsKnown.value = true; } apiOnline.value = true; connectionError.value = ""; }
   catch (cause) { apiOnline.value = false; report(cause); }
   finally { sessionsLoading.value = false; }
 }
@@ -959,6 +982,7 @@ onUnmounted(() => { if (pendingLayout) cacheLayout(pendingLayout, true); dispose
       <button type="button" class="sheet-row" @click="sheetAction(() => openChanges(contextWorkspace!.id))"><Icon name="git" :size="20" /><span class="sheet-row-copy"><strong>{{ t('Git Changes') }}</strong><small v-if="currentGitAvailable">{{ t(currentGit.files.length===1?'{count} change':'{count} changes',{count:currentGit.files.length}) }}</small></span></button>
     </template>
   </BottomSheet>
+  <SessionRunInfo v-if="runInfoSession" :session="runInfoSession" @close="runInfoSessionId=undefined"/>
   <SessionEnvironmentDialog v-if="environmentSession" :key="environmentSession.id" :session="environmentSession" @close="environmentSessionId=undefined" @saved="sessionEnvironmentSaved"/>
   <SessionRenameDialog v-if="renameSessionTarget" :key="renameSessionTarget.id" :session="renameSessionTarget" @close="renameSessionId=undefined" @save="saveRenameSession"/>
   <LoadHistoryDialog v-if="historyWorkspace && backendCapabilities.nativeHistory" :workspace="historyWorkspace" @close="historyWorkspaceId=undefined" @loaded="historyLoaded"/>

@@ -783,7 +783,7 @@ async fn agent_chat(fixture: &Fixture) -> (Uuid, String) {
     let session = fixture.state.store.get_session(id).unwrap().unwrap();
     // A fresh launch spec reissues the session's token; the chat is running,
     // so the new one identifies it.
-    let token = providers::build(&fixture.state, &session, fixture.path.join("repo"))
+    let token = launch::build(&fixture.state, &session, fixture.path.join("repo"))
         .unwrap()
         .env["AGENTDOCK_AGENT_TOKEN"]
         .clone();
@@ -893,7 +893,7 @@ async fn a_session_starts_another_follows_its_reply_and_only_its_own() {
 
     // A started session cannot start more, nor read what it did not start.
     let child_session = fixture.state.store.get_session(child).unwrap().unwrap();
-    let child_token = providers::build(&fixture.state, &child_session, fixture.path.join("repo"))
+    let child_token = launch::build(&fixture.state, &child_session, fixture.path.join("repo"))
         .unwrap()
         .env["AGENTDOCK_AGENT_TOKEN"]
         .clone();

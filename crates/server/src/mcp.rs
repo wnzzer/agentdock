@@ -80,28 +80,38 @@ impl Upstream {
     }
 }
 
+/// Where the local server answers: the address a session AgentDock launched is
+/// given, or else this machine's port, as `agentdock status` finds it.
+pub(crate) fn local_url() -> String {
+    let url = env::var("AGENTDOCK_URL")
+        .ok()
+        .filter(|url| !url.is_empty())
+        .unwrap_or_else(|| {
+            let port = env::var("AGENTDOCK_ADDR")
+                .ok()
+                .and_then(|address| address.rsplit(':').next().map(str::to_owned))
+                .unwrap_or_else(|| {
+                    crate::DEFAULT_ADDRESS
+                        .rsplit(':')
+                        .next()
+                        .unwrap_or("")
+                        .to_owned()
+                });
+            format!("http://127.0.0.1:{port}")
+        });
+    url.trim_end_matches('/').to_owned()
+}
+
 fn locate() -> Upstream {
     let injected = env::var("AGENTDOCK_URL").ok().filter(|url| !url.is_empty());
-    let url = injected.clone().unwrap_or_else(|| {
-        let port = env::var("AGENTDOCK_ADDR")
-            .ok()
-            .and_then(|address| address.rsplit(':').next().map(str::to_owned))
-            .unwrap_or_else(|| {
-                crate::DEFAULT_ADDRESS
-                    .rsplit(':')
-                    .next()
-                    .unwrap_or("")
-                    .to_owned()
-            });
-        format!("http://127.0.0.1:{port}")
-    });
+    let url = local_url();
     let token = env::var("AGENTDOCK_AGENT_TOKEN")
         .ok()
         .filter(|token| injected.is_some() && !token.is_empty())
         .or_else(crate::security::existing_token);
     Upstream {
         client: reqwest::Client::new(),
-        url: url.trim_end_matches('/').to_owned(),
+        url,
         token,
     }
 }

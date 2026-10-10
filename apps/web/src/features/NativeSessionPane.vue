@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import TerminalEndpointSetup from "./TerminalEndpointSetup.vue";
 import AgentToolsSwitch from "./AgentToolsSwitch.vue";
 import { computed, defineAsyncComponent, ref, watch } from "vue";
 import type { EndpointProfile, ProviderKind, Session } from "@agentdock/protocol";
@@ -13,7 +14,9 @@ import { useSessionMenuPosition } from "./session-menu-position";
 const TerminalPane=defineAsyncComponent(()=>import("../components/TerminalPane.vue"));
 const { t }=useI18n();
 const props=withDefaults(defineProps<{paneId?:string;session?:Session;sessions:Session[];profiles:EndpointProfile[];terminal?:boolean;consumeOpenIntent?:boolean}>(),{consumeOpenIntent:true});
-const emit=defineEmits<{changed:[];create:[provider?:ProviderKind];select:[session:Session];environment:[id:string];renameRequest:[id:string];structured:[id:string]}>();
+const emit=defineEmits<{changed:[];create:[provider?:ProviderKind];select:[session:Session];environment:[id:string];renameRequest:[id:string];structured:[id:string];profiles:[]}>();
+const endpointSetup=ref<{prepare:()=>Promise<Session|undefined>;busy:boolean}>();
+const preparing=ref(false);
 const terminalView=ref<{reconnect:()=>void}>();
 const ending=ref(false),confirmEnd=ref(false),error=ref("");
 const menu=ref<HTMLDetailsElement>();
@@ -35,7 +38,15 @@ watch([()=>props.session?.id,()=>entry.value?.epoch,()=>props.session?.status,()
   await (props.consumeOpenIntent ? sessionConnections.ensure(s) : sessionConnections.attach(s));
   if(current&&props.session?.id===s.id)emit("changed");
 },{immediate:true});
-function retry(){const s=props.session;if(!s||ending.value||entry.value?.pending)return;sessionConnections.requestOpen(s.id);void sessionConnections.ensure(s);}
+async function retry(){
+  if(!props.session||preparing.value||ending.value||entry.value?.pending)return;
+  const id=props.session.id;preparing.value=true;
+  try{
+    const s=endpointSetup.value?await endpointSetup.value.prepare():props.session;
+    if(!s||props.session?.id!==id)return;
+    sessionConnections.requestOpen(s.id);await sessionConnections.ensure(s);emit("changed");
+  }finally{preparing.value=false;}
+}
 const terminalExited=computed(()=>{const id=props.session?.id;return()=>{if(id)sessionConnections.ended(id);emit("changed");};});
 async function endSession(){
   const s=props.session;if(!s||ending.value)return;ending.value=true;error.value="";
@@ -58,15 +69,15 @@ function reconnect(){closeSessionMenu();terminalView.value?.reconnect();}
       <div class="session-identity"><span :class="['provider-mark',session.provider]"><ProviderIcon :provider="session.provider" /></span><div><strong>{{ session.provider==='terminal'?t('Terminal'):providerLabel(session.provider) }}</strong><small :title="nativeConfig?.config_dir">{{ session.native_source_id?t('Original client configuration'):nativeConfig?t('{name} · shared host configuration',{name:profile?.name??providerLabel(session.provider)}):profile?.name||t(session.provider==='terminal'?'Host shell':'Isolated native profile') }}</small></div></div>
       <div class="session-actions">
         <span class="status-pill" :class="running?'running':session.status">{{ t(entry?.state==='opening'?'Connecting…':running?(streamConnected?'Connected':'Process running'):entry?.state==='failed'?'Connection failed':'Session ended') }}</span>
-        <details ref="menu" class="session-menu" @keydown.esc.stop.prevent="closeSessionMenu(true)">
+        <details :data-session-menu-pane="paneId" ref="menu" class="session-menu" @keydown.esc.stop.prevent="closeSessionMenu(true)">
           <summary class="icon-button" :aria-label="t('Session actions')">⋯</summary>
-          <div class="session-menu-content"><button v-if="running" :disabled="ending" @click="reconnect">{{ t('Reconnect view') }}</button><button v-else :disabled="!!entry?.pending||ending" @click="retry(); closeSessionMenu()">{{ t('Reopen session') }}</button><button :disabled="ending" @click="emit('environment',session.id); closeSessionMenu()">{{ t('Session environment') }}</button><slot name="session-actions" :close-menu="closeSessionMenu" /><AgentToolsSwitch v-if="backendCapabilities.agentTools && session.provider !== 'terminal'" :session-id="session.id" /><button v-if="running" class="danger-text" :disabled="ending" @click="confirmEnd=true; closeSessionMenu()">{{ t('End session…') }}</button></div>
+          <div class="session-menu-content"><button v-if="running" :disabled="ending" @click="reconnect">{{ t('Reconnect view') }}</button><button v-else :disabled="!!entry?.pending||ending||preparing" @click="retry(); closeSessionMenu()">{{ t('Reopen session') }}</button><slot name="session-actions" :close-menu="closeSessionMenu"><button :disabled="ending" @click="emit('environment',session.id); closeSessionMenu()"><Icon name="settings" :size="14" />{{ t('Session environment') }}</button></slot><AgentToolsSwitch v-if="backendCapabilities.agentTools && session.provider !== 'terminal'" :session-id="session.id" /><button v-if="running" class="danger-text" :disabled="ending" @click="confirmEnd=true; closeSessionMenu()">{{ t('End session…') }}</button></div>
         </details>
       </div>
     </div>
-    <Teleport v-if="paneId" to="body"><details ref="menu" class="session-menu session-tab-menu" :style="tabMenuStyle" @toggle="positionMenu" @keydown.esc.stop.prevent="closeSessionMenu(true)">
+    <Teleport v-if="paneId" to="body"><details :data-session-menu-pane="paneId" ref="menu" class="session-menu session-tab-menu" :style="tabMenuStyle" @toggle="positionMenu" @keydown.esc.stop.prevent="closeSessionMenu(true)">
       <summary :aria-label="t('Session actions')" :title="t('Session actions')"><Icon name="more" :size="17" /></summary>
-      <div class="session-menu-content" :style="tabMenuPanelStyle"><div class="session-menu-status"><ProviderIcon :provider="session.provider" :size="14" />{{ t(entry?.state==='opening'?'Connecting…':running?(streamConnected?'Connected':'Process running'):entry?.state==='failed'?'Connection failed':'Session ended') }}</div><button v-if="running" :disabled="ending" @click="reconnect"><Icon name="refresh" :size="14" />{{ t('Reconnect view') }}</button><button v-else :disabled="!!entry?.pending||ending" @click="retry(); closeSessionMenu()"><Icon name="play" :size="14" />{{ t('Reopen session') }}</button><button :disabled="ending" @click="emit('environment',session.id); closeSessionMenu()"><Icon name="settings" :size="14" />{{ t('Session environment') }}</button><slot name="session-actions" :close-menu="closeSessionMenu" /><AgentToolsSwitch v-if="backendCapabilities.agentTools && session.provider !== 'terminal'" :session-id="session.id" /><button v-if="running" class="danger-text" :disabled="ending" @click="confirmEnd=true; closeSessionMenu()"><Icon name="stop" :size="14" />{{ t('End session…') }}</button></div>
+      <div class="session-menu-content" :style="tabMenuPanelStyle"><div class="session-menu-status"><ProviderIcon :provider="session.provider" :size="14" />{{ t(entry?.state==='opening'?'Connecting…':running?(streamConnected?'Connected':'Process running'):entry?.state==='failed'?'Connection failed':'Session ended') }}</div><button v-if="running" :disabled="ending" @click="reconnect"><Icon name="refresh" :size="14" />{{ t('Reconnect view') }}</button><button v-else :disabled="!!entry?.pending||ending||preparing" @click="retry(); closeSessionMenu()"><Icon name="play" :size="14" />{{ t('Reopen session') }}</button><slot name="session-actions" :close-menu="closeSessionMenu"><button :disabled="ending" @click="emit('environment',session.id); closeSessionMenu()"><Icon name="settings" :size="14" />{{ t('Session environment') }}</button></slot><AgentToolsSwitch v-if="backendCapabilities.agentTools && session.provider !== 'terminal'" :session-id="session.id" /><button v-if="running" class="danger-text" :disabled="ending" @click="confirmEnd=true; closeSessionMenu()"><Icon name="stop" :size="14" />{{ t('End session…') }}</button></div>
     </details></Teleport>
     <div v-if="error||entry?.error" class="inline-error" role="alert">{{ error||entry?.error }}</div>
     <div v-if="backendCapabilities.structuredChat && session.provider!=='terminal'" class="inline-notice chat-upgrade-notice"><span>{{ t(running?'This existing terminal keeps running. End it before switching to the mobile chat UI.':'Switch this stopped session to the mobile chat UI. The native CLI still owns tools and approvals.') }}</span><button class="small-button" :disabled="running||ending||!!entry?.pending" @click="emit('structured',session.id)">{{ t('Use chat UI') }}</button></div>
@@ -75,7 +86,7 @@ function reconnect(){closeSessionMenu();terminalView.value?.reconnect();}
     <details v-else-if="nativeConfig" class="inline-notice shared-session-details"><summary>{{ t('New session · shared host configuration') }}</summary><code>{{ nativeConfig.config_dir }}</code><p>{{ t('This is a new session using the host configuration, not a resumed history session.') }}</p><p>{{ t('Account, model, endpoint, proxy and permissions follow the native client. Shared configuration is not session-isolated.') }}</p><p>{{ t('This is a live directory reference, not a snapshot of its contents. Changes to native settings affect subsequent starts.') }}</p><p>{{ t('AgentDock does not copy credentials or rewrite this configuration. The native client may update its own sign-in cache and history.') }}</p></details>
     <div v-if="confirmEnd" class="confirmation-bar">{{ t('End this session? Its background process will stop; history remains.') }}<button class="small-button danger" :disabled="ending" @click="endSession">{{ t('End session') }}</button><button class="small-button" :disabled="ending" @click="confirmEnd=false">{{ t('Keep connected') }}</button></div>
     <TerminalPane v-if="running" :key="session.id" ref="terminalView" :session-id="session.id" :dark="session.provider==='terminal'" @exit="terminalExited" @status="terminalStatus" />
-    <div v-else class="pane-empty"><ProviderIcon :provider="session.provider" :size="28" /><h3>{{ t(entry?.state==='opening'?'Connecting…':entry?.state==='failed'?'Connection failed':'Session ended') }}</h3><p>{{ t(entry?.state==='opening'?'Connecting to the native client.':'Reopen this session to continue. No process is restarted automatically after it ends.') }}</p><button v-if="entry?.state!=='opening'" class="secondary-button" :disabled="!!entry?.pending||ending" @click="retry">{{ t('Reopen session') }}</button></div>
+    <div v-else class="pane-empty"><ProviderIcon :provider="session.provider" :size="28" /><h3>{{ t(entry?.state==='opening'?'Connecting…':entry?.state==='failed'?'Connection failed':'Session ended') }}</h3><p>{{ t(entry?.state==='opening'?'Connecting to the native client.':'Reopen this session to continue. No process is restarted automatically after it ends.') }}</p><TerminalEndpointSetup v-if="entry?.state!=='opening'" ref="endpointSetup" :session="session" :profiles="profiles" :disabled="ending || !!entry?.pending" @changed="emit('changed')" @profiles="emit('profiles')" /><button v-if="entry?.state!=='opening'" class="secondary-button" :disabled="!!entry?.pending||ending||preparing" @click="retry">{{ t('Reopen session') }}</button></div>
   </section>
 </template>
 <style scoped>

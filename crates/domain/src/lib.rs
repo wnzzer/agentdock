@@ -254,6 +254,10 @@ pub struct Session {
     /// config home `--resume` must read, which belongs to that source session.
     #[serde(default)]
     pub resume_source_id: Option<SessionId>,
+    /// The owner's configuration revision when this terminal was created.
+    /// Pinning it prevents later source endpoint changes from moving its home.
+    #[serde(default)]
+    pub resume_configuration_revision: Option<u64>,
     /// A worktree of the workspace's repository this session runs in, instead
     /// of the workspace directory; `None` is the workspace itself.
     #[serde(default)]

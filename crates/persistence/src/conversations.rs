@@ -140,7 +140,7 @@ impl Store {
             .map(serde_json::to_string)
             .transpose()
             .map_err(conversion_error)?;
-        tx.execute("UPDATE sessions SET endpoint_profile_id=?1,endpoint_snapshot=?2,environment=?3,provider_session_id=NULL,native_source_id=NULL,native_config_dir=NULL,configuration_revision=configuration_revision+1,updated_at=?4,error=NULL WHERE id=?5",
+        tx.execute("UPDATE sessions SET endpoint_profile_id=?1,endpoint_snapshot=?2,environment=?3,provider_session_id=NULL,native_source_id=NULL,native_config_dir=NULL,resume_source_id=NULL,resume_configuration_revision=NULL,configuration_revision=configuration_revision+1,updated_at=?4,error=NULL WHERE id=?5",
             params![profile_id.map(|v|v.to_string()),encoded,serde_json::to_string(&environment).map_err(conversion_error)?,Utc::now().to_rfc3339(),id.to_string()])?;
         append(
             &tx,
@@ -178,7 +178,7 @@ impl Store {
             return Ok(false);
         }
         tx.execute(
-            "UPDATE sessions SET checkout_path=?1,checkout_branch=?2,provider_session_id=NULL,configuration_revision=configuration_revision+1,updated_at=?3,error=NULL WHERE id=?4",
+            "UPDATE sessions SET checkout_path=?1,checkout_branch=?2,provider_session_id=NULL,native_source_id=NULL,native_config_dir=NULL,resume_source_id=NULL,resume_configuration_revision=NULL,configuration_revision=configuration_revision+1,updated_at=?3,error=NULL WHERE id=?4",
             params![path, branch, Utc::now().to_rfc3339(), id.to_string()],
         )?;
         append(

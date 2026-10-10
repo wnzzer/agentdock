@@ -289,6 +289,14 @@ fn error(status: StatusCode, message: &str) -> Response {
     (status, Json(serde_json::json!({"error":message}))).into_response()
 }
 
+/// The one mutation `agentdock resume` makes, which a command line names as
+/// `X-AgentDock-Client: cli`; it is still authenticated like any other.
+fn cli_path(path: &str) -> bool {
+    path.strip_prefix("/api/sessions/")
+        .and_then(|rest| rest.strip_suffix("/launch-plan"))
+        .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+}
+
 pub async fn guard(State(state): State<AppState>, request: Request, next: Next) -> Response {
     let headers = request.headers();
     if !headers
@@ -328,10 +336,9 @@ pub async fn guard(State(state): State<AppState>, request: Request, next: Next) 
         if !matches!(
             *request.method(),
             Method::GET | Method::HEAD | Method::OPTIONS
-        ) && headers
-            .get("x-agentdock-client")
-            .is_none_or(|v| v != "web" && !(agent_path && v == "agent"))
-        {
+        ) && headers.get("x-agentdock-client").is_none_or(|v| {
+            v != "web" && !(agent_path && v == "agent") && !(v == "cli" && cli_path(path))
+        }) {
             return error(
                 StatusCode::FORBIDDEN,
                 "X-AgentDock-Client: web is required for mutations",

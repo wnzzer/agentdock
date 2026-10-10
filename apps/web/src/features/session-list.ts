@@ -60,3 +60,13 @@ export function filterSessionList(sessions: readonly Session[], workspaces: read
   return matches.sort((first, second) => first.score - second.score || second.updated - first.updated || first.index - second.index)
     .map(({ session, workspace }) => ({ session, workspace }));
 }
+
+/**
+ * The command that continues a session in a terminal of one's own, on the
+ * machine AgentDock runs on (`agentdock resume`, server resume.rs): by the
+ * AgentDock session ID, which carries its client, endpoint and checkout. A
+ * client session needs a conversation to continue; a shell always has one.
+ */
+export function resumeCommand(session: Pick<Session, "id" | "provider" | "provider_session_id">): string | undefined {
+  return session.provider === "terminal" || session.provider_session_id ? `agentdock resume ${session.id}` : undefined;
+}

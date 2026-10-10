@@ -12,7 +12,7 @@ use std::{path::Path, sync::Mutex};
 use uuid::Uuid;
 pub type DbError = rusqlite::Error;
 
-const SESSION_COLUMNS: &str = "id, workspace_id, provider, title, status, created_at, updated_at, endpoint_profile_id, provider_session_id, error, endpoint_snapshot, native_source_id, native_config_dir, environment, interaction_mode, configuration_revision, archived_at, ephemeral, resume_source_id, checkout_path, checkout_branch";
+const SESSION_COLUMNS: &str = "id, workspace_id, provider, title, status, created_at, updated_at, endpoint_profile_id, provider_session_id, error, endpoint_snapshot, native_source_id, native_config_dir, environment, interaction_mode, configuration_revision, archived_at, ephemeral, resume_source_id, checkout_path, checkout_branch, resume_configuration_revision";
 const PROFILE_COLUMNS: &str = "id, name, provider, endpoint_url, model, permission_mode, secret_ref, created_at, proxy_url, model_aliases, native_source_id, native_config_dir, native_config_env, environment, effort, models, api";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,7 +32,7 @@ impl Store {
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 18 {
+        if version > 19 {
             return Err(rusqlite::Error::InvalidQuery);
         }
         let tx = connection.transaction()?;
@@ -126,6 +126,11 @@ impl Store {
         if version < 18 {
             tx.execute_batch(include_str!("../../../migrations/0018_profile_api.sql"))?;
         }
+        if version < 19 {
+            tx.execute_batch(include_str!(
+                "../../../migrations/0019_resume_configuration.sql"
+            ))?;
+        }
         // Capture the endpoint settings for legacy M0 sessions once, before templates change.
         let legacy = {
             let mut stmt = tx.prepare("SELECT s.id,p.id FROM sessions s JOIN endpoint_profiles p ON p.id=s.endpoint_profile_id WHERE s.endpoint_snapshot IS NULL")?;
@@ -144,7 +149,7 @@ impl Store {
                 params![snapshot, id],
             )?;
         }
-        tx.pragma_update(None, "user_version", 18)?;
+        tx.pragma_update(None, "user_version", 19)?;
         tx.commit()?;
         Ok(Self {
             connection: Mutex::new(connection),
@@ -435,6 +440,7 @@ impl Store {
             native_source_id: None,
             native_config_dir: None,
             resume_source_id,
+            resume_configuration_revision: None,
             checkout_path: None,
             checkout_branch: None,
             ephemeral,
@@ -452,6 +458,36 @@ impl Store {
             params![session.id.to_string(),workspace_id.to_string(),provider_name(&session.provider),session.title,"stopped",now.to_rfc3339(),endpoint_profile_id.map(|v|v.to_string()),snapshot_json,environment_json,ephemeral,resume_source_id.map(|v|v.to_string()),provider_session_id])?;
         tx.commit()?;
         Ok(session)
+    }
+
+    /// Persist a validated terminal continuation without re-reading a mutable
+    /// endpoint template. All launch settings are copied from the source session.
+    pub fn insert_terminal_reopen(&self, session: &Session) -> Result<()> {
+        if session.resume_source_id.is_none()
+            || session.resume_configuration_revision.is_none()
+            || session.provider == ProviderKind::Terminal
+            || !session.ephemeral
+            || session.provider_session_id.is_none()
+        {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        agentdock_domain::validate_environment(&session.environment)
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let snapshot = session
+            .endpoint_snapshot
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(conversion_error)?;
+        let environment = serde_json::to_string(&session.environment).map_err(conversion_error)?;
+        self.connection.lock().expect("sqlite lock").execute(
+            "INSERT INTO sessions (id,workspace_id,provider,title,status,created_at,updated_at,endpoint_profile_id,endpoint_snapshot,environment,ephemeral,title_source,resume_source_id,provider_session_id,resume_configuration_revision,native_source_id,native_config_dir,checkout_path,checkout_branch) VALUES (?1,?2,?3,?4,'stopped',?5,?5,?6,?7,?8,1,'manual',?9,?10,?11,?12,?13,?14,?15)",
+            params![session.id.to_string(), session.workspace_id.to_string(), provider_name(&session.provider), session.title,
+                session.created_at.to_rfc3339(), session.endpoint_profile_id.map(|id| id.to_string()), snapshot, environment,
+                session.resume_source_id.map(|id| id.to_string()), session.provider_session_id, session.resume_configuration_revision,
+                session.native_source_id, session.native_config_dir, session.checkout_path, session.checkout_branch],
+        )?;
+        Ok(())
     }
 
     pub fn list_sessions(&self, workspace_id: Option<WorkspaceId>) -> Result<Vec<Session>> {
@@ -850,7 +886,7 @@ impl Store {
         }
         let mut conn = self.connection.lock().expect("sqlite lock");
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if let Some(existing)=tx.query_row(&format!("SELECT {SESSION_COLUMNS} FROM sessions WHERE workspace_id=?1 AND native_source_id=?2 AND provider_session_id=?3"),params![workspace_id.to_string(),source_id,native_id],session_row).optional()? {
+        if let Some(existing)=tx.query_row(&format!("SELECT {SESSION_COLUMNS} FROM sessions WHERE workspace_id=?1 AND native_source_id=?2 AND provider_session_id=?3 AND resume_source_id IS NULL"),params![workspace_id.to_string(),source_id,native_id],session_row).optional()? {
             if environment.as_ref().is_some_and(|requested| *requested != existing.environment) { return Ok(None); }
             return Ok(Some(existing));
         }
@@ -999,6 +1035,7 @@ fn session_row(r: &rusqlite::Row<'_>) -> Result<Session> {
             .transpose()?,
         checkout_path: r.get(19)?,
         checkout_branch: r.get(20)?,
+        resume_configuration_revision: r.get(21)?,
         endpoint_profile_id: r.get::<_, Option<String>>(7)?.map(parse_uuid).transpose()?,
         provider_session_id: r.get(8)?,
         error: r.get(9)?,
@@ -1289,6 +1326,76 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.directory);
         }
+    }
+
+    #[test]
+    fn version_eighteen_pins_legacy_terminal_revision_once() {
+        let fixture = TempProfileDatabase::new();
+        let (source_id, terminal_id) = {
+            let store = Store::open(&fixture.path).unwrap();
+            let workspace = store.create_workspace("fixture", "/fixture").unwrap();
+            let source = store
+                .create_session(workspace.id, ProviderKind::Codex, "source")
+                .unwrap();
+            let terminal = store
+                .create_session_with_options(
+                    workspace.id,
+                    ProviderKind::Codex,
+                    "terminal",
+                    None,
+                    None,
+                    None,
+                    Default::default(),
+                    true,
+                    Some(source.id),
+                    Some("native-id".into()),
+                )
+                .unwrap();
+            let conn = store.connection.lock().unwrap();
+            conn.execute(
+                "UPDATE sessions SET configuration_revision=3 WHERE id=?1",
+                [source.id.to_string()],
+            )
+            .unwrap();
+            conn.execute_batch("ALTER TABLE sessions DROP COLUMN resume_configuration_revision; PRAGMA user_version=18;").unwrap();
+            (source.id, terminal.id)
+        };
+        {
+            let store = Store::open(&fixture.path).unwrap();
+            let terminal = store.get_session(terminal_id).unwrap().unwrap();
+            assert_eq!(terminal.resume_configuration_revision, Some(3));
+            assert_eq!(terminal.provider_session_id.as_deref(), Some("native-id"));
+            assert_eq!(
+                store
+                    .get_session(source_id)
+                    .unwrap()
+                    .unwrap()
+                    .resume_configuration_revision,
+                None
+            );
+            assert!(
+                store
+                    .switch_session_configuration(source_id, None, None)
+                    .unwrap()
+            );
+        }
+        let store = Store::open(&fixture.path).unwrap();
+        assert_eq!(
+            store
+                .get_session(terminal_id)
+                .unwrap()
+                .unwrap()
+                .resume_configuration_revision,
+            Some(3)
+        );
+        assert_eq!(
+            store
+                .get_session(source_id)
+                .unwrap()
+                .unwrap()
+                .configuration_revision,
+            4
+        );
     }
 
     fn ordinary_profile() -> EndpointProfile {
@@ -1883,7 +1990,7 @@ mod tests {
                     .unwrap()
                     .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                     .unwrap(),
-                18
+                19
             );
             let current = store.get_endpoint_profile(profile.id).unwrap().unwrap();
             assert!(current.native_config.is_none());
@@ -2273,7 +2380,7 @@ mod tests {
                     .unwrap()
                     .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                     .unwrap(),
-                18
+                19
             );
             assert!(matches!(
                 store.get_session(session_id).unwrap().unwrap().status,

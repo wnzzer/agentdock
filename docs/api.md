@@ -25,19 +25,24 @@ POST /api/sessions/:id/keep
 PATCH /api/sessions/:id/environment {environment}
 POST /api/sessions/:id/start
 POST /api/sessions/:id/stop
+POST /api/sessions/:id/launch-plan?force=true   (agentdock resume; this machine only)
 POST /api/sessions/:id/message {content}
 WS   /api/sessions/:id/pty/ws?cols=120&rows=40
 ```
 
 Providers: `claude_code`, `codex`, `terminal`. Create records a stopped session and an immutable `endpoint_snapshot`; profile environment defaults plus explicit request overrides form the session's effective `environment` map. A new isolated/custom-profile session may override its model; native-reference profiles keep the native model setting. Start is idempotent for a running process. Stop is idempotent for an existing stopped session. Clients cannot PATCH runtime states. The UI calls start when the user opens/reopens a session, coalescing concurrent requests; ordinary view remounts never revive stopped sessions. End is a secondary, confirmed menu action. These lifecycle APIs remain available even though primary Start/Stop buttons were removed. Opening environment settings from the sidebar gear or pane menu only inspects configuration and never starts a session.
 
+`POST /api/sessions/:id/launch-plan` is what `agentdock resume <id>` runs: `{program,args,cwd,env,env_remove,title,provider,provider_session_id}` for continuing the session's conversation in a terminal of one's own, built by the same launch layer as an escape-hatch terminal (pinned configuration revision, checkout, endpoint, model, effort, permission and resume selector) without recording a session. Because `env` carries the endpoint's resolved key, it answers only connections from a loopback address, and takes `X-AgentDock-Client: cli` (or `web`) plus the usual authentication. A session AgentDock is running is refused with 409 unless `force=true`; a client session without a native conversation yet is refused with 409; a terminal session opens its shell in the session's directory.
+
 `PATCH /api/sessions/:id {title}` changes the AgentDock display title and returns the same session record. The session ID, workspace, native resume identity, conversation history and live process are unchanged. The title is propagated to every open canvas tab bound to that session. For a newly started or explicitly reopened isolated Claude Code session, AgentDock also forwards the title as Claude Code's native `--name`; imported/native-reference sessions keep their original client-owned naming and history identity. Blank or oversized titles are rejected.
 
 `ephemeral` marks a temporary session and can only be set at creation. Closing its
 canvas window discards it — the one place where closing a view ends a process, allowed
-only because the user opted in up front. A restart clears temporary sessions instead of
-leaving them as stopped records, and they stay out of the persisted layout so a refresh
-never resurrects a window whose session is gone.
+only because the user opted in up front. A terminal goes with its tab at once; only a
+conversation in the middle of a turn asks first. A restart clears temporary sessions
+instead of leaving them as stopped records. The persisted layout keeps a temporary
+window's pane, marked `metadata.ephemeral`, so a refresh keeps it open and closable; a
+marked pane whose session is gone is dropped on load rather than resurrected.
 
 `DELETE /api/sessions/:id` stops the session and removes the record, returning `{id}`.
 It returns `409` for a permanent session: a session that was safe to keep can never be

@@ -6,6 +6,8 @@ import { providerLabel } from "./api";
 import { isEphemeralSession, isSessionArchived } from "./session-list";
 import { workspaceSessionPane } from "./workspace-groups";
 import Icon from "./Icon.vue";
+import SessionCommonActions from "./SessionCommonActions.vue";
+import SessionRunInfo from "./SessionRunInfo.vue";
 import ProviderIcon from "./ProviderIcon.vue";
 
 const props = withDefaults(defineProps<{
@@ -31,6 +33,7 @@ const emit = defineEmits<{
 }>();
 const { t } = useI18n();
 const menuOpen = ref(false);
+const showInfo = ref(false);
 const menuButton = ref<HTMLButtonElement>();
 const confirmDelete = ref(false);
 /** Deleting is offered only where the server allows it: a temporary session,
@@ -129,9 +132,7 @@ function submitRename() {
       <button type="button" :aria-label="t('Cancel rename')" :title="t('Cancel rename')" @click="cancelRename"><Icon name="close" :size="12" /></button>
     </form>
     <div v-else-if="menuOpen" class="sidebar-session-menu" role="menu" :aria-label="t('Session actions')">
-      <button class="session-rename-action" role="menuitem" @click="beginRename"><Icon name="edit" :size="13" />{{ t('Rename session') }}</button>
-      <button class="session-environment-action" role="menuitem" @click="environment"><Icon name="settings" :size="13" />{{ t('Session environment') }}</button>
-      <button v-if="isEphemeralSession(session)" class="session-keep-action" role="menuitem" :disabled="keepBusy" :aria-busy="keepBusy" :title="t('Keep this temporary session permanently. It stays in the session list and closing its window no longer discards it.')" @click="keepSession"><Icon name="check" :size="13" />{{ t(keepBusy ? 'Saving…' : 'Keep this session') }}</button>
+      <SessionCommonActions :session="session" :keep-busy="keepBusy" :close-menu="() => closeMenu(true)" @rename="beginRename" @environment="environment" @keep="keepSession" @info="showInfo = true" />
       <hr />
       <button class="session-archive-action" role="menuitem" :disabled="!archiveSupported || archiveBusy" :aria-busy="archiveBusy" :title="!archiveSupported ? t('Upgrade the backend to archive sessions.') : t(isSessionArchived(session) ? 'Restore this session to its workspace list.' : 'Archive hides this session from workspace lists without stopping it.')" @click="archiveSession"><Icon :name="isSessionArchived(session) ? 'restore' : 'archive'" :size="13" />{{ t(archiveBusy ? 'Saving…' : isSessionArchived(session) ? 'Restore session' : 'Archive session') }}</button>
       <small v-if="!archiveSupported">{{ t('Upgrade the backend to archive sessions.') }}</small>
@@ -144,6 +145,7 @@ function submitRename() {
         <button v-else class="session-delete-action" role="menuitem" :disabled="deleteBusy" @click="confirmDelete = true"><Icon name="close" :size="13" />{{ t('Delete session…') }}</button>
       </template>
     </div>
+    <Teleport to="body"><SessionRunInfo v-if="showInfo" :session="session" @close="showInfo = false" /></Teleport>
   </li>
 </template>
 

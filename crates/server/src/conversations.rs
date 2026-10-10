@@ -284,14 +284,7 @@ pub async fn start_locked(state: &AppState, session: &Session) -> Result<Arc<Cha
             "At most 32 native chat processes can run at once",
         ));
     }
-    let cwd = crate::checkouts::session_cwd(state, session).await?;
-    let config_state = state.clone();
-    let config_session = session.clone();
-    let spec = tokio::task::spawn_blocking(move || {
-        crate::providers::build(&config_state, &config_session, cwd)
-    })
-    .await
-    .map_err(ApiError::internal)??;
+    let spec = crate::launch::prepare(state, session).await?;
     let mut command = crate::bridge::node_command(&[], &state.chat_bridge);
     command.current_dir(&spec.cwd).envs(&spec.env);
     for key in &spec.env_remove {
