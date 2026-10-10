@@ -835,7 +835,6 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Session ended": "会话已结束",
   "Session actions": "会话操作",
   "More session actions": "更多会话操作…",
-  "Close multiple tabs": "批量关闭",
   "Rename session": "重命名会话",
   "Session title": "会话名称",
   "Save session name": "保存会话名称",

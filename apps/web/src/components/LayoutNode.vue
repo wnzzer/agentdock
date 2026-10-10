@@ -7,6 +7,8 @@ import { useI18n } from "../i18n";
 import TabIcon from "../features/TabIcon.vue";
 import Icon from "../features/Icon.vue";
 import ContextMenu from "../features/ContextMenu.vue";
+import MenuFlyout from "../features/MenuFlyout.vue";
+import { lastQuickProvider } from "../features/quick-session";
 import SessionCommonActions from "../features/SessionCommonActions.vue";
 import { SESSION_ACTIONS } from "../features/session-actions-context";
 import { sessionStatuses } from "../features/attention";
@@ -59,32 +61,6 @@ async function openSessionActions(pane: PaneNode) {
 
 const sessionActions = inject(SESSION_ACTIONS, null);
 const menuSession = computed(() => { const id = tabMenu.value?.pane.metadata?.session_id; return typeof id === "string" ? sessionActions?.session(id) : undefined; });
-/**
- * The bulk closes, in a submenu beside "Close multiple tabs": in the menu
- * itself four "Close … tabs" lines read as a wall. Opened by hover, click or
- * the right arrow; a short delay lets the pointer travel across to it. On a
- * phone, where the menu is a bottom sheet, it opens inline below instead.
- */
-const bulkOpen = ref(false), bulkTrigger = ref<HTMLButtonElement>(), bulkMenu = ref<HTMLElement>();
-const bulkPosition = ref({ left: 0, top: 0 });
-const bulkStyle = computed(() => ({ left: bulkPosition.value.left + "px", top: bulkPosition.value.top + "px" }));
-let bulkTimer: ReturnType<typeof setTimeout> | undefined;
-async function openBulk(focus: boolean) {
-  clearTimeout(bulkTimer);
-  const row = bulkTrigger.value?.getBoundingClientRect();
-  if (row) {
-    const width = 180, height = 4 * 32 + 12;
-    const left = row.right + 4 + width <= window.innerWidth - 8 ? row.right + 4 : row.left - 4 - width;
-    bulkPosition.value = { left: Math.max(4, left), top: Math.max(4, Math.min(row.top - 5, window.innerHeight - height - 8)) };
-  }
-  bulkOpen.value = true;
-  if (focus) { await nextTick(); bulkMenu.value?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus(); }
-}
-function keepBulk() { clearTimeout(bulkTimer); }
-function leaveBulk() { clearTimeout(bulkTimer); bulkTimer = setTimeout(() => { bulkOpen.value = false; }, 180); }
-function closeBulk(focusTrigger: boolean) { clearTimeout(bulkTimer); bulkOpen.value = false; if (focusTrigger) bulkTrigger.value?.focus(); }
-watch(tabMenu, () => closeBulk(false));
-onBeforeUnmount(() => clearTimeout(bulkTimer));
 const menuOthers = computed(() => tabMenu.value ? tabs.value.filter(pane => pane.id !== tabMenu.value!.pane.id) : []);
 const menuLeft = computed(() => {
   const current = tabMenu.value; if (!current) return [];
@@ -103,6 +79,7 @@ function openPaneMenu(event: MouseEvent) {
   // A tab's own right-click has already opened the tab menu.
   if (event.defaultPrevented) return;
   event.preventDefault();
+  refreshLastKind();
   paneMenu.value = { x: event.clientX, y: event.clientY };
 }
 function paneAction(run: () => void) { paneMenu.value = null; run(); }
@@ -145,6 +122,14 @@ const paneTypes: { kind: LeafPaneKind; title: string }[] = [
 ];
 const newSessionKinds: { provider: ProviderKind; title: string; values?: Record<string, string> }[] = PROVIDER_KINDS.map(provider =>
   provider === "terminal" ? { provider, title: "New terminal" } : { provider, title: "New {provider} session", values: { provider: providerLabel(provider) } });
+/**
+ * New sessions are one row, the kind made last time, with every kind beside
+ * it: one click for the usual, and a list that does not grow down the menu
+ * with each client added. Read again whenever a menu opens.
+ */
+const lastProvider = ref<ProviderKind>(lastQuickProvider());
+const lastKind = computed(() => newSessionKinds.find(entry => entry.provider === lastProvider.value) ?? newSessionKinds[0]);
+function refreshLastKind() { lastProvider.value = lastQuickProvider(); }
 /** Running or waiting on you, for the dot on a session's tab; nothing for the rest. */
 function tabStatus(pane: PaneNode) {
   const id = pane.metadata?.session_id;
@@ -315,23 +300,24 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
             <hr/>
           </template>
           <button v-else-if="tabMenu.pane.metadata?.session_id" role="menuitem" @click="openSessionActions(tabMenu.pane)"><Icon name="more" :size="14" />{{ t('Session actions') }}</button>
-          <button role="menuitem" @click="closePanes([tabMenu.pane])"><Icon name="close" :size="14" />{{ t('Close tab') }}</button>
-          <button ref="bulkTrigger" role="menuitem" class="tab-menu-bulk-trigger" aria-haspopup="menu" :aria-expanded="bulkOpen" @click="openBulk(true)" @mouseenter="openBulk(false)" @mouseleave="leaveBulk" @keydown.right.prevent="openBulk(true)"><Icon name="layout" :size="14" />{{ t('Close multiple tabs') }}<Icon name="chevron" :size="13" class="tab-menu-chevron" /></button>
-          <nav v-if="bulkOpen" ref="bulkMenu" class="tab-menu-flyout" role="menu" :aria-label="t('Close multiple tabs')" :style="bulkStyle" @mouseenter="keepBulk" @mouseleave="leaveBulk" @keydown.left.stop.prevent="closeBulk(true)" @keydown.esc.stop.prevent="closeBulk(true)">
+          <MenuFlyout :label="t('Close tab')" icon="close" :width="180" @activate="closePanes([tabMenu!.pane])">
             <button role="menuitem" :disabled="!menuOthers.length" @click="closePanes(menuOthers)">{{ t('Close other tabs') }}</button>
             <button role="menuitem" :disabled="!menuLeft.length" @click="closePanes(menuLeft)">{{ t('Close tabs to the left') }}</button>
             <button role="menuitem" :disabled="!menuRight.length" @click="closePanes(menuRight)">{{ t('Close tabs to the right') }}</button>
             <button role="menuitem" @click="closePanes(tabs)">{{ t('Close all tabs') }}</button>
-          </nav>
+          </MenuFlyout>
         </ContextMenu>
       </div>
       <div class="dock-actions" @pointerdown.stop>
         <button v-if="node.type === 'stack' && node.collapsedFrom" type="button" class="dock-action dock-adaptive" :title="t('Reset folded split to 1:1; expands when space allows')" :aria-label="t('Restore folded split ratio')" @click="emit('resize', targetId, 0.5, true)"><Icon name="restore" :size="13" /></button>
-        <details ref="addMenu" class="dock-add-menu">
+        <details ref="addMenu" class="dock-add-menu" @toggle="refreshLastKind">
           <summary class="dock-action" :title="t('New session here')" :aria-label="t('New session here')"><Icon name="plus" :size="15" /></summary>
           <div class="dock-menu-items">
-            <button v-for="entry in newSessionKinds" :key="entry.provider" type="button" @click="createSession(entry.provider)"><TabIcon :kind="entry.provider === 'terminal' ? 'terminal' : 'agent_chat'" :provider="entry.provider === 'terminal' ? undefined : entry.provider" :size="14" />{{ t(entry.title, entry.values) }}</button>
-            <button v-if="ephemeralSupported" type="button" @click="createSession(DEFAULT_CLIENT, true)"><Icon name="clock" :size="14" />{{ t('New temporary window') }}</button>
+            <MenuFlyout :label="t(lastKind.title, lastKind.values)" @activate="createSession(lastKind.provider)">
+              <template #icon><TabIcon :kind="lastKind.provider === 'terminal' ? 'terminal' : 'agent_chat'" :provider="lastKind.provider === 'terminal' ? undefined : lastKind.provider" :size="14" /></template>
+              <button v-for="entry in newSessionKinds" :key="entry.provider" type="button" role="menuitem" @click="createSession(entry.provider)"><TabIcon :kind="entry.provider === 'terminal' ? 'terminal' : 'agent_chat'" :provider="entry.provider === 'terminal' ? undefined : entry.provider" :size="14" />{{ t(entry.title, entry.values) }}</button>
+              <template v-if="ephemeralSupported"><hr /><button type="button" role="menuitem" @click="createSession(DEFAULT_CLIENT, true)"><Icon name="clock" :size="14" />{{ t('New temporary window') }}</button></template>
+            </MenuFlyout>
             <hr />
             <button v-for="type in paneTypes" :key="type.kind" type="button" @click="add(type.kind)"><TabIcon :kind="type.kind" :size="14" />{{ t(type.title) }}</button>
           </div>
@@ -349,8 +335,11 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
     </div>
     <ContextMenu v-if="paneMenu" :x="paneMenu.x" :y="paneMenu.y" :label="t('Pane actions')" @close="paneMenu = null">
       <div class="context-menu-label">{{ t('New session here') }}</div>
-      <button v-for="entry in newSessionKinds" :key="entry.provider" role="menuitem" @click="paneAction(() => createSession(entry.provider))"><TabIcon :kind="entry.provider === 'terminal' ? 'terminal' : 'agent_chat'" :provider="entry.provider === 'terminal' ? undefined : entry.provider" :size="14" />{{ t(entry.title, entry.values) }}</button>
-      <button v-if="ephemeralSupported" role="menuitem" @click="paneAction(() => createSession(DEFAULT_CLIENT, true))"><Icon name="clock" :size="14" />{{ t('New temporary window') }}</button>
+      <MenuFlyout :label="t(lastKind.title, lastKind.values)" @activate="paneAction(() => createSession(lastKind.provider))">
+        <template #icon><TabIcon :kind="lastKind.provider === 'terminal' ? 'terminal' : 'agent_chat'" :provider="lastKind.provider === 'terminal' ? undefined : lastKind.provider" :size="14" /></template>
+        <button v-for="entry in newSessionKinds" :key="entry.provider" role="menuitem" @click="paneAction(() => createSession(entry.provider))"><TabIcon :kind="entry.provider === 'terminal' ? 'terminal' : 'agent_chat'" :provider="entry.provider === 'terminal' ? undefined : entry.provider" :size="14" />{{ t(entry.title, entry.values) }}</button>
+        <template v-if="ephemeralSupported"><hr /><button role="menuitem" @click="paneAction(() => createSession(DEFAULT_CLIENT, true))"><Icon name="clock" :size="14" />{{ t('New temporary window') }}</button></template>
+      </MenuFlyout>
       <hr />
       <button v-for="type in paneTypes" :key="type.kind" role="menuitem" @click="paneAction(() => add(type.kind))"><TabIcon :kind="type.kind" :size="14" />{{ t(type.title) }}</button>
       <hr />
@@ -398,15 +387,6 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
 .dock-tab-workspace { max-width:80px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;font-size:var(--text-xs);border-radius:var(--radius-xs);padding:1px 4px;background:var(--ok-soft);color:var(--muted); }
 .dock-tab.is-ephemeral { border-bottom-style:dashed; }.dock-tab.is-ephemeral.is-active { border-bottom-color:var(--violet); }
 .dock-tab-ephemeral { flex-shrink:0;width:5px;height:5px;margin-left:-3px;border-radius:50%;background:var(--violet);box-shadow:0 0 0 2px #efeaf8; }
-.tab-menu-bulk-trigger[aria-expanded="true"]{background:var(--fill);color:var(--ink)}
-.tab-menu-chevron{margin-left:auto;color:var(--faint)!important}
-/* Looks like .context-menu, without its phone bottom-sheet rules (styles.css). */
-.tab-menu-flyout{position:fixed;z-index:71;min-width:180px;padding:5px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md);box-shadow:var(--shadow-lg)}
-.tab-menu-flyout>button{display:flex;align-items:center;width:100%;min-height:30px;padding:6px 10px;border:0;border-radius:var(--radius-sm);background:none;text-align:left;font-size:var(--text-sm);color:var(--ink-soft);white-space:nowrap;cursor:pointer}
-.tab-menu-flyout>button:hover:not(:disabled),.tab-menu-flyout>button:focus-visible{background:var(--fill);color:var(--ink);outline:none}
-.tab-menu-flyout>button:disabled{opacity:.4;cursor:not-allowed}
-@media(max-width:760px){.tab-menu-flyout{position:static;min-width:0;padding:0 0 0 22px;border:0;box-shadow:none;background:none}}
-@media(pointer:coarse){.tab-menu-flyout>button{min-height:44px}}
 .tab-menu-title{overflow:hidden;max-width:240px;text-overflow:ellipsis;white-space:nowrap}
 .dock-tab-session-actions{position:relative;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:none}
 .dock-tab:not(.is-active)>.dock-tab-session-actions { display:none; }
@@ -419,7 +399,7 @@ onBeforeUnmount(() => { cleanupResize?.(); window.removeEventListener('resize', 
 .dock-action:hover,.dock-action:focus-visible { background:var(--accent-soft);color:var(--accent-ink);outline:none; }
 .dock-action::-webkit-details-marker { display:none; }
 .dock-add-menu { position:static; }.dock-menu-items { position:absolute;right:6px;top:37px;z-index:10;min-width:154px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md);padding:5px;box-shadow:var(--shadow-lg); }
-.dock-menu-items button { display:flex;align-items:center;gap:9px;width:100%;border:0;border-radius:var(--radius-sm);padding:8px;background:transparent;color:var(--ink-soft);text-align:left;font-size:var(--text-sm);cursor:pointer; }.dock-menu-items button:hover { background:var(--ok-soft);color:var(--accent-ink); }
+.dock-menu-items button, .dock-menu-items :deep(.menu-flyout-trigger) { display:flex;align-items:center;gap:9px;width:100%;border:0;border-radius:var(--radius-sm);padding:8px;background:transparent;color:var(--ink-soft);text-align:left;font-size:var(--text-sm);cursor:pointer; }.dock-menu-items button:hover, .dock-menu-items :deep(.menu-flyout-trigger):hover, .dock-menu-items :deep(.menu-flyout-trigger[aria-expanded="true"]) { background:var(--ok-soft);color:var(--accent-ink); }
 .dock-adaptive { color:var(--faint);font-size:var(--text-sm);padding:0 3px; }
 .dock-content { display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;overflow:hidden; }
 .dock-content :deep(> *) { min-width:0;min-height:0; }
