@@ -52,7 +52,7 @@ async function restart() {
 <template>
   <section class="update-page">
     <div class="settings-lead"><p>{{ t('Which AgentDock this server runs, and how to move it to the newest release.') }}</p></div>
-    <p v-if="error" class="account-error" role="alert">{{ error }}</p>
+    <p v-if="error" class="inline-error" role="alert">{{ error }}</p>
     <article class="preference-card update-card">
       <div class="update-row">
         <span><strong>{{ t('Installed version') }}</strong><small>{{ status?.current ?? '…' }}</small></span>

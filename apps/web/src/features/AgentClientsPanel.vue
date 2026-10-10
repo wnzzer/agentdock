@@ -76,8 +76,8 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); });
 
     <div v-if="!supported||unavailable" class="clients-unavailable"><Icon name="settings" :size="25"/><h3>{{ t('Client management needs an updated backend') }}</h3><p>{{ t('Sessions still launch whatever client is already on this host. Nothing is installed or changed here.') }}</p></div>
     <template v-else>
-      <p v-if="error" class="account-error" role="alert">{{ error }}</p>
-      <p v-if="notice" class="account-notice" role="status">{{ notice }}</p>
+      <p v-if="error" class="inline-error client-message" role="alert">{{ error }}</p>
+      <p v-if="notice" class="inline-success client-message" role="status">{{ notice }}</p>
       <p v-if="loading&&!clients.length" class="clients-quiet">{{ t('Checking this host…') }}</p>
 
       <article v-for="client in clients" :key="client.provider" class="client-card">
@@ -90,10 +90,10 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); });
           <span :class="['client-state',client.installed?'installed':'missing']">{{ t(client.installed?'Installed':'Not installed') }}</span>
         </header>
         <p v-if="client.managed_path&&client.shadowed" class="clients-quiet">{{ t('AgentDock has its own copy, but the host PATH copy wins. Installing again will not change which client sessions run.') }}</p>
-        <div v-if="confirming===client.provider" class="account-confirm">
+        <div v-if="confirming===client.provider" class="client-confirm" role="group" :aria-label="t('Install {name} from npm?', { name: providerLabel(client.provider) })">
           <strong>{{ t('Install {name} from npm?', { name: providerLabel(client.provider) }) }}</strong>
           <p>{{ t('This downloads {package} from the npm registry and runs its install scripts on this host. It installs into AgentDock\'s own directory, not globally, and never replaces a client already on PATH.', { package: client.npm_package }) }}</p>
-          <div class="account-buttons"><button :disabled="!!busy" @click="confirming=undefined">{{ t('Cancel') }}</button><button class="account-primary" :disabled="!!busy" @click="install(client)">{{ t(busy===client.provider?'Installing…':'Install now') }}</button></div>
+          <div class="client-confirm-actions"><button type="button" class="small-button" :disabled="!!busy" @click="confirming=undefined">{{ t('Cancel') }}</button><button type="button" class="small-button primary" :disabled="!!busy" @click="install(client)">{{ t(busy===client.provider?'Installing…':'Install now') }}</button></div>
         </div>
         <div v-else-if="client.install_available" class="client-actions">
           <button type="button" class="client-link" :disabled="!!busy" @click="confirming=client.provider;notice=''">{{ t(client.installed?'Install or update AgentDock copy…':'Install from npm…') }}</button>
@@ -109,6 +109,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); });
 .settings-lead p{flex:1;margin:0;font-size:var(--text-sm);line-height:1.7;color:var(--ink-soft)}
 .settings-lead-action{display:grid;place-items:center;width:30px;height:30px;flex-shrink:0;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface);color:var(--ink-soft);cursor:pointer}
 .settings-lead-action:hover:not(:disabled){color:var(--teal);border-color:var(--teal-line)}
+.client-message{margin:0 0 10px}
 .clients-quiet{font-size:var(--text-xs);line-height:1.7;color:var(--muted);margin:8px 0 0}
 .client-card{border:1px solid var(--border);border-radius:var(--radius-lg);padding:13px 14px;margin-bottom:10px;background:var(--surface)}
 .client-card header{display:flex;align-items:center;gap:11px}
@@ -122,6 +123,12 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); });
 .client-state.installed{background:var(--ok-soft);color:var(--accent-ink)}
 .client-state.missing{background:var(--warn-soft);color:#9c844c}
 .client-actions{margin:8px 0 0 45px}
+/* Under the client's name, as its actions are: a quiet panel, not page-sized text. */
+.client-confirm{margin:10px 0 0 45px;padding:11px 13px;border:1px solid var(--line);border-radius:var(--radius-md);background:var(--sunken)}
+.client-confirm strong{font-size:var(--text-sm);font-weight:600}
+.client-confirm p{margin:4px 0 0;font-size:var(--text-xs);line-height:1.7;color:var(--ink-soft);overflow-wrap:anywhere}
+.client-confirm-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
+@media(max-width:520px){.client-confirm,.client-actions{margin-left:0}}
 .client-link{border:0;background:none;padding:2px 0;font:inherit;font-size:var(--text-sm);color:var(--teal);cursor:pointer}
 .client-link:hover:not(:disabled){text-decoration:underline}
 .client-link:disabled{opacity:.5;cursor:not-allowed}

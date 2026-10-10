@@ -84,7 +84,7 @@ async function revokeGrants() { try { hostGrants.value = await request('/host/gr
 <template>
   <section class="preferences-page">
     <div class="settings-lead"><p>{{ t('What a new session starts with. The new-session dialog and each session\'s own controls can still change it.') }}</p><span v-if="saving||saved" class="preferences-state" role="status">{{ t(saving ? 'Saving…' : 'Saved') }}</span></div>
-    <p v-if="error" class="account-error" role="alert">{{ error }}</p>
+    <p v-if="error" class="inline-error" role="alert">{{ error }}</p>
     <!-- The interface language belongs to this browser, not the server: it is
          a per-viewer choice, and a phone and a laptop may well differ. -->
     <article class="preference-card">

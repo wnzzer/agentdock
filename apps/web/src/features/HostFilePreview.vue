@@ -88,7 +88,7 @@ async function copyPath() {
           </div>
         </div>
       </div>
-      <p v-else-if="error" class="account-error" role="alert">{{ error }}</p>
+      <p v-else-if="error" class="inline-error" role="alert">{{ error }}</p>
       <div v-else-if="media && kind !== 'text'" class="host-file-media"><MediaPreview :url="rawUrl" :kind="kind" :name="name" /></div>
       <p v-else-if="content === undefined" class="host-file-quiet">{{ t('Loading…') }}</p>
       <div v-else ref="body" class="host-file-body">
