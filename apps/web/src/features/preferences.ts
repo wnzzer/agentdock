@@ -14,8 +14,10 @@ export interface ProviderPreference { endpoint_profile_id?: string | null; effor
  * `resource_monitoring`: whether the host's resources are read at all, for
  * the status bar, the system page and the recorded history. Absent means on
  * for both.
+ * `appearance`, `terminal_appearance`: `light` or `dark`; absent follows the
+ * system and the interface (theme.ts).
  */
-export type Preferences = Record<AgentProviderKind, ProviderPreference> & { agent_tools?: boolean; resource_monitoring?: boolean };
+export type Preferences = Record<AgentProviderKind, ProviderPreference> & { agent_tools?: boolean; resource_monitoring?: boolean; appearance?: string; terminal_appearance?: string };
 export type PreferenceProvider = AgentProviderKind;
 
 /** The one copy the page reads; loaded once and replaced on save. */

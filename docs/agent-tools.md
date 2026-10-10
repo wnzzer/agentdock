@@ -26,7 +26,7 @@ Turn it off for every session under **Settings → Preferences → AgentDock too
 | `agentdock_status` | Which session, workspace, directory and endpoint is calling | — |
 | `agentdock_list` | Workspaces, sessions (metadata only), endpoint profiles (whether a key is set, never the key), installed clients | — |
 | `agentdock_endpoint` | Create, change, delete, test, or import a host configuration as an endpoint profile | Yes, except `test` |
-| `agentdock_preferences` | New-session defaults per client: endpoint, effort, permission | Only a switch to running tools without asking |
+| `agentdock_preferences` | New-session defaults per client: endpoint, effort, permission; the interface and terminal theme | Only a switch to running tools without asking |
 | `agentdock_workspace` | Add a directory as a workspace | — |
 | `agentdock_spawn` | Start a Claude Code or Codex session with a first message, optionally on its own branch | The first time per session |
 | `agentdock_session` | Follow sessions it started (`list`, `result`, `wait`, `message`); rename or keep its own | — |

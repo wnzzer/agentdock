@@ -45,14 +45,16 @@ pub fn tools() -> Vec<Value> {
         ),
         crate::agent::tool(
             "agentdock_preferences",
-            "Read or change what new sessions start with, per client: default endpoint profile, reasoning effort and permission mode. Changes apply to sessions started afterwards and are shown to the person with an undo; making tools run without asking is confirmed first.",
+            "Read or change AgentDock's settings: what new sessions start with, per client (default endpoint profile, reasoning effort, permission mode), and how the interface and its terminals look. Session defaults apply to sessions started afterwards; the appearance changes every open window at once. Changes are shown to the person with an undo; making tools run without asking is confirmed first.",
             object(
                 json!({
                     "action": { "type": "string", "enum": ["get", "set"] },
                     "provider": { "type": "string", "enum": ProviderKind::AGENTS.map(|kind| kind.as_str()) },
                     "endpoint_id": { "type": ["string", "null"], "description": "Profile id, or null for the last used." },
                     "effort": { "type": ["string", "null"] },
-                    "permission": { "type": ["string", "null"], "enum": ["ask", "plan", "accept_edits", "danger", null] }
+                    "permission": { "type": ["string", "null"], "enum": ["ask", "plan", "accept_edits", "danger", null] },
+                    "appearance": { "type": "string", "enum": ["system", "light", "dark"], "description": "The interface theme; system follows the operating system. Needs no provider." },
+                    "terminal_appearance": { "type": "string", "enum": ["interface", "light", "dark"], "description": "The terminals' theme; interface follows the interface theme. Needs no provider." }
                 }),
                 &["action"],
             ),
@@ -494,13 +496,35 @@ fn preference_view(
             "permission": p.permission,
         })
     };
-    Value::Object(
-        preferences
-            .clients
-            .iter()
-            .map(|(kind, preference)| (kind.as_str().to_owned(), one(preference)))
-            .collect(),
-    )
+    let mut view: Map<String, Value> = preferences
+        .clients
+        .iter()
+        .map(|(kind, preference)| (kind.as_str().to_owned(), one(preference)))
+        .collect();
+    view.insert(
+        "appearance".to_owned(),
+        json!(preferences.appearance.as_deref().unwrap_or("system")),
+    );
+    view.insert(
+        "terminal_appearance".to_owned(),
+        json!(
+            preferences
+                .terminal_appearance
+                .as_deref()
+                .unwrap_or("interface")
+        ),
+    );
+    Value::Object(view)
+}
+
+/// An appearance argument: absent leaves it, the following value (`system`,
+/// `interface`) or null clears it, `light` and `dark` pin it.
+fn appearance_field(
+    arguments: &Value,
+    key: &str,
+    follow: &str,
+) -> Result<Option<Option<String>>, ApiError> {
+    Ok(field(arguments, key)?.map(|value| value.filter(|value| value != follow)))
 }
 
 pub async fn preferences(
@@ -513,8 +537,31 @@ pub async fn preferences(
     match text(arguments, "action") {
         Some("get") => Ok(preference_view(&current, &profiles)),
         Some("set") => {
-            let provider = provider_of(arguments)?;
             let mut next = current.clone();
+            if let Some(value) = appearance_field(arguments, "appearance", "system")? {
+                next.appearance = value;
+            }
+            if let Some(value) = appearance_field(arguments, "terminal_appearance", "interface")? {
+                next.terminal_appearance = value;
+            }
+            let client_fields = ["provider", "endpoint_id", "effort", "permission"]
+                .iter()
+                .any(|key| arguments.get(key).is_some());
+            if !client_fields {
+                if next == current {
+                    return Ok(json!({ "unchanged": preference_view(&current, &profiles) }));
+                }
+                crate::preferences::save(state, &next).await?;
+                let previous = serde_json::to_value(&current).map_err(ApiError::internal)?;
+                state.activity.notify(
+                    who(state, caller).await,
+                    "Changed the appearance",
+                    json!({}),
+                    Some(Undo::Preferences(previous)),
+                );
+                return Ok(json!({ "saved": preference_view(&next, &profiles) }));
+            }
+            let provider = provider_of(arguments)?;
             let entry = next.clients.entry(provider).or_default();
             if let Some(value) = field(arguments, "endpoint_id")? {
                 entry.endpoint_profile_id = value

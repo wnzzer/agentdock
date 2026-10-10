@@ -979,6 +979,17 @@ async fn defaults_change_at_once_with_an_undo_and_only_running_unasked_is_confir
     .await;
     assert_eq!(danger.await.unwrap().1["isError"], false);
 
+    // The appearance needs no client, and following is stored as nothing.
+    let (_, themed) = agent_request(f.app(), "POST", "/api/agent/call", None, Some("agent"), json!({"name":"agentdock_preferences","arguments":{"action":"set","terminal_appearance":"dark","appearance":"system"}})).await;
+    assert_eq!(themed["isError"], false, "{themed}");
+    assert_eq!(tool_text(&themed)["saved"]["terminal_appearance"], "dark");
+    assert_eq!(tool_text(&themed)["saved"]["appearance"], "system");
+    let (_, preferences) = call(f.app(), "GET", "/api/preferences", Value::Null).await;
+    assert_eq!(preferences["terminal_appearance"], "dark");
+    assert_eq!(preferences.get("appearance"), None);
+    let (_, wrong) = agent_request(f.app(), "POST", "/api/agent/call", None, Some("agent"), json!({"name":"agentdock_preferences","arguments":{"action":"set","terminal_appearance":"sepia"}})).await;
+    assert_eq!(wrong["isError"], true);
+
     let (_, added) = agent_request(f.app(), "POST", "/api/agent/call", None, Some("agent"), json!({"name":"agentdock_workspace","arguments":{"action":"add","path":f.path.join("repo")}})).await;
     assert_eq!(tool_text(&added)["added"]["name"], "repo");
 }

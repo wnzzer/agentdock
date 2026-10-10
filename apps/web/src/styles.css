@@ -75,7 +75,7 @@
   --info-line: #d6e5f4;
   --info-ink: #2f659c;
   --violet: #7760b5;
-  /* A shell's terminal is dark in either theme; its chrome has its own shades. */
+  /* A dark terminal, in either theme; its chrome has its own shades. */
   --term-bg: #17232d;
   --term-raised: #1e2e39;
   --term-control: #253744;

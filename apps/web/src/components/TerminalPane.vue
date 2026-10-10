@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import Icon from "../features/Icon.vue";
@@ -9,12 +9,12 @@ import { onPageReturn } from "../features/page-return";
 import type { SessionStreamState } from "../features/session-stream";
 import { arrowSequence, ctrlSequence, ENTER_SEQUENCE, ESCAPE_SEQUENCE, isTap, repeatArrow, selectionPresses, shiftSequence, tabSequence, type ArrowKey } from "../features/terminal-keys";
 import { swipeAxis } from "../features/pane-swipe";
-import { darkScheme } from "../features/theme";
+import { terminalDark as dark } from "../features/theme";
 import { filesFrom, imageCaveat, isImage, pasteText, uploadName, uploadProblem, uploadToSession } from "../features/terminal-uploads";
 import { showToast } from "../features/toasts";
 const { t } = useI18n();
 
-const props = withDefaults(defineProps<{ sessionId: string; dark?: boolean }>(), { dark: false });
+const props = defineProps<{ sessionId: string }>();
 const emit = defineEmits<{ exit: []; status: [connected: boolean] }>();
 const host = ref<HTMLDivElement>();
 const state = ref<SessionStreamState>("connecting");
@@ -344,8 +344,6 @@ function connect() {
 }
 defineExpose({ reconnect: connect });
 
-/** A shell is always dark; an agent's terminal follows the interface. */
-const dark = computed(() => props.dark || darkScheme.value);
 function terminalTheme() {
   return dark.value ? { background: "#17232d", foreground: "#dde6eb", cursor: "#63dac8", selectionBackground: "#2b4a46" } : {
     background: "#ffffff", foreground: "#243343", cursor: "#0a8278", selectionBackground: "#ccebe6",

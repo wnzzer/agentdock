@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { setThemePreference, themePreference, type ThemePreference } from './theme';
+import { setTerminalThemePreference, setThemePreference, terminalThemePreference, themePreference, type TerminalThemePreference, type ThemePreference } from './theme';
 import { desktopNotifications, notificationSupport, setDesktopNotifications } from './attention';
 import type { EndpointProfile } from '@agentdock/protocol';
 import ProviderIcon from './ProviderIcon.vue';
@@ -86,7 +86,8 @@ async function revokeGrants() { try { hostGrants.value = await request('/host/gr
     <div class="settings-lead"><p>{{ t('What a new session starts with. The new-session dialog and each session\'s own controls can still change it.') }}</p><span v-if="saving||saved" class="preferences-state" role="status">{{ t(saving ? 'Saving…' : 'Saved') }}</span></div>
     <p v-if="error" class="inline-error" role="alert">{{ error }}</p>
     <!-- The interface language belongs to this browser, not the server: it is
-         a per-viewer choice, and a phone and a laptop may well differ. -->
+         a per-viewer choice, and a phone and a laptop may well differ. The
+         appearance is kept by the server, like the rest of the preferences. -->
     <article class="preference-card">
       <header><span class="preference-mark general"><Icon name="settings" :size="17"/></span><strong>{{ t('General') }}</strong></header>
       <label class="preference-row">
@@ -94,8 +95,12 @@ async function revokeGrants() { try { hostGrants.value = await request('/host/gr
         <select :value="locale" :aria-label="t('Language')" @change="setLocale(($event.target as HTMLSelectElement).value === 'en' ? 'en' : 'zh-CN')"><option value="zh-CN" lang="zh-CN">中文</option><option value="en" lang="en">English</option></select>
       </label>
       <label class="preference-row">
-        <span><strong>{{ t('Appearance') }}</strong><small>{{ t('For this browser.') }}</small></span>
+        <span><strong>{{ t('Appearance') }}</strong></span>
         <select :value="themePreference" :aria-label="t('Appearance')" @change="setThemePreference(($event.target as HTMLSelectElement).value as ThemePreference)"><option value="system">{{ t('Match system') }}</option><option value="light">{{ t('Light') }}</option><option value="dark">{{ t('Dark') }}</option></select>
+      </label>
+      <label class="preference-row">
+        <span><strong>{{ t('Terminal appearance') }}</strong></span>
+        <select :value="terminalThemePreference" :aria-label="t('Terminal appearance')" @change="setTerminalThemePreference(($event.target as HTMLSelectElement).value as TerminalThemePreference)"><option value="interface">{{ t('Match interface') }}</option><option value="light">{{ t('Light') }}</option><option value="dark">{{ t('Dark') }}</option></select>
       </label>
       <label class="preference-row">
         <span><strong>{{ t('Desktop notifications') }}</strong><small>{{ t(notificationNote) }}</small></span>

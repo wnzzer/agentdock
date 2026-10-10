@@ -1,8 +1,9 @@
 //! What a new session starts with, per provider: which endpoint profile, how
-//! deeply it thinks, and which permission mode it runs in.
+//! deeply it thinks, and which permission mode it runs in; and how the
+//! interface and its terminals look.
 //!
 //! Stored by the server rather than the browser, so a phone and a laptop open
-//! sessions the same way. Each value is a default, not a rule: the new-session
+//! sessions the same way, and an agent can change them like any other setting. Each value is a default, not a rule: the new-session
 //! dialog still shows and can change the first two, and the permission chip in
 //! a running session changes the third.
 use crate::{ApiError, AppState, Result, db, providers};
@@ -38,6 +39,12 @@ pub struct Preferences {
     /// unless turned off, like the agent tools.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_monitoring: Option<bool>,
+    /// `light` or `dark`; none follows the operating system.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub appearance: Option<String>,
+    /// `light` or `dark`; none follows the interface.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_appearance: Option<String>,
 }
 
 impl Default for Preferences {
@@ -46,6 +53,8 @@ impl Default for Preferences {
             clients: BTreeMap::new(),
             agent_tools: None,
             resource_monitoring: None,
+            appearance: None,
+            terminal_appearance: None,
         }
         .complete()
     }
@@ -132,6 +141,16 @@ async fn write(
 /// Check and store a whole preferences document; the agent tools save
 /// through here too, so both follow the same rules.
 pub async fn save(state: &AppState, input: &Preferences) -> Result<()> {
+    for scheme in [&input.appearance, &input.terminal_appearance] {
+        if scheme
+            .as_deref()
+            .is_some_and(|value| value != "light" && value != "dark")
+        {
+            return Err(ApiError::bad(
+                "An appearance is light, dark, or none to follow.",
+            ));
+        }
+    }
     for (&provider, preference) in &input.clients {
         if !provider.is_agent() {
             return Err(ApiError::bad("Only an agent client has session defaults."));

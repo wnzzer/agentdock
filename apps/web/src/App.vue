@@ -713,7 +713,7 @@ async function refreshResources() {
     const previousSharedStorage = backendCapabilities.sharedCanvas;
     setBackendCapabilities(health); apiOnline.value = true;
     platform.value = health.platform; instanceLabel.value = health.instance_label; serverVersion.value = health.version;
-    const [workspaceList] = await Promise.all([request<Workspace[]>("/workspaces"), refreshSessions(), refreshProfiles()]);
+    const [workspaceList] = await Promise.all([request<Workspace[]>("/workspaces"), refreshSessions(), refreshProfiles(), loadPreferences(true)]);
     if (registryRevision === workspaceRegistryRevision) {
       workspaces.value = workspaceList;
       if (!workspaceList.some(workspace => workspace.id === selectedWorkspaceId.value)) selectedWorkspaceId.value = workspaceList[0]?.id ?? "";
@@ -815,6 +815,8 @@ async function bootstrap() {
     const auth = await request<{ required: boolean; authenticated: boolean }>("/auth");
     if (auth.required && !auth.authenticated) { showAuth.value = true; return; }
     showAuth.value = false;
+    // The appearance is a preference too; it applies itself when it arrives (theme.ts).
+    void loadPreferences(true);
     const [workspaceList, sessionList, profileList, health] = await Promise.all([
       request<Workspace[]>("/workspaces"), request<Session[]>("/sessions"),
       request<EndpointProfile[]>("/endpoint-profiles"), request<BackendHealth>("/health"),

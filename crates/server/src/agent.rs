@@ -215,7 +215,7 @@ AgentDock is the workspace this agent may be running in: a local web app that ru
 - agentdock_list shows workspaces, sessions (titles and status only, never conversations), endpoint profiles and installed clients.
 - agentdock_endpoint creates, changes, tests or imports endpoint profiles. To set up an API endpoint, call create with the provider, URL and model: the person confirms in the AgentDock window and types the key there. Then call test to check it works.
 - Never ask the person to paste an API key into the conversation, and never put one in a tool argument. AgentDock collects keys in its own window.
-- agentdock_preferences sets what new sessions start with; agentdock_workspace adds a directory as a workspace.
+- agentdock_preferences sets what new sessions start with, and the light or dark theme of the interface and its terminals; agentdock_workspace adds a directory as a workspace.
 - agentdock_spawn starts another Claude Code or Codex session with a self-contained task, optionally on its own branch, for independent work worth doing in parallel. Follow it with agentdock_session (wait, result, message). You can only follow sessions you started, and a session you start cannot start more.
 - agentdock_show opens a file at a line, your Git changes, or a session in the person's AgentDock window: use it to point at what you changed instead of describing where it is.
 - agentdock_usage reports the quota your official account last reported.
